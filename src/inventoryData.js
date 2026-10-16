@@ -215,12 +215,12 @@ export const REFERENCE_INVENTORY_ITEMS = [
     pack: '610455',
     game: '10X Money',
     price: 2,
-    currentTicket: 10,
+    currentTicket: 2,
     packSize: 150,
-    ticketsLeft: 140,
-    value: 280.00,
-    ageDays: 2,
-    ageText: '2 days',
+    ticketsLeft: 148,
+    value: 296.00,
+    ageDays: 3,
+    ageText: '3 days',
     ageBadge: null
   },
   {
@@ -239,15 +239,15 @@ export const REFERENCE_INVENTORY_ITEMS = [
   {
     box: 63,
     pack: '631482',
-    game: 'Jackpots',
+    game: 'Jackpot',
     price: 2,
-    currentTicket: 52,
-    packSize: 150,
+    currentTicket: 2,
+    packSize: 100,
     ticketsLeft: 98,
     value: 196.00,
-    ageDays: 7,
-    ageText: '7+ days',
-    ageBadge: 'warning'
+    ageDays: 27,
+    ageText: '27+ days',
+    ageBadge: 'coral'
   }
 ];
 
@@ -407,10 +407,10 @@ export function getInventoryScreenData(state, activeTab = 'rack', searchQuery = 
   const packsOnRackCount = rackItems.length;
   const emptyBoxesCount = emptyBoxes.length;
 
-  const ticketsOnRackCount = !hasLiveSlots ? 1882 : rackItems.reduce((acc, item) => acc + (item.ticketsLeft || 0), 0);
-  const totalRackCapacity = !hasLiveSlots ? 2240 : rackItems.reduce((acc, item) => acc + (item.packSize || 0), 0);
+  const ticketsOnRackCount = !hasLiveSlots ? 1863 : rackItems.reduce((acc, item) => acc + (item.ticketsLeft || 0), 0);
+  const totalRackCapacity = !hasLiveSlots ? 2190 : rackItems.reduce((acc, item) => acc + (item.packSize || 0), 0);
 
-  const rackValue = !hasLiveSlots ? 6383.00 : rackItems.reduce((acc, item) => acc + (item.value || 0), 0);
+  const rackValue = !hasLiveSlots ? 5883.00 : rackItems.reduce((acc, item) => acc + (item.value || 0), 0);
   const safeValue = !hasLiveSlots ? 1200.00 : safeItems.reduce((acc, item) => acc + (item.bookValue || 0), 0);
 
   // Sold today from state or reference

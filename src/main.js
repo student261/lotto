@@ -6,7 +6,7 @@ import { getDayReportData, getScreenDayReportData } from './dayReportData.js';
 import { getInventoryScreenData } from './inventoryData.js';
 import { getHistoryScreenData } from './historyData.js';
 import { getSettingsGamesList } from './gamesData.js';
-import { getSettingsPeopleList } from './clerksData.js';
+import { getSettingsPeopleList, getSettingsRolesPeopleList } from './clerksData.js';
 import { initDatabaseSync, checkMySQLStatus, saveShiftReportToDB, syncHistoricalShiftsToDB, logTicketScanToDB } from './dbSync.js';
 import { openDaySettlementModal, openPastDaysModal } from './settlementHistoryModals.js';
 
@@ -980,8 +980,16 @@ function renderHeaderAndMetrics() {
 
   const sellCounterSubtitle = document.getElementById('sellCounterSubtitle');
   if (sellCounterSubtitle) {
-    const todayStr = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' });
-    sellCounterSubtitle.textContent = `${todayStr} · Day opened 7:02 AM by ${state.cashierName || 'master'}`;
+    if (isDailyMode) {
+      sellCounterSubtitle.textContent = 'Day open since 7:02 AM';
+    } else {
+      sellCounterSubtitle.textContent = `Shift #${state.shiftNumber || 1} open since 7:02 AM`;
+    }
+  }
+
+  const headerReportSub = document.getElementById('headerReportSub');
+  if (headerReportSub) {
+    headerReportSub.textContent = `$${Number(displayRevenue).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} so far`;
   }
 
   const sidebarUserName = document.getElementById('sidebarUserName');
@@ -7573,6 +7581,11 @@ function setupEventListeners() {
     sfx.keypad();
     renderHeaderAndMetrics();
     renderDispenserRack();
+    const headerRefreshSub = document.getElementById('headerRefreshSub');
+    if (headerRefreshSub) {
+      const timeStr = new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+      headerRefreshSub.textContent = `Updated ${timeStr}`;
+    }
     showToast('Screen refreshed', 'info');
   });
 
@@ -8450,8 +8463,8 @@ function setupEventListeners() {
     {
       id: 'sd_2',
       gameName: 'Jr Jumbo',
-      gameNumber: '1602',
-      packNumber: '745612',
+      gameNumber: '1442',
+      packNumber: '745812',
       price: 1,
       tickets: 300,
       bookValue: 300,
@@ -8579,10 +8592,24 @@ function setupEventListeners() {
     const setRegisterName = document.getElementById('setRegisterName');
     const setAutoPrintToggle = document.getElementById('setAutoPrintToggle');
 
+    const setStoreID = document.getElementById('setStoreID');
+    const setTimeZone = document.getElementById('setTimeZone');
+    const setDayEndsAt = document.getElementById('setDayEndsAt');
+    const setCurrency = document.getElementById('setCurrency');
+    const setReportEmail = document.getElementById('setReportEmail');
+
+    const setPrintingEmail = document.getElementById('setPrintingEmail');
+
     if (setStoreName) setStoreName.value = state.storeName || 'Amigo Food Mart';
     if (setStoreAddress) setStoreAddress.value = state.storeAddress || '2300 Moody Rd, Warner Robins, GA 31088';
     if (setRetailerNumber) setRetailerNumber.value = state.retailerNumber || '[YOUR RETAILER #]';
     if (setRegisterName) setRegisterName.value = state.registerName || 'Register 1';
+    if (setStoreID) setStoreID.value = state.storeID || 'AFM-0412';
+    if (setTimeZone) setTimeZone.value = state.timeZone || 'eastern';
+    if (setDayEndsAt) setDayEndsAt.value = state.dayEndsAt || 'midnight';
+    if (setCurrency) setCurrency.value = state.currency || 'US dollar ($) · 2 decimals';
+    if (setReportEmail) setReportEmail.value = state.reportEmail || 'manager@amigofoodmart.com';
+    if (setPrintingEmail) setPrintingEmail.value = state.reportEmail || 'manager@amigofoodmart.com';
     if (setAutoPrintToggle) setAutoPrintToggle.checked = state.settings?.autoPrint ?? true;
 
     // Rack & alerts Steppers and Toggles
@@ -8656,13 +8683,22 @@ function setupEventListeners() {
 
     const games = getSettingsGamesList(state);
     const rowsHtml = games.map(g => {
+      const tix = g.displayTickets || g.ticketsPack;
+      const lastTix = g.lastTicket || (g.zeroIndexed !== false ? `#${String(tix - 1).padStart(3, '0')}` : `#${String(tix).padStart(3, '0')}`);
+      const positionMeans = g.positionMeans || 'Next ticket to sell';
+      const eftCountedAs = g.eftCountedAs || `Pack value $${g.price >= 50 ? 900 : 300}`;
+      const effective = g.effective || 'Oct 1, 2026';
+
       return `
         <tr>
-          <td class="game-col-name">${g.name}</td>
-          <td class="game-col-num">${g.gameNumber}</td>
-          <td class="game-col-price">$${g.price}</td>
-          <td class="game-col-tix">${Number(g.ticketsPack).toLocaleString('en-US')}</td>
-          <td class="game-col-book">$${Number(g.bookValue).toLocaleString('en-US')}</td>
+          <td class="game-col-name"><strong>${g.name}</strong></td>
+          <td class="game-col-num font-mono">${g.gameNumber}</td>
+          <td class="game-col-price"><strong class="price-green">$${g.price}</strong></td>
+          <td class="game-col-tix font-mono" style="text-align: right;">${tix}</td>
+          <td class="game-col-position">${positionMeans}</td>
+          <td class="game-col-lasttix font-mono">${lastTix}</td>
+          <td class="game-col-eft">${eftCountedAs}</td>
+          <td class="game-col-effective" style="color: #64748b;">${effective}</td>
         </tr>
       `;
     }).join('');
@@ -8671,35 +8707,41 @@ function setupEventListeners() {
   }
 
   function renderSettingsPeopleList() {
+    const tableBody = document.getElementById('settingsPeopleTableBody');
     const listEl = document.getElementById('settingsPeopleList');
-    if (!listEl) return;
+    if (!tableBody && !listEl) return;
 
-    const people = getSettingsPeopleList(state);
-    listEl.innerHTML = people.map(p => {
-      const initial = (p.name || 'U').charAt(0).toUpperCase();
-      const isOwner = (p.role || '').toLowerCase() === 'owner';
-      const badgeClass = isOwner ? 'badge-role-owner' : 'badge-role-clerk';
-      const roleLabel = isOwner ? 'Owner' : 'Clerk';
-      const desc = p.roleDesc || (isOwner ? 'Owner · can change settings and clear data' : 'Clerk · can sell, receive packs and end the day');
+    const people = getSettingsRolesPeopleList(state);
 
-      return `
-        <div class="settings-person-row" data-person-id="${p.id || p.name}">
-          <div class="settings-person-left">
-            <div class="settings-person-avatar">${initial}</div>
-            <div class="settings-person-meta">
-              <span class="person-name">${p.name}</span>
-              <span class="person-role-desc">${desc}</span>
-            </div>
-          </div>
-          <div class="settings-person-right">
-            <span class="${badgeClass}">${roleLabel}</span>
-            <button type="button" class="btn-person-reset-pin" data-person-id="${p.id || p.name}" data-person-name="${p.name}">
-              Reset PIN
-            </button>
-          </div>
-        </div>
-      `;
-    }).join('');
+    if (tableBody) {
+      tableBody.innerHTML = people.map(p => {
+        const initial = p.initial || (p.name || 'U').charAt(0).toUpperCase();
+        const roleClass = p.roleBadgeClass || (p.role === 'Owner / Admin' ? 'badge-role-admin' : p.role === 'Shift Manager' ? 'badge-role-manager' : 'badge-role-cashier');
+        const statusClass = p.statusClass || (p.status === 'Active' ? 'badge-status-active' : 'badge-status-inactive');
+
+        return `
+          <tr data-person-id="${p.id || p.name}">
+            <td class="col-people-name">
+              <div class="people-user-cell">
+                <span class="people-avatar-circle">${initial}</span>
+                <span class="people-name-label"><strong>${p.name}</strong></span>
+              </div>
+            </td>
+            <td class="col-people-role">
+              <span class="role-pill ${roleClass}">${p.role}</span>
+            </td>
+            <td class="col-people-cando">${p.canDo}</td>
+            <td class="col-people-stores">${p.stores}</td>
+            <td class="col-people-status" style="text-align: center;">
+              <span class="status-pill ${statusClass}">${p.status}</span>
+            </td>
+            <td class="col-people-action" style="text-align: right;">
+              <button type="button" class="btn-person-reset-pin" data-person-id="${p.id || p.name}" data-person-name="${p.name}">Reset PIN</button>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
   }
 
   function renderHistoryView() {
@@ -8713,82 +8755,51 @@ function setupEventListeners() {
     const kpiBestDaySales = document.getElementById('histKpiBestDaySales');
     const kpiBestDayDate = document.getElementById('histKpiBestDayDate');
 
-    if (kpiTotalSales) kpiTotalSales.textContent = `$${Number(data.kpis.totalSales).toLocaleString('en-US')}`;
-    if (kpiTotalDays) kpiTotalDays.textContent = `${data.kpis.daysCount} days`;
+    if (kpiTotalSales) kpiTotalSales.textContent = `$${Number(data.kpis.totalSales).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    if (kpiTotalDays) kpiTotalDays.textContent = 'Oct 1 – Oct 8 · final versions only';
     if (kpiTicketsSold) kpiTicketsSold.textContent = Number(data.kpis.ticketsSold).toLocaleString('en-US');
-    if (kpiDailyAvg) kpiDailyAvg.textContent = `$${Number(data.kpis.dailyAverage).toLocaleString('en-US')}`;
-    if (kpiBestDaySales) kpiBestDaySales.textContent = `$${Number(data.kpis.bestDayAmount).toLocaleString('en-US')}`;
-    if (kpiBestDayDate) kpiBestDayDate.textContent = data.kpis.bestDayDate;
+    if (kpiDailyAvg) kpiDailyAvg.textContent = String(data.kpis.closedShiftsCount || 14);
+    if (kpiBestDaySales) kpiBestDaySales.textContent = String(data.kpis.correctedReportsCount || 1);
+    if (kpiBestDayDate) kpiBestDayDate.textContent = 'original kept';
 
-    // 2. Sales Per Day Bar Chart
-    const chartContainer = document.getElementById('histChartBody');
-    if (chartContainer) {
-      const maxSales = data.chart.maxSales || 2011;
-      const chartHtml = data.chart.days.map(d => {
-        const heightPct = Math.max(14, Math.round((d.sales / maxSales) * 100));
-        const isSelected = d.id === selectedHistoryDayId;
-        const todayClass = d.isToday ? 'is-today' : '';
-        const selectedClass = isSelected ? 'selected' : '';
-        return `
-          <div class="hist-bar-col ${selectedClass}" data-day-id="${d.id}" role="button" tabindex="0" title="${d.date}: $${Number(d.sales).toLocaleString('en-US', { minimumFractionDigits: 2 })}">
-            <div class="hist-bar-tooltip">
-              ${d.date}: $${Number(d.sales).toLocaleString('en-US', { minimumFractionDigits: 2 })} (${d.tickets} tix)
-            </div>
-            <div class="hist-bar-track">
-              <div class="hist-bar-fill ${todayClass}" style="height: ${heightPct}%;"></div>
-            </div>
-            <div class="hist-bar-label ${todayClass}">${d.dateShort}</div>
-          </div>
-        `;
-      }).join('');
-      chartContainer.innerHTML = chartHtml;
-    }
-
-    // 3. Selected Day Detail Strip
-    const selectedDay = data.days.find(d => d.id === selectedHistoryDayId) || data.days[0];
-    if (selectedDay) {
-      const stripDay = document.getElementById('histStripDay');
-      const stripSales = document.getElementById('histStripSales');
-      const stripTickets = document.getElementById('histStripTickets');
-      const stripClosedBy = document.getElementById('histStripClosedBy');
-
-      if (stripDay) stripDay.textContent = selectedDay.date;
-      if (stripSales) stripSales.textContent = `$${Number(selectedDay.sales).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-      if (stripTickets) stripTickets.textContent = Number(selectedDay.tickets).toLocaleString('en-US');
-      if (stripClosedBy) stripClosedBy.textContent = selectedDay.closedBy;
-    }
-
-    // 4. All Days Table
+    // 2. Closed Shifts Table Rows
     const tableBody = document.getElementById('histTableBody');
     if (tableBody) {
-      const rowsHtml = data.days.map(d => {
-        let packsHtml = '';
-        if (d.soldOutCount > 0) {
-          packsHtml += `<span class="badge-sold-out">${d.soldOutCount} sold out</span>`;
-        }
-        if (d.newPacksCount > 0) {
-          packsHtml += `<span class="badge-new-pack">${d.newPacksCount} new</span>`;
-        }
+      const empFilter = document.getElementById('rptFilterEmployee')?.value || 'everyone';
+      const statusFilter = document.getElementById('rptFilterStatus')?.value || 'final';
+
+      let shifts = data.shifts || [];
+      if (empFilter !== 'everyone') {
+        shifts = shifts.filter(s => s.employee.toLowerCase() === empFilter.toLowerCase());
+      }
+      if (statusFilter === 'corrected') {
+        shifts = shifts.filter(s => s.versionBadge === 'corrected');
+      }
+
+      if (shifts.length === 0) {
+        tableBody.innerHTML = `<tr><td colspan="9" style="text-align:center; padding:32px; color:#64748b; font-style:italic;">No closed shifts matching selected filters</td></tr>`;
+        return;
+      }
+
+      const rowsHtml = shifts.map(s => {
+        const emailHtml = s.emailStatus === 'failed'
+          ? `<button type="button" class="rpt-btn-retry-email" data-shift-id="${s.id}" title="Click to retry email">${s.email}</button>`
+          : `<span class="rpt-email-sent">${s.email}</span>`;
+
+        const versionClass = s.versionBadge === 'corrected' ? 'rpt-badge-corrected' : 'rpt-badge-final';
 
         return `
-          <tr data-day-id="${d.id}">
-            <td class="td-left hist-date-cell">${d.date}</td>
-            <td class="td-left hist-time-cell">${d.openClose}</td>
-            <td class="td-left hist-closed-cell">${d.closedBy}</td>
-            <td class="td-center hist-tix-cell">${d.tickets}</td>
-            <td class="td-right hist-sales-cell">$${Number(d.sales).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-            <td class="td-left hist-packs-cell">${packsHtml}</td>
-            <td class="td-right">
-              <div class="hist-report-actions">
-                <button type="button" class="btn-hist-view-row" data-day-id="${d.id}">View</button>
-                <button type="button" class="btn-hist-print-row" data-day-id="${d.id}" title="Print Report">
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <polyline points="6 9 6 2 18 2 18 9"></polyline>
-                    <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path>
-                    <rect x="6" y="14" width="12" height="8"></rect>
-                  </svg>
-                </button>
-              </div>
+          <tr data-shift-id="${s.id}">
+            <td class="rpt-td-day">${s.day}</td>
+            <td class="rpt-td-shift"><strong>${s.shift}</strong></td>
+            <td class="rpt-td-employee">${s.employee}</td>
+            <td class="rpt-td-time">${s.openClose}</td>
+            <td class="rpt-td-tickets">${s.tickets}</td>
+            <td class="rpt-td-sales"><strong>$${Number(s.sales).toFixed(2)}</strong></td>
+            <td class="rpt-td-version"><span class="rpt-version-pill ${versionClass}">${s.version}</span></td>
+            <td class="rpt-td-email">${emailHtml}</td>
+            <td class="rpt-td-action">
+              <button type="button" class="rpt-btn-open-shift" data-shift-id="${s.id}" data-day="${s.day}" data-shift="${s.shift}">Open</button>
             </td>
           </tr>
         `;
@@ -8819,8 +8830,10 @@ function setupEventListeners() {
     if (kpiPacks) kpiPacks.textContent = String(data.kpis.packsOnRackCount);
     if (kpiPacksSub) kpiPacksSub.textContent = `${data.kpis.emptyBoxesCount} boxes empty`;
     if (kpiTickets) kpiTickets.textContent = Number(data.kpis.ticketsOnRackCount).toLocaleString();
-    if (kpiTicketsSub) kpiTicketsSub.textContent = `out of ${Number(data.kpis.totalRackCapacity).toLocaleString()}`;
+    if (kpiTicketsSub) kpiTicketsSub.textContent = 'not sold yet';
     if (kpiRackVal) kpiRackVal.textContent = `$${Number(data.kpis.rackValue).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    const kpiRackValSub = document.getElementById('invKpiRackValueSub');
+    if (kpiRackValSub) kpiRackValSub.textContent = 'at ticket price';
     if (kpiSafeVal) kpiSafeVal.textContent = `$${Number(data.kpis.safeValue).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     if (kpiSafeSub) kpiSafeSub.textContent = `${data.kpis.safePacksCount} packs stored`;
     if (kpiSoldToday) kpiSoldToday.textContent = `$${Number(data.kpis.soldTodaySales).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -8839,6 +8852,12 @@ function setupEventListeners() {
     if (countReturned) countReturned.textContent = String(data.counts.returned);
     if (countEmpty) countEmpty.textContent = String(data.counts.empty);
 
+    // Sync Expected Counts with Reconcile Section
+    const safeExpEl = document.getElementById('invReconSafeExpected');
+    const rackExpEl = document.getElementById('invReconRackExpected');
+    if (safeExpEl) safeExpEl.textContent = String(data.counts.safe);
+    if (rackExpEl) rackExpEl.textContent = String(data.counts.rack);
+
     document.querySelectorAll('#invFilterTabs .inv-tab-pill').forEach(btn => {
       btn.classList.toggle('active', btn.getAttribute('data-tab') === currentInventoryTab);
     });
@@ -8855,7 +8874,7 @@ function setupEventListeners() {
         <th class="th-box">BOX</th>
         <th class="th-game">GAME &amp; PACK</th>
         <th class="th-price">PRICE</th>
-        <th class="th-progress">TICKET PROGRESS</th>
+        <th class="th-progress">TICKET COUNT</th>
         <th class="th-left">LEFT</th>
         <th class="th-value">VALUE</th>
         <th class="th-age">AGE</th>
@@ -8883,7 +8902,10 @@ function setupEventListeners() {
           </td>
           <td class="td-price"><span class="inv-price-tag">$${item.price}</span></td>
           <td class="td-progress">
-            <div class="inv-progress-top">#${formattedCur} / ${item.packSize}</div>
+            <div class="inv-progress-top">
+              <span class="inv-next-label">Next ticket</span>
+              <span class="inv-next-num">#${formattedCur} / ${item.packSize}</span>
+            </div>
             <div class="inv-progress-track">
               <div class="inv-progress-fill" style="width: ${pct}%;"></div>
             </div>
@@ -9407,25 +9429,50 @@ function setupEventListeners() {
       return;
     }
 
-    tbody.innerHTML = stagedDeliveryPacks.map((item, idx) => `
-      <tr>
-        <td>
-          <div class="rp-game-title">${item.gameName}</div>
-          <div class="rp-game-meta">#${item.gameNumber || '---'} · Pack ${item.packNumber}</div>
-        </td>
-        <td>
-          <span class="rp-price-green">$${item.price}</span>
-        </td>
-        <td>${item.tickets}</td>
-        <td><strong>$${item.bookValue}</strong></td>
-        <td>
-          <span class="rp-dest-badge"><span class="rp-lock-icon">🔒</span> ${item.destination || 'Safe'}</span>
-        </td>
-        <td style="text-align: right;">
-          <button type="button" class="rp-btn-trash" data-idx="${idx}" title="Remove pack from delivery">🗑️</button>
-        </td>
-      </tr>
-    `).join('');
+    tbody.innerHTML = stagedDeliveryPacks.map((item, idx) => {
+      let statusText = item.statusAfter;
+      if (!statusText) {
+        if (item.destination === 'Box') {
+          statusText = 'Selling &middot; rack';
+        } else {
+          const mov = item.movement || currentRecordingMovement;
+          if (mov === 'Returned / collected') statusText = 'Returned &middot; rep';
+          else if (mov === 'Transfer out') statusText = 'Transferred &middot; store';
+          else if (mov === 'Discontinue') statusText = 'Discontinued &middot; vault';
+          else if (mov === 'Count correction') statusText = 'Corrected &middot; safe';
+          else statusText = 'Unactivated &middot; safe';
+        }
+      }
+
+      return `
+        <tr>
+          <td>
+            <div class="rp-game-title">${item.gameName}</div>
+            <div class="rp-game-meta">#${item.gameNumber || '1688'} - Pack ${item.packNumber}</div>
+          </td>
+          <td>
+            <span class="rp-movement-pill">${item.movement || currentRecordingMovement || 'Received from Lottery'}</span>
+            <div class="rp-movement-sub">${item.receiptNumber || 'Receipt #-213512'}</div>
+          </td>
+          <td>
+            <span class="rp-price-green">$${item.price}</span>
+          </td>
+          <td>${item.tickets}</td>
+          <td><strong>$${item.bookValue}</strong></td>
+          <td>
+            <span class="rp-status-after-pill">${statusText}</span>
+          </td>
+          <td style="text-align: right;">
+            <button type="button" class="rp-btn-trash" data-idx="${idx}" title="Remove pack">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+              </svg>
+            </button>
+          </td>
+        </tr>
+      `;
+    }).join('');
 
     tbody.querySelectorAll('.rp-btn-trash').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -9433,12 +9480,26 @@ function setupEventListeners() {
         if (!isNaN(idx) && idx >= 0 && idx < stagedDeliveryPacks.length) {
           const removed = stagedDeliveryPacks.splice(idx, 1)[0];
           sfx.keypad();
-          showToast(`Removed Pack #${removed.packNumber} from delivery.`, 'info');
+          showToast(`Removed Pack #${removed.packNumber} from batch.`, 'info');
           renderReceivePacksView();
         }
       });
     });
   }
+
+  const showReceivePackForm = () => {
+    const waiting = document.getElementById('rpWaitingScanState');
+    const form = document.getElementById('rpFormContainer');
+    if (waiting) waiting.style.display = 'none';
+    if (form) form.style.display = 'block';
+  };
+
+  const hideReceivePackForm = () => {
+    const waiting = document.getElementById('rpWaitingScanState');
+    const form = document.getElementById('rpFormContainer');
+    if (waiting) waiting.style.display = 'flex';
+    if (form) form.style.display = 'none';
+  };
 
   function addPackToDelivery() {
     const nameInput = document.getElementById('rpTicketNameInput');
@@ -9462,7 +9523,7 @@ function setupEventListeners() {
 
     if (stagedDeliveryPacks.some(p => p.packNumber === packNumber)) {
       sfx.alert();
-      showToast(`Pack #${packNumber} is already in this delivery!`, 'warning');
+      showToast(`Pack #${packNumber} is already in this batch!`, 'warning');
       return;
     }
 
@@ -9474,12 +9535,15 @@ function setupEventListeners() {
       price: currentReceivePackPrice,
       tickets,
       bookValue: bookVal,
-      destination: 'Safe'
+      destination: 'Safe',
+      movement: currentRecordingMovement,
+      statusAfter: 'Unactivated · safe'
     });
 
     sfx.beep();
-    showToast(`✓ Added [${gameName}] Pack #${packNumber} to this delivery.`, 'success');
+    showToast(`✓ Added [${gameName}] Pack #${packNumber} to this batch.`, 'success');
     renderReceivePacksView();
+    hideReceivePackForm();
 
     const scanInput = document.getElementById('rpPackBarcodeInput');
     if (scanInput) {
@@ -9509,12 +9573,13 @@ function setupEventListeners() {
     const bannerSub = document.getElementById('rpDetectionSubText');
     if (bannerTitle) bannerTitle.textContent = 'We know this game';
     if (bannerSub) bannerSub.textContent = 'Details were filled in automatically. Just check and add.';
+    hideReceivePackForm();
   }
 
   function confirmReceivePacksDelivery() {
     if (stagedDeliveryPacks.length === 0) {
       sfx.alert();
-      showToast('No packs in this delivery to confirm.', 'warning');
+      showToast('No packs in this batch to save.', 'warning');
       return;
     }
 
@@ -9541,18 +9606,34 @@ function setupEventListeners() {
     renderHeaderAndMetrics();
 
     sfx.win();
-    showToast(`🎉 Delivery confirmed! ${count} packs ($${total}.00) received into safe.`, 'success');
+    showToast(`🎉 Movements saved! ${count} packs ($${total}.00) updated in inventory.`, 'success');
 
     stagedDeliveryPacks = [];
     renderReceivePacksView();
+    hideReceivePackForm();
   }
 
   // Setup Receive Packs listeners
+  let currentRecordingMovement = 'Received from Lottery';
+  document.querySelectorAll('#rpMovementGrid .rp-movement-card').forEach(card => {
+    card.addEventListener('click', () => {
+      document.querySelectorAll('#rpMovementGrid .rp-movement-card').forEach(c => c.classList.remove('active'));
+      card.classList.add('active');
+      currentRecordingMovement = card.getAttribute('data-movement') || 'Received from Lottery';
+      const badge = document.getElementById('rpSelectedMovementBadge');
+      if (badge) badge.textContent = currentRecordingMovement;
+      sfx.keypad();
+    });
+  });
+
   document.getElementById('rpPackBarcodeInput')?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
       const val = e.target.value.trim();
-      if (val) handleReceivePackBarcode(val);
+      if (val) {
+        showReceivePackForm();
+        handleReceivePackBarcode(val);
+      }
     }
   });
 
@@ -9567,6 +9648,7 @@ function setupEventListeners() {
   document.getElementById('rpTicketsInPackInput')?.addEventListener('input', recalculateReceivePackBookValue);
 
   document.getElementById('rpTryExistingGameBtn')?.addEventListener('click', () => {
+    showReceivePackForm();
     const nameInput = document.getElementById('rpTicketNameInput');
     const gameNumInput = document.getElementById('rpGameNumberInput');
     const packNumInput = document.getElementById('rpPackNumberInput');
@@ -9592,6 +9674,7 @@ function setupEventListeners() {
   });
 
   document.getElementById('rpTryNewGameBtn')?.addEventListener('click', () => {
+    showReceivePackForm();
     const nameInput = document.getElementById('rpTicketNameInput');
     const gameNumInput = document.getElementById('rpGameNumberInput');
     const packNumInput = document.getElementById('rpPackNumberInput');
@@ -9622,6 +9705,34 @@ function setupEventListeners() {
     openActivationForBox(findFirstEmptyBox());
   });
   document.getElementById('rpConfirmDeliveryBtn')?.addEventListener('click', confirmReceivePacksDelivery);
+
+  // Horizontal Slider Track Scrolling
+  const rpSliderLeft = document.getElementById('rpSliderLeft');
+  const rpSliderRight = document.getElementById('rpSliderRight');
+  const rpSliderThumb = document.getElementById('rpSliderThumb');
+  const rpTableWrap = document.querySelector('.rp-table-wrap');
+
+  rpSliderLeft?.addEventListener('click', () => {
+    rpTableWrap?.scrollBy({ left: -140, behavior: 'smooth' });
+    sfx.keypad();
+  });
+
+  rpSliderRight?.addEventListener('click', () => {
+    rpTableWrap?.scrollBy({ left: 140, behavior: 'smooth' });
+    sfx.keypad();
+  });
+
+  rpTableWrap?.addEventListener('scroll', () => {
+    if (!rpSliderThumb || !rpTableWrap) return;
+    const maxScroll = rpTableWrap.scrollWidth - rpTableWrap.clientWidth;
+    if (maxScroll > 0) {
+      const scrollRatio = rpTableWrap.scrollLeft / maxScroll;
+      const trackWidth = rpSliderThumb.parentElement?.clientWidth || 200;
+      const thumbWidth = rpSliderThumb.clientWidth || 80;
+      const maxTranslate = Math.max(0, trackWidth - thumbWidth);
+      rpSliderThumb.style.transform = `translateX(${scrollRatio * maxTranslate}px)`;
+    }
+  });
 
   // Modern Sidebar Navigation Handlers (Page 2 Specification)
   const navSellCounter = document.getElementById('navSellCounter');
@@ -10169,6 +10280,128 @@ function setupEventListeners() {
     }
   });
 
+  // Count & Reconcile Interactive Controls
+  function updateReconcileCalculations() {
+    const safeExpEl = document.getElementById('invReconSafeExpected');
+    const safeInput = document.getElementById('invSafeCountInput');
+    const safeDiffEl = document.getElementById('invReconSafeDiff');
+    const safeBadge = document.getElementById('invReconSafeBadge');
+    const safeAlert = document.getElementById('invReconSafeAlert');
+    const safeBox = document.getElementById('invReconSafeBox');
+
+    const rackExpEl = document.getElementById('invReconRackExpected');
+    const rackInput = document.getElementById('invRackCountInput');
+    const rackDiffEl = document.getElementById('invReconRackDiff');
+    const rackBadge = document.getElementById('invReconRackBadge');
+    const rackBox = document.getElementById('invReconRackBox');
+
+    if (safeExpEl && safeInput && safeDiffEl) {
+      const exp = parseInt(safeExpEl.textContent, 10) || 4;
+      const counted = Math.max(0, parseInt(safeInput.value, 10) || 0);
+      safeInput.value = counted;
+      const diff = counted - exp;
+      safeDiffEl.textContent = diff > 0 ? `+${diff}` : String(diff);
+
+      if (diff === 0) {
+        safeDiffEl.className = 'inv-recon-val match';
+        if (safeBadge) {
+          safeBadge.textContent = 'Matches';
+          safeBadge.className = 'inv-recon-badge match';
+        }
+        if (safeBox) safeBox.className = 'inv-recon-box recon-match';
+        if (safeAlert) safeAlert.style.display = 'none';
+      } else {
+        safeDiffEl.className = 'inv-recon-val diff';
+        if (safeBadge) {
+          safeBadge.textContent = 'Difference';
+          safeBadge.className = 'inv-recon-badge diff';
+        }
+        if (safeBox) safeBox.className = 'inv-recon-box recon-diff';
+        if (safeAlert) {
+          safeAlert.style.display = 'flex';
+          const alertText = document.getElementById('invReconSafeAlertText');
+          if (alertText) {
+            alertText.textContent = diff < 0 
+              ? `${Math.abs(diff)} ${Math.abs(diff) === 1 ? 'pack is' : 'packs are'} missing. Recount, check pack history, then ask for an adjustment.`
+              : `${diff} extra ${diff === 1 ? 'pack' : 'packs'} counted. Recount, check pack history, then ask for an adjustment.`;
+          }
+        }
+      }
+    }
+
+    if (rackExpEl && rackInput && rackDiffEl) {
+      const exp = parseInt(rackExpEl.textContent, 10) || 19;
+      const counted = Math.max(0, parseInt(rackInput.value, 10) || 0);
+      rackInput.value = counted;
+      const diff = counted - exp;
+      rackDiffEl.textContent = diff > 0 ? `+${diff}` : String(diff);
+
+      if (diff === 0) {
+        rackDiffEl.className = 'inv-recon-val match';
+        if (rackBadge) {
+          rackBadge.textContent = 'Matches';
+          rackBadge.className = 'inv-recon-badge match';
+        }
+        if (rackBox) rackBox.className = 'inv-recon-box recon-match';
+      } else {
+        rackDiffEl.className = 'inv-recon-val diff';
+        if (rackBadge) {
+          rackBadge.textContent = 'Difference';
+          rackBadge.className = 'inv-recon-badge diff';
+        }
+        if (rackBox) rackBox.className = 'inv-recon-box recon-diff';
+      }
+    }
+  }
+
+  document.getElementById('invSafeCountDec')?.addEventListener('click', () => {
+    const input = document.getElementById('invSafeCountInput');
+    if (input) {
+      input.value = Math.max(0, (parseInt(input.value, 10) || 0) - 1);
+      sfx.keypad();
+      updateReconcileCalculations();
+    }
+  });
+
+  document.getElementById('invSafeCountInc')?.addEventListener('click', () => {
+    const input = document.getElementById('invSafeCountInput');
+    if (input) {
+      input.value = (parseInt(input.value, 10) || 0) + 1;
+      sfx.keypad();
+      updateReconcileCalculations();
+    }
+  });
+
+  document.getElementById('invSafeCountInput')?.addEventListener('input', updateReconcileCalculations);
+
+  document.getElementById('invRackCountDec')?.addEventListener('click', () => {
+    const input = document.getElementById('invRackCountInput');
+    if (input) {
+      input.value = Math.max(0, (parseInt(input.value, 10) || 0) - 1);
+      sfx.keypad();
+      updateReconcileCalculations();
+    }
+  });
+
+  document.getElementById('invRackCountInc')?.addEventListener('click', () => {
+    const input = document.getElementById('invRackCountInput');
+    if (input) {
+      input.value = (parseInt(input.value, 10) || 0) + 1;
+      sfx.keypad();
+      updateReconcileCalculations();
+    }
+  });
+
+  document.getElementById('invRackCountInput')?.addEventListener('input', updateReconcileCalculations);
+
+  document.getElementById('invBtnRequestAdj')?.addEventListener('click', () => {
+    sfx.beep();
+    showToast('📝 Opening inventory discrepancy adjustment request...', 'info');
+    setTimeout(() => {
+      showToast('Adjustment ticket #ADJ-2026-08 filed for manager review.', 'success');
+    }, 800);
+  });
+
   navHistory?.addEventListener('click', () => {
     showHistoryView();
     window.location.hash = 'history';
@@ -10183,34 +10416,46 @@ function setupEventListeners() {
     openPastDaysModal(state, (dayItem) => openDayReportModal(() => state, sfx));
   });
 
-  // History Screen Controls & Interactions
-  // 1. Chart bar tap to inspect day
-  document.getElementById('histChartBody')?.addEventListener('click', (e) => {
-    const col = e.target.closest('.hist-bar-col');
-    if (!col) return;
-    const dayId = col.getAttribute('data-day-id');
-    if (dayId) {
-      selectedHistoryDayId = dayId;
+  // Reports (History) Screen Controls & Interactions
+  document.querySelectorAll('#rptCategoryTabs .rpt-cat-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('#rptCategoryTabs .rpt-cat-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      sfx.keypad();
+      const tabName = tab.textContent.trim();
+      if (tab.getAttribute('data-tab') !== 'shifts') {
+        showToast(`Viewing ${tabName} report tab.`, 'info');
+      }
+    });
+  });
+
+  ['rptFilterEmployee', 'rptFilterStatus', 'rptFilterStore', 'rptFilterGame'].forEach(id => {
+    document.getElementById(id)?.addEventListener('change', () => {
       sfx.keypad();
       renderHistoryView();
-    }
+    });
   });
 
-  // 2. View day report button from selected day strip
-  document.getElementById('histStripViewBtn')?.addEventListener('click', () => {
-    sfx.keypad();
-    showDayReportView();
-  });
-
-  // 3. Table action delegation (View button & print button)
   document.getElementById('histTableBody')?.addEventListener('click', (e) => {
-    const viewBtn = e.target.closest('.btn-hist-view-row');
+    const openBtn = e.target.closest('.rpt-btn-open-shift') || e.target.closest('.btn-hist-view-row');
+    const retryBtn = e.target.closest('.rpt-btn-retry-email');
     const printBtn = e.target.closest('.btn-hist-print-row');
-    if (viewBtn) {
+
+    if (openBtn) {
       sfx.keypad();
-      const dayId = viewBtn.getAttribute('data-day-id');
-      if (dayId) selectedHistoryDayId = dayId;
+      const day = openBtn.getAttribute('data-day') || 'Wed, Oct 7';
+      const shift = openBtn.getAttribute('data-shift') || '#2';
+      showToast(`Opening Day Report for ${day} (Shift ${shift})...`, 'info');
       showDayReportView();
+    } else if (retryBtn) {
+      sfx.beep();
+      retryBtn.textContent = 'Sending...';
+      retryBtn.style.color = '#2563eb';
+      setTimeout(() => {
+        retryBtn.outerHTML = '<span class="rpt-email-sent">Sent</span>';
+        showToast('✓ Email report successfully resent to manager and owner!', 'success');
+        sfx.win();
+      }, 700);
     } else if (printBtn) {
       sfx.keypad();
       window.print();
@@ -10416,6 +10661,21 @@ function setupEventListeners() {
       state.registerName = setRegisterName.value.trim() || 'Register 1';
       const roleLine = document.getElementById('sidebarUserRole');
       if (roleLine) roleLine.textContent = `Owner · ${state.registerName}`;
+    }
+
+    const setStoreID = document.getElementById('setStoreID');
+    const setTimeZone = document.getElementById('setTimeZone');
+    const setDayEndsAt = document.getElementById('setDayEndsAt');
+    const setReportEmail = document.getElementById('setReportEmail');
+    const setPrintingEmail = document.getElementById('setPrintingEmail');
+
+    if (setStoreID) state.storeID = setStoreID.value.trim() || 'AFM-0412';
+    if (setTimeZone) state.timeZone = setTimeZone.value;
+    if (setDayEndsAt) state.dayEndsAt = setDayEndsAt.value;
+    if (setPrintingEmail && setPrintingEmail.value.trim()) {
+      state.reportEmail = setPrintingEmail.value.trim();
+    } else if (setReportEmail && setReportEmail.value.trim()) {
+      state.reportEmail = setReportEmail.value.trim();
     }
 
     if (valTotalBoxes) {

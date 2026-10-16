@@ -122,23 +122,47 @@
       <section class="sell-counter-view" id="viewSellCounter">
         <!-- TOP STREAMLINED UNIFIED HEADER BAR (Matching Reference Screenshot) -->
         <header class="pos-unified-header-bar">
-          <!-- Left: Shift Status Card -->
-          <div class="header-shift-card" id="shiftStatusCard">
-            <div class="header-shift-text">
-              <div class="header-shift-tag">
-                <span class="shift-dot-green"></span>
-                <span id="shiftStatusText">SHIFT #1 &middot; MASTER</span>
+          <!-- Left Action Cards Cluster (End Shift, Report, Refresh) -->
+          <div class="hdr-left-actions">
+            <!-- 1. End Shift Card -->
+            <button type="button" class="btn-header-end-shift hdr-btn-end-shift-card" id="mainShiftActionBtn">
+              <span class="hdr-moon-icon">🌙</span>
+              <div class="hdr-card-text">
+                <strong class="hdr-card-title" id="mainShiftBtnLabel">End Shift</strong>
+                <span class="hdr-card-sub" id="shiftSubMeta">
+                  <span class="hdr-sub-dot"></span>
+                  <span id="sellCounterSubtitle">Shift #1 open since 7:02 AM</span>
+                </span>
               </div>
-              <h2 class="header-shift-title" id="shiftHeadlineText">Shift #1 in progress</h2>
-              <span class="header-shift-meta" id="sellCounterSubtitle">Opened 7:02 AM &middot; Thu, Oct 8</span>
-            </div>
-            <button type="button" class="btn-header-end-shift" id="mainShiftActionBtn">
-              <span class="btn-end-icon">🌙</span>
-              <span id="mainShiftBtnLabel">End shift</span>
+            </button>
+
+            <!-- 2. Report Card -->
+            <button type="button" class="hdr-btn-action-card" id="btnHeaderReport" title="View Day Report">
+              <svg class="hdr-card-icon-blue" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                <polyline points="14 2 14 8 20 8"/>
+                <line x1="16" y1="13" x2="8" y2="13"/>
+                <line x1="16" y1="17" x2="8" y2="17"/>
+              </svg>
+              <div class="hdr-card-text">
+                <strong class="hdr-card-title">Report</strong>
+                <span class="hdr-card-sub text-emerald" id="headerReportSub">$1,237.00 so far</span>
+              </div>
+            </button>
+
+            <!-- 3. Refresh Card -->
+            <button type="button" class="hdr-btn-action-card" id="btnHeaderRefresh" title="Refresh Screen">
+              <svg class="hdr-card-icon-slate" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#475569" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+              </svg>
+              <div class="hdr-card-text">
+                <strong class="hdr-card-title">Refresh</strong>
+                <span class="hdr-card-sub text-slate" id="headerRefreshSub">Updated 3:12 PM</span>
+              </div>
             </button>
           </div>
 
-          <!-- Center: Barcode Scanner Input -->
+          <!-- Center: Barcode Scanner Input Pill -->
           <div class="header-scanner-box">
             <div class="scanner-barcode-icon">
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
@@ -154,33 +178,29 @@
               autocomplete="off" 
               autofocus
             >
-            <button type="button" class="btn-scanner-enter-blue" id="barcodeEnterBtn">Enter</button>
+            <button type="button" class="btn-scanner-enter-blue" id="barcodeEnterBtn" style="display:none;">Enter</button>
           </div>
 
-          <!-- Last Scan Box Card -->
+          <!-- Right: Last Scan Box Card with Embedded Undo Button -->
           <div class="card-last-scan-box header-last-scan-card" id="lastScanReadoutContainer">
             <div class="last-scan-huge-box header-last-scan-badge" id="largeStatReadout">7</div>
             <div class="last-scan-meta-lines header-last-scan-details">
-              <span class="last-scan-micro-label">LAST SCAN &middot; BOX</span>
+              <span class="last-scan-micro-label">LAST SCAN</span>
               <strong class="last-scan-game-name header-last-scan-game" id="scanActionTitle">2026 Happy New</strong>
               <span class="last-scan-ticket-detail header-last-scan-meta" id="lastScanDisplay">#003 &middot; <span class="last-scan-price-accent">$3</span></span>
             </div>
+            <button type="button" class="btn-header-undo-ghost" id="undoActionBtn" title="Undo Last Sale or Move">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/>
+              </svg>
+            </button>
           </div>
 
-          <!-- Right: Quick Actions -->
-          <div class="header-quick-actions">
-            <button type="button" class="btn-quick-action" id="btnHeaderRefresh" title="Refresh Screen">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
-              <span>Refresh</span>
-            </button>
-            <button type="button" class="btn-quick-action" id="undoActionBtn" title="Undo Last Sale or Move">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>
-              <span>Undo</span>
-            </button>
-            <button type="button" class="btn-quick-action" id="btnHeaderReport" title="View Day Report">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-              <span>Report</span>
-            </button>
+          <!-- Hidden Shift Status Hooks to preserve test & JS compatibility -->
+          <div style="display:none;" aria-hidden="true">
+            <span id="shiftStatusText">SHIFT #1 &middot; MASTER</span>
+            <h2 id="shiftHeadlineText">Shift #1 in progress</h2>
+            <div class="header-shift-card" id="shiftStatusCard"></div>
           </div>
         </header>
 
@@ -238,15 +258,15 @@
               </div>
             </div>
           </div>
-          <div class="dispenser-rack-header-row">
+          <div class="dispenser-rack-header-row" style="display: none;">
             <div class="rack-title-block">
               <h2 class="rack-section-title">Dispenser rack</h2>
               <p class="rack-section-sub">Tap a box to see details or move it. Tap +1 to sell one ticket without scanning.</p>
             </div>
           </div>
 
-          <!-- Price & Aging Filter Chips -->
-          <div class="filter-chips-row" id="rackFilterChips">
+          <!-- Price & Aging Filter Chips (Kept in DOM for test and filter compatibility) -->
+          <div class="filter-chips-row" id="rackFilterChips" style="display: none;">
             <button type="button" class="filter-chip active" data-filter="all">All <span class="chip-count" id="chipAllCount">0</span></button>
             <button type="button" class="filter-chip" data-filter="1">$1 <span class="chip-count" id="chip1Count">0</span></button>
             <button type="button" class="filter-chip" data-filter="2">$2 <span class="chip-count" id="chip2Count">0</span></button>
@@ -284,7 +304,7 @@
           <div class="all-boxes-map-header">
             <div class="all-boxes-map-title-block">
               <h2 class="all-boxes-map-title">All 65 boxes</h2>
-              <p class="all-boxes-map-subtitle">A quick map of the whole dispenser. Tap an empty box to load a pack into it.</p>
+              <p class="all-boxes-map-subtitle" style="display: none;">A quick map of the whole dispenser. Tap an empty box to load a pack into it.</p>
             </div>
             <div class="all-boxes-map-legend">
               <div class="map-legend-item">
@@ -293,11 +313,11 @@
               </div>
               <div class="map-legend-item">
                 <span class="legend-swatch older"></span>
-                <span>Pack older than 7 days</span>
+                <span>7+ days</span>
               </div>
               <div class="map-legend-item">
                 <span class="legend-swatch empty"></span>
-                <span>Empty</span>
+                <span>Empty &mdash; tap to load</span>
               </div>
             </div>
           </div>
@@ -305,44 +325,58 @@
         </div>
       </section>
 
-      <!-- VIEW: RECEIVE PACKS (Matching reference design) -->
+      <!-- VIEW: UPDATE INVENTORY (Matching reference design) -->
       <section class="receive-packs-view" id="viewReceivePacks" style="display: none;">
         <!-- HEADER -->
         <header class="receive-packs-header">
-          <h1 class="page-main-title">Receive Packs</h1>
-          <p class="page-subtitle">The lottery delivery arrived? Scan every pack here before it goes into the safe or a box.</p>
+          <h1 class="page-main-title">Update Inventory</h1>
+          <p class="page-subtitle">Record every pack that comes in or goes out. Each movement is saved with who, when and why.</p>
         </header>
 
-        <!-- STEPPER STRIP -->
-        <div class="rp-stepper-strip">
-          <div class="rp-step-item">
-            <span class="rp-step-num">1</span>
-            <span class="rp-step-text">Scan the pack barcode</span>
-          </div>
-          <div class="rp-step-item">
-            <span class="rp-step-num">2</span>
-            <span class="rp-step-text">Check the details (new games only)</span>
-          </div>
-          <div class="rp-step-item">
-            <span class="rp-step-num">3</span>
-            <span class="rp-step-text">Add it to this delivery</span>
-          </div>
-          <div class="rp-step-item">
-            <span class="rp-step-num">4</span>
-            <span class="rp-step-text">Confirm — packs go to the safe</span>
+        <!-- WHAT ARE YOU RECORDING? 6-CARD OPTION BAR -->
+        <div class="rp-movement-types-card">
+          <div class="rp-movement-heading">WHAT ARE YOU RECORDING?</div>
+          <div class="rp-movement-grid" id="rpMovementGrid">
+            <div class="rp-movement-card active" data-movement="Received from Lottery">
+              <strong class="rp-movement-title">Received from Lottery</strong>
+              <span class="rp-movement-desc">New packs from the representative</span>
+            </div>
+            <div class="rp-movement-card" data-movement="Returned / collected">
+              <strong class="rp-movement-title">Returned / collected</strong>
+              <span class="rp-movement-desc">Rep took packs back for credit</span>
+            </div>
+            <div class="rp-movement-card" data-movement="Transfer in">
+              <strong class="rp-movement-title">Transfer in</strong>
+              <span class="rp-movement-desc">Packs from another store</span>
+            </div>
+            <div class="rp-movement-card" data-movement="Transfer out">
+              <strong class="rp-movement-title">Transfer out</strong>
+              <span class="rp-movement-desc">Packs sent to another store</span>
+            </div>
+            <div class="rp-movement-card" data-movement="Discontinue">
+              <strong class="rp-movement-title">Discontinue</strong>
+              <span class="rp-movement-desc">Game ended or pack pulled</span>
+            </div>
+            <div class="rp-movement-card" data-movement="Count correction">
+              <strong class="rp-movement-title">Count correction</strong>
+              <span class="rp-movement-desc">Fix a count difference &middot; manager</span>
+            </div>
           </div>
         </div>
 
-        <!-- TWO COLUMN CONTENT GRID -->
+        <!-- MAIN TWO-COLUMN CONTENT GRID -->
         <div class="rp-main-grid">
           <!-- LEFT CARD: SCAN A PACK -->
           <div class="rp-card rp-scan-card">
-            <h2 class="rp-card-title">Scan a pack</h2>
+            <div class="rp-card-header-cluster">
+              <h2 class="rp-card-title">Scan a pack</h2>
+              <span class="rp-recording-badge" id="rpSelectedMovementBadge">Received from Lottery</span>
+            </div>
 
             <!-- Big Barcode Input with Scan Icon -->
             <div class="rp-scanner-input-wrap">
               <div class="rp-scanner-icon" aria-hidden="true">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/>
                   <line x1="7" x2="7" y1="8" y2="16"/><line x1="12" x2="12" y1="8" y2="16"/><line x1="17" x2="17" y1="8" y2="16"/>
                 </svg>
@@ -363,70 +397,89 @@
               <button type="button" class="rp-proto-btn" id="rpTryNewGameBtn">Try a brand-new game</button>
             </div>
 
-            <!-- Detection Banner -->
-            <div class="rp-detection-banner known" id="rpDetectionBanner">
-              <div class="rp-detection-title">
-                <span class="rp-check-icon">✓</span> <span id="rpDetectionTitleText">We know this game</span>
+            <!-- Default Waiting State (matching screenshot) -->
+            <div class="rp-waiting-state" id="rpWaitingScanState">
+              <div class="rp-waiting-icon-box">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+                  <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+                  <line x1="12" y1="22.08" x2="12" y2="12"></line>
+                </svg>
               </div>
-              <div class="rp-detection-sub" id="rpDetectionSubText">Details were filled in automatically. Just check and add.</div>
+              <strong class="rp-waiting-title">Waiting for a scan</strong>
+              <p class="rp-waiting-sub">
+                Games you already sell fill in by themselves.<br>
+                New games ask for the name and price once.
+              </p>
             </div>
 
-            <!-- Form Fields -->
-            <div class="rp-form-group">
-              <label for="rpTicketNameInput" class="rp-label">Ticket name</label>
-              <input type="text" id="rpTicketNameInput" class="rp-input" value="50X Money" placeholder="e.g. 50X Money">
-            </div>
+            <!-- Active Form Container (reveals when scanned or tested) -->
+            <div class="rp-form-container" id="rpFormContainer" style="display: none;">
+              <!-- Detection Banner -->
+              <div class="rp-detection-banner known" id="rpDetectionBanner">
+                <div class="rp-detection-title">
+                  <span class="rp-check-icon">✓</span> <span id="rpDetectionTitleText">We know this game</span>
+                </div>
+                <div class="rp-detection-sub" id="rpDetectionSubText">Details were filled in automatically. Just check and add.</div>
+              </div>
 
-            <div class="rp-form-row-2">
+              <!-- Form Fields -->
               <div class="rp-form-group">
-                <label for="rpGameNumberInput" class="rp-label">Game number</label>
-                <input type="text" id="rpGameNumberInput" class="rp-input" value="1711" placeholder="e.g. 1711">
+                <label for="rpTicketNameInput" class="rp-label">Ticket name</label>
+                <input type="text" id="rpTicketNameInput" class="rp-input" value="50X Money" placeholder="e.g. 50X Money">
               </div>
-              <div class="rp-form-group">
-                <label for="rpPackNumberInput" class="rp-label">Pack number</label>
-                <input type="text" id="rpPackNumberInput" class="rp-input" value="403118" placeholder="e.g. 403118">
-              </div>
-            </div>
 
-            <div class="rp-form-group">
-              <label class="rp-label">Ticket value (price)</label>
-              <div class="rp-price-pills-row" id="rpPricePillsRow">
-                <button type="button" class="rp-price-pill" data-price="1">$1</button>
-                <button type="button" class="rp-price-pill" data-price="2">$2</button>
-                <button type="button" class="rp-price-pill" data-price="3">$3</button>
-                <button type="button" class="rp-price-pill" data-price="5">$5</button>
-                <button type="button" class="rp-price-pill active" data-price="10">$10</button>
-                <button type="button" class="rp-price-pill" data-price="20">$20</button>
-                <button type="button" class="rp-price-pill" data-price="30">$30</button>
-                <button type="button" class="rp-price-pill" data-price="50">$50</button>
+              <div class="rp-form-row-2">
+                <div class="rp-form-group">
+                  <label for="rpGameNumberInput" class="rp-label">Game number</label>
+                  <input type="text" id="rpGameNumberInput" class="rp-input" value="1711" placeholder="e.g. 1711">
+                </div>
+                <div class="rp-form-group">
+                  <label for="rpPackNumberInput" class="rp-label">Pack number</label>
+                  <input type="text" id="rpPackNumberInput" class="rp-input" value="403118" placeholder="e.g. 403118">
+                </div>
               </div>
-            </div>
 
-            <div class="rp-form-row-2">
               <div class="rp-form-group">
-                <label for="rpTicketsInPackInput" class="rp-label">Tickets in pack</label>
-                <input type="number" id="rpTicketsInPackInput" class="rp-input" value="30" min="1" max="1000">
-                <div class="rp-field-hint" id="rpTicketsHint">Usual for $10: 30 tickets</div>
+                <label class="rp-label">Ticket value (price)</label>
+                <div class="rp-price-pills-row" id="rpPricePillsRow">
+                  <button type="button" class="rp-price-pill" data-price="1">$1</button>
+                  <button type="button" class="rp-price-pill" data-price="2">$2</button>
+                  <button type="button" class="rp-price-pill" data-price="3">$3</button>
+                  <button type="button" class="rp-price-pill" data-price="5">$5</button>
+                  <button type="button" class="rp-price-pill active" data-price="10">$10</button>
+                  <button type="button" class="rp-price-pill" data-price="20">$20</button>
+                  <button type="button" class="rp-price-pill" data-price="30">$30</button>
+                  <button type="button" class="rp-price-pill" data-price="50">$50</button>
+                </div>
               </div>
-              <div class="rp-form-group">
-                <label for="rpBookValueInput" class="rp-label">Book value</label>
-                <input type="text" id="rpBookValueInput" class="rp-input rp-input-readonly" value="$300" readonly>
-                <div class="rp-field-hint">Price x tickets, worked out for you</div>
-              </div>
-            </div>
 
-            <!-- Card Actions -->
-            <div class="rp-form-actions">
-              <button type="button" class="rp-btn-cancel" id="rpCancelFormBtn">Cancel</button>
-              <button type="button" class="rp-btn-add" id="rpAddToDeliveryBtn">+ Add to delivery</button>
+              <div class="rp-form-row-2">
+                <div class="rp-form-group">
+                  <label for="rpTicketsInPackInput" class="rp-label">Tickets in pack</label>
+                  <input type="number" id="rpTicketsInPackInput" class="rp-input" value="30" min="1" max="1000">
+                  <div class="rp-field-hint" id="rpTicketsHint">Usual for $10: 30 tickets</div>
+                </div>
+                <div class="rp-form-group">
+                  <label for="rpBookValueInput" class="rp-label">Book value</label>
+                  <input type="text" id="rpBookValueInput" class="rp-input rp-input-readonly" value="$300" readonly>
+                  <div class="rp-field-hint">Price x tickets, worked out for you</div>
+                </div>
+              </div>
+
+              <!-- Card Actions -->
+              <div class="rp-form-actions">
+                <button type="button" class="rp-btn-cancel" id="rpCancelFormBtn">Cancel</button>
+                <button type="button" class="rp-btn-add" id="rpAddToDeliveryBtn">+ Add to batch</button>
+              </div>
             </div>
           </div>
 
-          <!-- RIGHT CARD: THIS DELIVERY -->
+          <!-- RIGHT CARD: THIS BATCH -->
           <div class="rp-card rp-delivery-card">
             <div class="rp-delivery-header">
               <div class="rp-delivery-title-cluster">
-                <h2 class="rp-card-title" style="margin-bottom:0;">This delivery</h2>
+                <h2 class="rp-card-title" style="margin-bottom:0;">This batch</h2>
                 <span class="rp-count-badge" id="rpDeliveryCountBadge">2 packs</span>
               </div>
               <div class="rp-delivery-total-amount" id="rpDeliveryTotalDisplay">$600 total</div>
@@ -437,12 +490,13 @@
               <table class="rp-table">
                 <thead>
                   <tr>
-                    <th style="width: 36%;">GAME</th>
-                    <th style="width: 14%;">PRICE</th>
-                    <th style="width: 14%;">TICKETS</th>
-                    <th style="width: 16%;">BOOK VALUE</th>
-                    <th style="width: 16%;">GOES TO</th>
-                    <th style="width: 4%;"></th>
+                    <th style="width: 25%;">GAME</th>
+                    <th style="width: 26%;">MOVEMENT</th>
+                    <th style="width: 10%;">PRICE</th>
+                    <th style="width: 10%;">TICKETS</th>
+                    <th style="width: 12%;">BOOK VALUE</th>
+                    <th style="width: 15%;">STATUS AFTER</th>
+                    <th style="width: 2%;"></th>
                   </tr>
                 </thead>
                 <tbody id="rpDeliveryTableBody">
@@ -451,11 +505,28 @@
               </table>
             </div>
 
-            <!-- Bottom Delivery Actions -->
+            <!-- Horizontal Scroll Slider Track -->
+            <div class="rp-batch-slider-bar">
+              <span class="rp-slider-arrow" id="rpSliderLeft" title="Scroll left">
+                <svg width="10" height="12" viewBox="0 0 10 12" fill="currentColor">
+                  <polygon points="10,0 0,6 10,12"/>
+                </svg>
+              </span>
+              <div class="rp-slider-track" id="rpSliderTrack">
+                <div class="rp-slider-thumb" id="rpSliderThumb"></div>
+              </div>
+              <span class="rp-slider-arrow" id="rpSliderRight" title="Scroll right">
+                <svg width="10" height="12" viewBox="0 0 10 12" fill="currentColor">
+                  <polygon points="0,0 10,6 0,12"/>
+                </svg>
+              </span>
+            </div>
+
+            <!-- Bottom Batch Actions -->
             <div class="rp-delivery-bottom-actions">
               <button type="button" class="rp-btn-load-box" id="rpLoadPackIntoBoxBtn">Load a pack into a box</button>
               <button type="button" class="rp-btn-confirm" id="rpConfirmDeliveryBtn">
-                <span style="font-weight:800;">✓</span> Confirm delivery
+                <span style="font-weight:800;">✓</span> Save movements
               </button>
             </div>
           </div>
@@ -799,9 +870,9 @@
         <!-- TOP HEADER -->
         <header class="inv-header">
           <div class="header-titles">
-            <h1 class="page-main-title">Inventory &amp; Audit</h1>
+            <h1 class="page-main-title">Inventory &amp; count</h1>
             <div class="page-subtitle">
-              Everything you have: on the rack, in the safe, sold out and returned.
+              Every pack is in exactly one status. Count the safe and the rack to find differences.
             </div>
           </div>
         </header>
@@ -818,15 +889,15 @@
           <!-- KPI 2: Tickets on the rack -->
           <div class="inv-kpi-card">
             <span class="inv-kpi-label">Tickets on the rack</span>
-            <div class="inv-kpi-val" id="invKpiTicketsRack">1,882</div>
-            <span class="inv-kpi-sub" id="invKpiTicketsRackSub">out of 2,240</span>
+            <div class="inv-kpi-val" id="invKpiTicketsRack">1,863</div>
+            <span class="inv-kpi-sub" id="invKpiTicketsRackSub">not sold yet</span>
           </div>
 
           <!-- KPI 3: Rack value -->
           <div class="inv-kpi-card">
             <span class="inv-kpi-label">Rack value</span>
-            <div class="inv-kpi-val" id="invKpiRackValue">$6,383.00</div>
-            <span class="inv-kpi-sub">at retail price</span>
+            <div class="inv-kpi-val" id="invKpiRackValue">$5,883.00</div>
+            <span class="inv-kpi-sub" id="invKpiRackValueSub">at ticket price</span>
           </div>
 
           <!-- KPI 4: Safe value -->
@@ -844,20 +915,99 @@
           </div>
         </div>
 
+        <!-- COUNT & RECONCILE CARD (Matching Reference Design) -->
+        <div class="inv-reconcile-card">
+          <div class="inv-reconcile-header">
+            <h2 class="inv-reconcile-title">Count &amp; reconcile</h2>
+            <span class="inv-reconcile-subtitle">Physical count vs. what the system expects</span>
+          </div>
+
+          <div class="inv-reconcile-grid">
+            <!-- Box 1: Unactivated packs in the safe -->
+            <div class="inv-recon-box recon-diff" id="invReconSafeBox">
+              <div class="inv-recon-box-header">
+                <strong class="inv-recon-box-title">Unactivated packs in the safe</strong>
+                <span class="inv-recon-badge diff" id="invReconSafeBadge">Difference</span>
+              </div>
+              <div class="inv-recon-stat-row">
+                <div class="inv-recon-stat">
+                  <span class="inv-recon-lbl">Expected</span>
+                  <strong class="inv-recon-val" id="invReconSafeExpected">4</strong>
+                </div>
+                <div class="inv-recon-stat counted-group">
+                  <span class="inv-recon-lbl">Counted</span>
+                  <div class="inv-stepper">
+                    <button type="button" class="inv-stepper-btn" id="invSafeCountDec" aria-label="Decrease safe count">&minus;</button>
+                    <input type="number" id="invSafeCountInput" class="inv-stepper-val" value="0" min="0" max="99">
+                    <button type="button" class="inv-stepper-btn" id="invSafeCountInc" aria-label="Increase safe count">+</button>
+                  </div>
+                </div>
+                <div class="inv-recon-stat">
+                  <span class="inv-recon-lbl">Difference</span>
+                  <strong class="inv-recon-val diff" id="invReconSafeDiff">-4</strong>
+                </div>
+              </div>
+              <!-- Warning Alert Callout -->
+              <div class="inv-recon-alert" id="invReconSafeAlert">
+                <span class="inv-recon-alert-text" id="invReconSafeAlertText">
+                  4 packs are missing. Recount, check pack history, then ask for an adjustment.
+                </span>
+                <button type="button" class="inv-recon-adj-btn" id="invBtnRequestAdj">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+                    <line x1="8" y1="21" x2="16" y2="21"></line>
+                    <line x1="12" y1="17" x2="12" y2="21"></line>
+                  </svg>
+                  <span>Request adjustment</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Box 2: Active packs on the rack -->
+            <div class="inv-recon-box recon-match" id="invReconRackBox">
+              <div class="inv-recon-box-header">
+                <strong class="inv-recon-box-title">Active packs on the rack</strong>
+                <span class="inv-recon-badge match" id="invReconRackBadge">Matches</span>
+              </div>
+              <div class="inv-recon-stat-row">
+                <div class="inv-recon-stat">
+                  <span class="inv-recon-lbl">Expected</span>
+                  <strong class="inv-recon-val" id="invReconRackExpected">19</strong>
+                </div>
+                <div class="inv-recon-stat counted-group">
+                  <span class="inv-recon-lbl">Counted</span>
+                  <div class="inv-stepper">
+                    <button type="button" class="inv-stepper-btn" id="invRackCountDec" aria-label="Decrease rack count">&minus;</button>
+                    <input type="number" id="invRackCountInput" class="inv-stepper-val" value="19" min="0" max="65">
+                    <button type="button" class="inv-stepper-btn" id="invRackCountInc" aria-label="Increase rack count">+</button>
+                  </div>
+                </div>
+                <div class="inv-recon-stat">
+                  <span class="inv-recon-lbl">Difference</span>
+                  <strong class="inv-recon-val match" id="invReconRackDiff">0</strong>
+                </div>
+              </div>
+              <div class="inv-recon-alert" id="invReconRackAlert" style="display: none;">
+                <span class="inv-recon-alert-text" id="invReconRackAlertText"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- FILTER TABS & SEARCH TOOLBAR ROW -->
         <div class="inv-toolbar-row">
           <div class="inv-filter-tabs" id="invFilterTabs">
             <button type="button" class="inv-tab-pill active" data-tab="rack">
-              On the rack <span class="inv-pill-count" id="invCountRack">19</span>
+              Active &middot; on the rack <span class="inv-pill-count" id="invCountRack">19</span>
             </button>
             <button type="button" class="inv-tab-pill" data-tab="safe">
-              In the safe <span class="inv-pill-count" id="invCountSafe">4</span>
+              Unactivated &middot; in the safe <span class="inv-pill-count" id="invCountSafe">4</span>
             </button>
             <button type="button" class="inv-tab-pill" data-tab="sold">
               Sold out <span class="inv-pill-count" id="invCountSold">1</span>
             </button>
             <button type="button" class="inv-tab-pill" data-tab="returned">
-              Returned <span class="inv-pill-count" id="invCountReturned">0</span>
+              Discontinued / returned <span class="inv-pill-count" id="invCountReturned">0</span>
             </button>
             <button type="button" class="inv-tab-pill" data-tab="empty">
               Empty boxes <span class="inv-pill-count" id="invCountEmpty">46</span>
@@ -891,7 +1041,7 @@
                   <th class="th-box">BOX</th>
                   <th class="th-game">GAME &amp; PACK</th>
                   <th class="th-price">PRICE</th>
-                  <th class="th-progress">TICKET PROGRESS</th>
+                  <th class="th-progress">TICKET COUNT</th>
                   <th class="th-left">LEFT</th>
                   <th class="th-value">VALUE</th>
                   <th class="th-age">AGE</th>
@@ -965,114 +1115,151 @@
         </div>
       </dialog>
 
-      <!-- VIEW: HISTORY (Past Days, Sales and Reports) -->
+      <!-- VIEW: REPORTS (Closed shifts and days, activations, best sellers...) -->
       <section class="history-view" id="viewHistory" style="display: none;">
         <!-- Top Header -->
         <header class="hist-header">
           <div class="hist-header-titles">
-            <h1 class="page-main-title">History</h1>
-            <p class="page-subtitle">Past days, their sales and their reports.</p>
+            <h1 class="page-main-title">Reports</h1>
+            <p class="page-subtitle">Closed shifts and days, activations, best sellers, pack history, inventory and the audit trail.</p>
           </div>
         </header>
 
-        <!-- Top 4 KPI Metrics Row -->
+        <!-- Category Tabs & Filter Bar Card (Matching Reference Screenshot) -->
+        <div class="rpt-filter-card">
+          <!-- 6 Category Tabs -->
+          <div class="rpt-category-tabs" id="rptCategoryTabs">
+            <button type="button" class="rpt-cat-tab active" data-tab="shifts">Shift &amp; day sales</button>
+            <button type="button" class="rpt-cat-tab" data-tab="activations">Activations &amp; EFT</button>
+            <button type="button" class="rpt-cat-tab" data-tab="bestsellers">Best sellers</button>
+            <button type="button" class="rpt-cat-tab" data-tab="packhistory">Pack history</button>
+            <button type="button" class="rpt-cat-tab" data-tab="inventory">Inventory</button>
+            <button type="button" class="rpt-cat-tab" data-tab="audit">Corrections &amp; audit</button>
+          </div>
+
+          <!-- Filter Controls Row (6 fields) -->
+          <div class="rpt-filter-grid">
+            <div class="rpt-filter-group">
+              <label for="rptFilterFrom" class="rpt-filter-lbl">From</label>
+              <div class="rpt-input-with-icon">
+                <input type="text" id="rptFilterFrom" class="rpt-filter-input" value="01-10-2026">
+                <span class="rpt-input-icon">📅</span>
+              </div>
+            </div>
+
+            <div class="rpt-filter-group">
+              <label for="rptFilterTo" class="rpt-filter-lbl">To</label>
+              <div class="rpt-input-with-icon">
+                <input type="text" id="rptFilterTo" class="rpt-filter-input" value="08-10-2026">
+                <span class="rpt-input-icon">📅</span>
+              </div>
+            </div>
+
+            <div class="rpt-filter-group">
+              <label for="rptFilterStore" class="rpt-filter-lbl">Store</label>
+              <select id="rptFilterStore" class="rpt-filter-select">
+                <option value="amigo" selected>Amigo Food Mart</option>
+                <option value="all">All stores</option>
+              </select>
+            </div>
+
+            <div class="rpt-filter-group">
+              <label for="rptFilterEmployee" class="rpt-filter-lbl">Employee</label>
+              <select id="rptFilterEmployee" class="rpt-filter-select">
+                <option value="everyone" selected>Everyone</option>
+                <option value="Priya">Priya</option>
+                <option value="Carlos">Carlos</option>
+                <option value="master">master</option>
+              </select>
+            </div>
+
+            <div class="rpt-filter-group">
+              <label for="rptFilterGame" class="rpt-filter-lbl">Game</label>
+              <select id="rptFilterGame" class="rpt-filter-select">
+                <option value="all" selected>All games</option>
+                <option value="50x">50X Money</option>
+                <option value="jumbo">Jr Jumbo</option>
+                <option value="loteria">Loteria</option>
+              </select>
+            </div>
+
+            <div class="rpt-filter-group">
+              <label for="rptFilterStatus" class="rpt-filter-lbl">Report status</label>
+              <select id="rptFilterStatus" class="rpt-filter-select">
+                <option value="final" selected>Final versions</option>
+                <option value="all">All versions</option>
+                <option value="corrected">Corrected only</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- 4 Top KPI Metrics Row -->
         <div class="hist-kpi-row">
-          <!-- Card 1: Total Sales (Mint Green Highlight) -->
+          <!-- Card 1: Ticket Sales (Mint Green Highlight) -->
           <div class="hist-kpi-card hist-kpi-highlight">
-            <div class="hist-kpi-label">Total sales</div>
-            <div class="hist-kpi-value" id="histKpiTotalSales">$20,166</div>
-            <div class="hist-kpi-sub" id="histKpiTotalDays">14 days</div>
+            <div class="hist-kpi-label">Ticket sales</div>
+            <div class="hist-kpi-value" id="histKpiTotalSales">$9,474.00</div>
+            <div class="hist-kpi-sub" id="histKpiTotalDays">Oct 1 – Oct 8 · final versions only</div>
           </div>
           <!-- Card 2: Tickets Sold -->
           <div class="hist-kpi-card">
             <div class="hist-kpi-label">Tickets sold</div>
-            <div class="hist-kpi-value" id="histKpiTicketsSold">4,691</div>
+            <div class="hist-kpi-value" id="histKpiTicketsSold">2,204</div>
+            <div class="hist-kpi-sub">&nbsp;</div>
           </div>
-          <!-- Card 3: Daily Average -->
+          <!-- Card 3: Closed Shifts -->
           <div class="hist-kpi-card">
-            <div class="hist-kpi-label">Daily average</div>
-            <div class="hist-kpi-value" id="histKpiDailyAverage">$1,440</div>
+            <div class="hist-kpi-label">Closed shifts</div>
+            <div class="hist-kpi-value" id="histKpiDailyAverage">14</div>
+            <div class="hist-kpi-sub">7 days</div>
           </div>
-          <!-- Card 4: Best Day -->
+          <!-- Card 4: Corrected Reports -->
           <div class="hist-kpi-card">
-            <div class="hist-kpi-label">Best day</div>
-            <div class="hist-kpi-value" id="histKpiBestDaySales">$2,011</div>
-            <div class="hist-kpi-sub" id="histKpiBestDayDate">Sun, Sep 27</div>
+            <div class="hist-kpi-label">Corrected reports</div>
+            <div class="hist-kpi-value" id="histKpiBestDaySales">1</div>
+            <div class="hist-kpi-sub" id="histKpiBestDayDate">original kept</div>
           </div>
         </div>
 
-        <!-- Sales Per Day Bar Chart Card -->
-        <div class="hist-chart-card">
-          <div class="hist-chart-header">
-            <div>
-              <h2 class="hist-card-title">Sales per day</h2>
-              <p class="hist-card-subtitle">Tap a bar to see that day. Sample figures for the prototype.</p>
-            </div>
-            <div class="hist-chart-legend">
-              <span class="hist-legend-item">
-                <span class="hist-legend-dot hist-dot-today"></span>
-                <span>Today</span>
-              </span>
-              <span class="hist-legend-item">
-                <span class="hist-legend-dot hist-dot-past"></span>
-                <span>Past days</span>
-              </span>
-            </div>
+        <!-- Main Closed Shifts Table Card -->
+        <div class="rpt-table-card">
+          <div class="rpt-table-header">
+            <h2 class="rpt-card-title">Closed shifts</h2>
           </div>
-
-          <!-- Bar Chart Area -->
-          <div class="hist-chart-body" id="histChartBody">
-            <!-- Dynamically rendered 14 vertical bars -->
-          </div>
-
-          <!-- Selected Day Detail Strip -->
-          <div class="hist-selected-strip" id="histSelectedStrip">
-            <div class="hist-strip-meta">
-              <div class="hist-strip-item">
-                <span class="hist-strip-label">Selected day</span>
-                <span class="hist-strip-val" id="histStripDay">Thu, Oct 8</span>
-              </div>
-              <div class="hist-strip-item">
-                <span class="hist-strip-label">Sales</span>
-                <span class="hist-strip-val" id="histStripSales">$1,237.00</span>
-              </div>
-              <div class="hist-strip-item">
-                <span class="hist-strip-label">Tickets</span>
-                <span class="hist-strip-val" id="histStripTickets">248</span>
-              </div>
-              <div class="hist-strip-item">
-                <span class="hist-strip-label">Closed by</span>
-                <span class="hist-strip-val" id="histStripClosedBy">master</span>
-              </div>
-            </div>
-            <button type="button" class="btn-hist-view-report" id="histStripViewBtn">
-              View day report
-            </button>
-          </div>
-        </div>
-
-        <!-- All Days Table Card -->
-        <div class="hist-table-card">
-          <div class="hist-table-header">
-            <h2 class="hist-card-title">All days</h2>
-          </div>
-          <div class="hist-table-wrap">
-            <table class="hist-table" aria-label="History of all past days">
+          <div class="rpt-table-wrap">
+            <table class="rpt-table" aria-label="Closed shifts and reports">
               <thead>
                 <tr>
-                  <th class="th-left">DATE</th>
-                  <th class="th-left">OPEN &mdash; CLOSE</th>
-                  <th class="th-left">CLOSED BY</th>
-                  <th class="th-center">TICKETS</th>
-                  <th class="th-right">SALES</th>
-                  <th class="th-left">PACKS</th>
-                  <th class="th-right">REPORT</th>
+                  <th style="width: 14%;">DAY</th>
+                  <th style="width: 8%;">SHIFT</th>
+                  <th style="width: 12%;">EMPLOYEE</th>
+                  <th style="width: 18%;">OPEN — CLOSE</th>
+                  <th style="width: 10%; text-align: right;">TICKETS</th>
+                  <th style="width: 12%; text-align: right;">SALES</th>
+                  <th style="width: 12%;">VERSION</th>
+                  <th style="width: 10%;">EMAIL</th>
+                  <th style="width: 4%;"></th>
                 </tr>
               </thead>
               <tbody id="histTableBody">
-                <!-- Dynamically populated 14 history rows -->
+                <!-- Dynamically populated 14 closed shift rows -->
               </tbody>
             </table>
+          </div>
+
+          <!-- Bottom Audit Tip Bar -->
+          <div class="rpt-audit-tip-bar">
+            <div class="rpt-audit-tip-icon">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="16" x2="12" y2="12"></line>
+                <line x1="12" y1="8" x2="12.01" y2="8"></line>
+              </svg>
+            </div>
+            <div class="rpt-audit-tip-text">
+              Day totals add up final versions only, so a corrected shift is never counted twice.
+            </div>
           </div>
         </div>
       </section>
@@ -1094,47 +1281,52 @@
         <div class="settings-layout-grid">
           <!-- Left Navigation Column (Tab Pills) -->
           <nav class="settings-tabs-nav" aria-label="Settings Categories">
-            <button type="button" class="settings-tab-btn" data-tab="store">
+            <button type="button" class="settings-tab-btn active" data-tab="store">
               Store details
             </button>
-            <button type="button" class="settings-tab-btn active" data-tab="dayorshift">
+            <button type="button" class="settings-tab-btn" data-tab="dayorshift">
               Day or shift
             </button>
             <button type="button" class="settings-tab-btn" data-tab="rack">
               Rack &amp; alerts
             </button>
             <button type="button" class="settings-tab-btn" data-tab="games">
-              Ticket games
+              Ticket games &amp; rules
             </button>
             <button type="button" class="settings-tab-btn" data-tab="people">
-              People &amp; PINs
+              People &amp; roles
             </button>
             <button type="button" class="settings-tab-btn" data-tab="printing">
-              Printing
+              Printing &amp; email
             </button>
-            <button type="button" class="settings-tab-btn danger" data-tab="cleardata">
-              Clear data
+            <button type="button" class="settings-tab-btn" data-tab="cleardata">
+              Sync, backup &amp; data
             </button>
           </nav>
 
           <!-- Right Content Panel (Card) -->
           <div class="settings-card-panel">
-            <!-- Tab 1: Store details -->
-            <div class="settings-tab-pane" id="paneSettingsStore" style="display: none;">
+            <!-- Tab 1: Store details (Matching Reference Screenshot) -->
+            <div class="settings-tab-pane active" id="paneSettingsStore">
               <div class="settings-pane-header">
                 <h2 class="settings-pane-title">Store details</h2>
                 <span class="settings-pane-subtitle">Printed at the top of every report</span>
               </div>
               <div class="settings-form">
+                <!-- Field 1: Store name -->
                 <div class="settings-form-group">
                   <label for="setStoreName" class="settings-label">Store name</label>
                   <input type="text" id="setStoreName" class="settings-text-input" value="Amigo Food Mart" placeholder="Store name">
                 </div>
+
+                <!-- Field 2: Address -->
                 <div class="settings-form-group">
                   <label for="setStoreAddress" class="settings-label">Address</label>
                   <input type="text" id="setStoreAddress" class="settings-text-input" value="2300 Moody Rd, Warner Robins, GA 31088" placeholder="Store address">
                 </div>
-                <div class="settings-form-row">
+
+                <!-- Field 3: 4 Columns Row (Lottery retailer #, Register name, Store ID, Time zone) -->
+                <div class="settings-grid-4">
                   <div class="settings-form-group">
                     <label for="setRetailerNumber" class="settings-label">Lottery retailer #</label>
                     <input type="text" id="setRetailerNumber" class="settings-text-input" value="[YOUR RETAILER #]" placeholder="[YOUR RETAILER #]">
@@ -1143,12 +1335,55 @@
                     <label for="setRegisterName" class="settings-label">Register name</label>
                     <input type="text" id="setRegisterName" class="settings-text-input" value="Register 1" placeholder="Register 1">
                   </div>
+                  <div class="settings-form-group">
+                    <label for="setStoreID" class="settings-label">Store ID</label>
+                    <input type="text" id="setStoreID" class="settings-text-input" value="AFM-0412" placeholder="Store ID">
+                  </div>
+                  <div class="settings-form-group">
+                    <label for="setTimeZone" class="settings-label">Time zone</label>
+                    <div class="settings-select-wrap">
+                      <select id="setTimeZone" class="settings-select-dropdown">
+                        <option value="eastern" selected>Eastern Time (New York)</option>
+                        <option value="central">Central Time (Chicago)</option>
+                        <option value="mountain">Mountain Time (Denver)</option>
+                        <option value="pacific">Pacific Time (Los Angeles)</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Field 4: 2 Columns Row (Business day ends at, Currency) -->
+                <div class="settings-grid-2">
+                  <div class="settings-form-group">
+                    <label for="setDayEndsAt" class="settings-label">Business day ends at</label>
+                    <div class="settings-select-wrap">
+                      <select id="setDayEndsAt" class="settings-select-dropdown">
+                        <option value="midnight" selected>Midnight</option>
+                        <option value="11pm">11:00 PM</option>
+                        <option value="10pm">10:00 PM</option>
+                        <option value="1am">1:00 AM</option>
+                        <option value="manual">When End Day is pressed</option>
+                      </select>
+                    </div>
+                    <span class="settings-field-hint">Sales after midnight count toward the day that started before it.</span>
+                  </div>
+                  <div class="settings-form-group">
+                    <label for="setCurrency" class="settings-label">Currency</label>
+                    <input type="text" id="setCurrency" class="settings-text-input settings-readonly-input" value="US dollar ($) · 2 decimals" readonly>
+                  </div>
+                </div>
+
+                <!-- Field 5: Send reports to this email -->
+                <div class="settings-form-group">
+                  <label for="setReportEmail" class="settings-label">Send reports to this email</label>
+                  <input type="email" id="setReportEmail" class="settings-text-input" value="manager@amigofoodmart.com" placeholder="manager@amigofoodmart.com">
+                  <span class="settings-field-hint">Every closed day or shift report is emailed here.</span>
                 </div>
               </div>
             </div>
 
-            <!-- Tab: Day or shift (Active in Reference Screenshot) -->
-            <div class="settings-tab-pane active" id="paneSettingsDayOrShift">
+            <!-- Tab 2: Day or shift -->
+            <div class="settings-tab-pane" id="paneSettingsDayOrShift" style="display: none;">
               <div class="settings-pane-header">
                 <h2 class="settings-pane-title">How you close</h2>
                 <span class="settings-pane-subtitle">Pick what fits your store</span>
@@ -1314,23 +1549,29 @@
               </div>
             </div>
 
-            <!-- Tab 3: Ticket games (Matching Reference UI Screenshot) -->
+            <!-- Tab 3: Ticket games & rules (Matching Reference UI Screenshot) -->
             <div class="settings-tab-pane" id="paneSettingsGames" style="display: none;">
               <div class="settings-pane-header with-action">
-                <h2 class="settings-pane-title">Ticket games</h2>
+                <div class="settings-title-with-badge">
+                  <h2 class="settings-pane-title">Ticket games &amp; rules</h2>
+                  <span class="settings-version-badge">Rules v3 · since Oct 1</span>
+                </div>
                 <button type="button" class="btn-settings-add-game" id="btnSettingsAddGame">
                   Add a game
                 </button>
               </div>
               <div class="settings-games-table-wrap">
-                <table class="settings-games-table" aria-label="Ticket games catalog">
+                <table class="settings-games-table" aria-label="Ticket games and rules catalog">
                   <thead>
                     <tr>
                       <th class="th-left">GAME</th>
-                      <th class="th-center">GAME #</th>
-                      <th class="th-center">PRICE</th>
-                      <th class="th-right">TICKETS / PACK</th>
-                      <th class="th-right">BOOK VALUE</th>
+                      <th class="th-left">GAME #</th>
+                      <th class="th-left">PRICE</th>
+                      <th class="th-right">TICKETS</th>
+                      <th class="th-left">POSITION MEANS</th>
+                      <th class="th-left">LAST TICKET</th>
+                      <th class="th-left">EFT COUNTED AS</th>
+                      <th class="th-left">EFFECTIVE</th>
                     </tr>
                   </thead>
                   <tbody id="settingsGamesTableBody">
@@ -1338,28 +1579,75 @@
                   </tbody>
                 </table>
               </div>
+
+              <!-- Warning banner below table -->
+              <div class="settings-rules-warning-box">
+                <div class="settings-rules-warning-icon">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                    <line x1="12" y1="9" x2="12" y2="13"></line>
+                    <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                  </svg>
+                </div>
+                <div class="settings-rules-warning-content">
+                  <strong>Changing a rule creates a new version</strong>
+                  <span>Closed reports keep the rule version they were calculated with. Open shifts switch on the effective date.</span>
+                </div>
+              </div>
             </div>
 
-            <!-- Tab 4: People & PINs (Matching Reference UI Screenshot) -->
+            <!-- Tab 4: People & roles (Matching Reference UI Screenshot) -->
             <div class="settings-tab-pane" id="paneSettingsPeople" style="display: none;">
               <div class="settings-pane-header with-action">
-                <h2 class="settings-pane-title">People &amp; PINs</h2>
+                <h2 class="settings-pane-title">People &amp; roles</h2>
                 <button type="button" class="btn-settings-add-person" id="btnSettingsAddPerson">
                   &plus; Add person
                 </button>
               </div>
               <div class="settings-people-list" id="settingsPeopleList">
-                <!-- Dynamically populated rows matching reference screenshot -->
+                <div class="settings-games-table-wrap">
+                  <table class="settings-people-table" aria-label="People and roles permissions catalog">
+                    <thead>
+                      <tr>
+                        <th class="th-left" style="width: 16%;">NAME</th>
+                        <th class="th-left" style="width: 14%;">ROLE</th>
+                        <th class="th-left" style="width: 34%;">CAN DO</th>
+                        <th class="th-left" style="width: 14%;">STORES</th>
+                        <th class="th-center" style="width: 10%;">STATUS</th>
+                        <th class="th-right" style="width: 12%;"></th>
+                      </tr>
+                    </thead>
+                    <tbody id="settingsPeopleTableBody">
+                      <!-- Populated dynamically matching exact screenshot reference -->
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <!-- Note below table -->
+              <div class="settings-people-footer-note">
+                Changing roles needs the owner's PIN. People are made inactive, never deleted, so their history stays in reports.
               </div>
             </div>
 
-            <!-- Tab 5: Printing (Matching Reference UI Screenshot) -->
+            <!-- Tab 5: Printing & email (Matching Reference UI Screenshot) -->
             <div class="settings-tab-pane" id="paneSettingsPrinting" style="display: none;">
               <div class="settings-pane-header">
-                <h2 class="settings-pane-title">Printing</h2>
+                <h2 class="settings-pane-title">Printing &amp; email</h2>
               </div>
               <div class="settings-rows-list">
-                <!-- Row 1: Report printer -->
+                <!-- Row 1: Email reports to -->
+                <div class="settings-row-item">
+                  <div class="settings-row-text">
+                    <span class="settings-row-title">Email reports to</span>
+                    <span class="settings-row-desc">Sent after every shift close. If sending fails, the shift still closes and you can retry from Reports.</span>
+                  </div>
+                  <div class="settings-row-control">
+                    <input type="email" id="setPrintingEmail" class="settings-text-input settings-email-input" value="manager@amigofoodmart.com" placeholder="manager@amigofoodmart.com">
+                  </div>
+                </div>
+
+                <!-- Row 2: Report printer -->
                 <div class="settings-row-item">
                   <div class="settings-row-text">
                     <span class="settings-row-title">Report printer</span>
@@ -1374,7 +1662,7 @@
                   </div>
                 </div>
 
-                <!-- Row 2: Print day report when the day ends -->
+                <!-- Row 3: Print day report when the day ends -->
                 <div class="settings-row-item">
                   <div class="settings-row-text">
                     <span class="settings-row-title">Print day report when the day ends</span>
@@ -1388,7 +1676,7 @@
                   </div>
                 </div>
 
-                <!-- Row 3: Show empty boxes on report -->
+                <!-- Row 4: Show empty boxes on report -->
                 <div class="settings-row-item">
                   <div class="settings-row-text">
                     <span class="settings-row-title">Show empty boxes on report</span>
@@ -1399,19 +1687,6 @@
                       <input type="checkbox" id="toggleShowEmptyBoxesReport">
                       <span class="toggle-switch-slider"></span>
                     </label>
-                  </div>
-                </div>
-
-                <!-- Row 4: Test printer -->
-                <div class="settings-row-item">
-                  <div class="settings-row-text">
-                    <span class="settings-row-title">Test printer</span>
-                    <span class="settings-row-desc">Print a sample test page to confirm printer connection.</span>
-                  </div>
-                  <div class="settings-row-control">
-                    <button type="button" class="btn btn-secondary" id="btnSettingsTestPrint" style="padding: 6px 14px; border-radius: 6px; font-weight: 600; cursor: pointer; border: 1px solid var(--ds-border, #e2e8f0); background: var(--ds-surface, #fff); color: var(--ds-ink, #0f172a);">
-                      🖨️ Test print
-                    </button>
                   </div>
                 </div>
               </div>
