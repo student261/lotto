@@ -827,20 +827,21 @@ function renderHeaderAndMetrics() {
       const priceStr = `$${Number(d.price || 1).toFixed(0)}`;
 
       if (largeStatReadout) largeStatReadout.textContent = String(d.boxNumber || state.lastScannedSlot || '6');
-      if (scanActionTitle) scanActionTitle.textContent = cleanName;
+      if (scanActionTitle) scanActionTitle.textContent = cleanName || 'Cross Word';
       if (lastScanDisplay) {
         lastScanDisplay.innerHTML = `Ticket #${tixNumStr}${secStr} &middot; <span class="last-scan-price-accent">${priceStr}</span>`;
       }
     } else {
-      // Reference default display (matching Image 2)
-      const slot6 = state.slots?.find(s => s.boxNumber === 6 && isBoxActive(s));
-      if (slot6) {
-        const cleanName = cleanGameTitle(slot6.gameName);
-        const tixNumStr = String(slot6.currentTicket !== undefined ? slot6.currentTicket : 84).padStart(3, '0');
-        const secStr = slot6.securityCode ? `(${slot6.securityCode})` : '';
-        const priceStr = `$${Number(slot6.price || 3).toFixed(0)}`;
-        if (largeStatReadout) largeStatReadout.textContent = '6';
-        if (scanActionTitle) scanActionTitle.textContent = cleanName || 'Cross Word';
+      // Reference default display (matching Reference Design)
+      const defaultBox = state.lastScannedSlot || 7;
+      const targetSlot = state.slots?.find(s => s.boxNumber === defaultBox && isBoxActive(s));
+      if (targetSlot) {
+        const cleanName = cleanGameTitle(targetSlot.gameName);
+        const tixNumStr = String(targetSlot.currentTicket !== undefined ? targetSlot.currentTicket : 4).padStart(3, '0');
+        const secStr = targetSlot.securityCode ? `(${targetSlot.securityCode})` : '';
+        const priceStr = `$${Number(targetSlot.price || 3).toFixed(0)}`;
+        if (largeStatReadout) largeStatReadout.textContent = String(targetSlot.boxNumber);
+        if (scanActionTitle) scanActionTitle.textContent = cleanName;
         if (lastScanDisplay) {
           lastScanDisplay.innerHTML = `Ticket #${tixNumStr}${secStr} &middot; <span class="last-scan-price-accent">${priceStr}</span>`;
         }
@@ -947,7 +948,7 @@ function renderHeaderAndMetrics() {
   if (ticketsSoldCounterEl) ticketsSoldCounterEl.textContent = `${displayTickets} tickets · final at close`;
 
   const activePacksEl = document.getElementById('activePacksCount');
-  if (activePacksEl) activePacksEl.textContent = String(activeCount);
+  if (activePacksEl) activePacksEl.textContent = String(state.activationsCount !== undefined ? state.activationsCount : 2);
 
   const rackInUseCountSub = document.getElementById('rackInUseCountSub');
   if (rackInUseCountSub) rackInUseCountSub.textContent = `${activeCount} of ${state.totalSlots || 65} in use`;
@@ -997,6 +998,16 @@ function renderHeaderAndMetrics() {
 
   const sidebarAvatar = document.getElementById('sidebarAvatar');
   if (sidebarAvatar) sidebarAvatar.textContent = (state.cashierName || 'M').charAt(0).toUpperCase();
+
+  const sidebarUserRole = document.getElementById('sidebarUserRole');
+  if (sidebarUserRole) {
+    let roleTitle = 'Cashier';
+    const cName = (state.cashierName || '').toLowerCase();
+    if (cName === 'master') roleTitle = 'Owner';
+    else if (cName === 'carlos') roleTitle = 'Shift Manager';
+    else if (cName === 'priya') roleTitle = 'Cashier';
+    sidebarUserRole.textContent = `${roleTitle} · Shift #${state.shiftNumber || 1} · ${state.registerName || 'Register 1'}`;
+  }
 
   const soldOutCount = (state.soldOutThisShift || []).length;
   if (metricInventoryCount) {
@@ -1353,7 +1364,7 @@ function handleBoxCardClick(slot) {
       sfx.alert();
       showToast(`Box #${slot.boxNumber} is empty and does not require verification.`, 'info');
     }
-  } else if (state.shiftStatus === 'IN_PROGRESS') {
+  } else {
     if (isBoxActive) {
       // Open Box Adjust Modal so user can view details or adjust count or set to 0 (make empty)
       openBoxAdjustModal(slot);
@@ -1477,6 +1488,78 @@ function updateAdjustModalDynamicStats() {
   }
 }
 
+function renderBoxPackHistory(slot) {
+  const container = document.getElementById('boxDetailPackHistoryTimeline');
+  if (!container || !slot) return;
+
+  const currentTicket = slot.currentTicket !== undefined && slot.currentTicket !== null ? slot.currentTicket : 0;
+  let startTicket = slot.startTicket !== undefined && slot.startTicket !== null ? slot.startTicket : 0;
+  const soldThisShift = Math.max(0, currentTicket - startTicket);
+  const daysActive = slot.daysActive || 2;
+  const shiftNum = state.shiftNumber || 1;
+  const cashier = state.cashierName || 'master';
+
+  let lastShiftSummary = 'Yesterday 3:41 PM · Report v1 - Carlos';
+  if (Array.isArray(state.shiftHistory) && state.shiftHistory.length > 0) {
+    const lastShift = state.shiftHistory[state.shiftHistory.length - 1];
+    const d = lastShift.endedAt ? new Date(lastShift.endedAt) : (lastShift.startedAt ? new Date(lastShift.startedAt) : null);
+    if (d) {
+      const dStr = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const tStr = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+      lastShiftSummary = `${dStr} ${tStr} · Report v${lastShift.shiftNumber || 1} - ${lastShift.cashier || 'Carlos'}`;
+    }
+  }
+
+  container.innerHTML = `
+    <!-- Selling now -->
+    <div class="pack-timeline-item">
+      <div class="timeline-line-wrap">
+        <span class="timeline-dot dot-green"></span>
+        <span class="timeline-vertical-line"></span>
+      </div>
+      <div class="timeline-content-wrap">
+        <div class="timeline-event-title">Selling now &middot; next ticket #${String(currentTicket).padStart(3, '0')}</div>
+        <div class="timeline-event-meta">${soldThisShift} sold this shift &middot; Shift #${shiftNum}</div>
+      </div>
+    </div>
+
+    <!-- Shift closed -->
+    <div class="pack-timeline-item">
+      <div class="timeline-line-wrap">
+        <span class="timeline-dot dot-gray"></span>
+        <span class="timeline-vertical-line"></span>
+      </div>
+      <div class="timeline-content-wrap">
+        <div class="timeline-event-title">Shift closed at #${String(startTicket).padStart(3, '0')}</div>
+        <div class="timeline-event-meta">${lastShiftSummary}</div>
+      </div>
+    </div>
+
+    <!-- Activated in Box -->
+    <div class="pack-timeline-item">
+      <div class="timeline-line-wrap">
+        <span class="timeline-dot dot-blue"></span>
+        <span class="timeline-vertical-line"></span>
+      </div>
+      <div class="timeline-content-wrap">
+        <div class="timeline-event-title">Activated in Box ${slot.boxNumber} at #000</div>
+        <div class="timeline-event-meta">${daysActive} day${daysActive === 1 ? '' : 's'} ago &middot; ${cashier}</div>
+      </div>
+    </div>
+
+    <!-- Received from Lottery -->
+    <div class="pack-timeline-item">
+      <div class="timeline-line-wrap">
+        <span class="timeline-dot dot-gray"></span>
+      </div>
+      <div class="timeline-content-wrap">
+        <div class="timeline-event-title">Received from Lottery</div>
+        <div class="timeline-event-meta">Delivery &middot; ${daysActive} day${daysActive === 1 ? '' : 's'} ago &middot; Priya</div>
+      </div>
+    </div>
+  `;
+}
+
 function openBoxAdjustModal(slot) {
   currentAdjustingSlot = slot;
   if (!boxAdjustModal) return;
@@ -1595,6 +1678,7 @@ function openBoxAdjustModal(slot) {
     adjustBarcodesCount.textContent = (slot.scannedBarcodes || []).length;
   }
 
+  renderBoxPackHistory(slot);
   sfx.keypad();
   boxAdjustModal.showModal();
 }
@@ -2141,8 +2225,192 @@ function handlePtoDelete() {
   currentPtoActionItem = null;
 }
 
+let pendingApprovalCallback = null;
+let currentManagerPin = '';
+let selectedApprovalReason = 'Scanned wrong pack';
+
+function updateManagerPinDisplay() {
+  const dots = document.querySelectorAll('#mgrPinDots .mgr-pin-dot');
+  dots.forEach((dot, idx) => {
+    dot.classList.toggle('filled', idx < currentManagerPin.length);
+  });
+}
+
+function openManagerApprovalModal(options = {}) {
+  const modal = document.getElementById('managerApprovalModal');
+  if (!modal) return;
+
+  pendingApprovalCallback = options.onApprove || null;
+  currentManagerPin = '';
+  selectedApprovalReason = 'Scanned wrong pack';
+
+  const subtitleEl = document.getElementById('mgrApprSubtitle');
+  if (subtitleEl && options.subtitle) {
+    subtitleEl.textContent = options.subtitle;
+  } else if (subtitleEl) {
+    subtitleEl.textContent = 'Clearing a box removes an activation. A manager must approve it.';
+  }
+
+  // Reset reason pills
+  const reasonBtns = document.querySelectorAll('#mgrApprReasonsGroup .mgr-reason-pill');
+  reasonBtns.forEach(btn => {
+    btn.classList.toggle('active', btn.getAttribute('data-reason') === selectedApprovalReason);
+  });
+
+  // Reset PIN dots
+  updateManagerPinDisplay();
+
+  // Reset error banner
+  const errEl = document.getElementById('mgrApprErrorMsg');
+  if (errEl) {
+    errEl.style.display = 'none';
+    errEl.textContent = '';
+  }
+
+  sfx.keypad();
+  modal.showModal();
+}
+
+function setupManagerApprovalModal() {
+  const modal = document.getElementById('managerApprovalModal');
+  if (!modal) return;
+
+  const closeBtn = document.getElementById('closeManagerApprBtn');
+  const cancelBtn = document.getElementById('cancelManagerApprBtn');
+  const confirmBtn = document.getElementById('confirmManagerApprBtn');
+  const keypad = document.getElementById('mgrApprKeypad');
+  const reasonsGroup = document.getElementById('mgrApprReasonsGroup');
+  const errEl = document.getElementById('mgrApprErrorMsg');
+
+  closeBtn?.addEventListener('click', () => {
+    modal.close();
+    if (currentAdjustingSlot) openBoxAdjustModal(currentAdjustingSlot);
+  });
+  cancelBtn?.addEventListener('click', () => {
+    modal.close();
+    if (currentAdjustingSlot) openBoxAdjustModal(currentAdjustingSlot);
+  });
+
+  reasonsGroup?.addEventListener('click', (e) => {
+    const pill = e.target.closest('.mgr-reason-pill');
+    if (!pill) return;
+    sfx.keypad();
+    document.querySelectorAll('#mgrApprReasonsGroup .mgr-reason-pill').forEach(b => b.classList.remove('active'));
+    pill.classList.add('active');
+    selectedApprovalReason = pill.getAttribute('data-reason') || 'Other';
+  });
+
+  keypad?.addEventListener('click', (e) => {
+    const btn = e.target.closest('.mgr-key-btn');
+    if (!btn) return;
+    const key = btn.getAttribute('data-key');
+    sfx.keypad();
+
+    if (key === 'clear') {
+      currentManagerPin = '';
+      if (errEl) errEl.style.display = 'none';
+      updateManagerPinDisplay();
+      return;
+    }
+
+    if (key === 'backspace') {
+      if (currentManagerPin.length > 0) {
+        currentManagerPin = currentManagerPin.slice(0, -1);
+      }
+      if (errEl) errEl.style.display = 'none';
+      updateManagerPinDisplay();
+      return;
+    }
+
+    if (/^[0-9]$/.test(key)) {
+      if (currentManagerPin.length < 4) {
+        currentManagerPin += key;
+        updateManagerPinDisplay();
+      }
+      if (errEl) errEl.style.display = 'none';
+    }
+  });
+
+  // Physical keyboard entry support
+  modal.addEventListener('keydown', (e) => {
+    if (e.key >= '0' && e.key <= '9') {
+      if (currentManagerPin.length < 4) {
+        currentManagerPin += e.key;
+        updateManagerPinDisplay();
+      }
+      if (errEl) errEl.style.display = 'none';
+      sfx.keypad();
+    } else if (e.key === 'Backspace') {
+      if (currentManagerPin.length > 0) {
+        currentManagerPin = currentManagerPin.slice(0, -1);
+        updateManagerPinDisplay();
+      }
+      if (errEl) errEl.style.display = 'none';
+      sfx.keypad();
+    } else if (e.key === 'Enter') {
+      confirmBtn?.click();
+    }
+  });
+
+  confirmBtn?.addEventListener('click', () => {
+    if (currentManagerPin.length < 4) {
+      if (errEl) {
+        errEl.textContent = 'Please enter a 4-digit manager PIN';
+        errEl.style.display = 'block';
+      }
+      sfx.alert();
+      return;
+    }
+
+    // Check manager PIN against reference and state clerks/roles
+    // Master PIN: '1234', Carlos PIN: '0000'
+    const validPins = ['1234', '0000'];
+    if (Array.isArray(state.clerks)) {
+      state.clerks.forEach(c => {
+        if (c.pin) validPins.push(String(c.pin));
+      });
+    }
+    if (Array.isArray(state.rolesPeople)) {
+      state.rolesPeople.forEach(r => {
+        if (r.pin) validPins.push(String(r.pin));
+      });
+    }
+
+    const isAuthorized = validPins.includes(currentManagerPin);
+    let managerName = currentManagerPin === '1234' ? 'master' : (currentManagerPin === '0000' ? 'Carlos' : 'Manager');
+    if (Array.isArray(state.clerks)) {
+      const match = state.clerks.find(c => String(c.pin) === currentManagerPin);
+      if (match) managerName = match.name;
+    }
+
+    if (!isAuthorized) {
+      sfx.alert();
+      if (errEl) {
+        errEl.textContent = 'Invalid PIN. Please enter master (1234) or Carlos (0000) PIN.';
+        errEl.style.display = 'block';
+      }
+      currentManagerPin = '';
+      updateManagerPinDisplay();
+      return;
+    }
+
+    sfx.success();
+    modal.close();
+
+    if (typeof pendingApprovalCallback === 'function') {
+      pendingApprovalCallback({
+        approved: true,
+        manager: managerName,
+        reason: selectedApprovalReason,
+        pin: currentManagerPin
+      });
+    }
+  });
+}
+
 function setupBoxAdjustModal() {
   if (!boxAdjustModal) return;
+  setupManagerApprovalModal();
 
   closeBoxAdjustBtn?.addEventListener('click', () => boxAdjustModal.close());
   cancelBoxAdjustBtn?.addEventListener('click', () => boxAdjustModal.close());
@@ -2290,19 +2558,41 @@ function setupBoxAdjustModal() {
 
   btnSetCountZero?.addEventListener('click', () => {
     if (!currentAdjustingSlot) return;
-    sfx.alert();
-    if ((currentAdjustingSlot.currentTicket || 0) > 0) {
-      recordSoldOutPack(currentAdjustingSlot, currentAdjustingSlot.currentTicket);
+    const slotToClear = currentAdjustingSlot;
+    if (boxAdjustModal?.open) {
+      boxAdjustModal.close();
     }
-    currentAdjustingSlot.currentTicket = 0;
-    currentAdjustingSlot.status = 'EMPTY';
-    currentAdjustingSlot.activatedThisShift = false;
-    saveState(state);
-    boxAdjustModal.close();
-    renderHeaderAndMetrics();
-    renderDispenserRack();
-    renderSlotsRibbon();
-    showToast(`📦 Box #${currentAdjustingSlot.boxNumber} emptied.`, 'info');
+
+    openManagerApprovalModal({
+      subtitle: `Clearing Box #${slotToClear.boxNumber} removes an activation. A manager must approve it.`,
+      onApprove: (approval) => {
+        sfx.alert();
+        if ((slotToClear.currentTicket || 0) > 0) {
+          recordSoldOutPack(slotToClear, slotToClear.currentTicket);
+        }
+        slotToClear.currentTicket = 0;
+        slotToClear.status = 'EMPTY';
+        slotToClear.activatedThisShift = false;
+
+        // Record audit trail entry
+        if (!state.auditTrail) state.auditTrail = [];
+        state.auditTrail.unshift({
+          action: 'LOADED_BY_MISTAKE',
+          boxNumber: slotToClear.boxNumber,
+          gameName: slotToClear.gameName,
+          reason: approval.reason,
+          approvedBy: approval.manager,
+          timestamp: new Date().toISOString()
+        });
+
+        saveState(state);
+        boxAdjustModal?.close();
+        renderHeaderAndMetrics();
+        renderDispenserRack();
+        renderSlotsRibbon();
+        showToast(`📦 Box #${slotToClear.boxNumber} cleared (${approval.manager} approved: ${approval.reason}).`, 'info');
+      }
+    });
   });
 
   saveBoxAdjustBtn?.addEventListener('click', () => {
@@ -3698,25 +3988,24 @@ function addNewBox() {
 // -------------------------------------------------------------
 
 function handleMainShiftAction() {
-  const isDailyMode = state.settings?.operationMode !== 'SHIFTS';
+  sfx.beep();
+  if (state.shiftStatus === 'SHIFT_ENDED') {
+    if (typeof window.showShiftClosedView === 'function') {
+      window.showShiftClosedView();
+      return;
+    }
+  }
   if (state.shiftStatus === 'IN_PROGRESS') {
-    // Transition to Scanning End Shift / End Day mode
     state.shiftStatus = 'SCANNING_END_SHIFT';
-    state.slots.forEach(s => s.scannedInEndShift = false);
     saveState(state);
-    sfx.beep();
-    voice.speakStartScanning();
-    renderHeaderAndMetrics();
-    renderDispenserRack();
-    renderSlotsRibbon();
-    showToast(isDailyMode ? 'End Day mode started! Scan the front ticket of each active dispenser box.' : 'End Shift mode started! Scan or tap each active dispenser box.', 'info');
-  } else if (state.shiftStatus === 'SCANNING_END_SHIFT') {
-    // Show Calculating Segmented Spinner (Matching Video 02:55)
-    showCalculatingSpinner('Calculating', isDailyMode ? 'Calculating End Day' : 'Calculating End Shift', () => {
-      openEndShiftConfirmation();
-    }, 900);
-  } else if (state.shiftStatus === 'SHIFT_ENDED') {
-    startNewShift();
+  }
+  if (typeof window.showCloseShiftView === 'function') {
+    window.showCloseShiftView();
+  } else {
+    const viewSell = document.getElementById('viewSellCounter');
+    const viewClose = document.getElementById('viewCloseShift');
+    if (viewSell) viewSell.style.display = 'none';
+    if (viewClose) viewClose.style.display = 'block';
   }
 }
 
@@ -3954,19 +4243,29 @@ function openShiftReportModal() {
   const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
 
   const shiftModalTitle = document.getElementById('shiftReportModalTitle');
-  if (shiftModalTitle) shiftModalTitle.textContent = isDailyMode ? 'Day Report' : 'Shift Report';
+  if (shiftModalTitle) shiftModalTitle.textContent = isDailyMode ? 'Day settlement' : `Shift #${state.shiftNumber || 1} settlement`;
 
   const repShiftNumLabel = document.getElementById('repShiftNumLabel');
-  if (repShiftNumLabel) repShiftNumLabel.textContent = isDailyMode ? 'Day' : 'Shift';
+  if (repShiftNumLabel) repShiftNumLabel.textContent = isDailyMode ? 'DAY' : `SHIFT #${state.shiftNumber || 1}`;
+
+  const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const formattedDate = `${monthNames[now.getMonth()]} ${now.getDate()}, ${now.getFullYear()}`;
+  const repShiftNumDate = document.getElementById('repShiftNumDate');
+  if (repShiftNumDate) repShiftNumDate.textContent = formattedDate;
 
   repShiftNum.textContent = isDailyMode ? dateStr : `#${state.shiftNumber}`;
-  repCashier.textContent = state.cashierName;
+  repCashier.textContent = state.cashierName || 'master';
 
   const repTotalSalesLabel = document.getElementById('repTotalSalesLabel');
   if (repTotalSalesLabel) repTotalSalesLabel.textContent = isDailyMode ? 'TOTAL LOTTO DAY SALES' : 'TOTAL LOTTO SHIFT SALES';
 
   const reportNewShiftBtn = document.getElementById('reportNewShiftBtn');
-  if (reportNewShiftBtn) reportNewShiftBtn.textContent = isDailyMode ? '✨ New Day' : '🚀 New Shift';
+  if (reportNewShiftBtn) {
+    const span = reportNewShiftBtn.querySelector('span');
+    if (span) {
+      span.textContent = isDailyMode ? 'End day' : 'End shift';
+    }
+  }
 
   reportBodyRows.innerHTML = '';
   
@@ -4017,27 +4316,26 @@ function openShiftReportModal() {
     row.className = 'report-row';
     let tagHtml = '';
     if (item.statusTag) {
-      const tagClass = item.isReturned ? 'report-tag-returned' : 'report-tag-soldout';
-      tagHtml = `<span class="report-status-tag ${tagClass}">${item.statusTag}</span>`;
+      tagHtml = `<span class="settle-sold-out-badge">${item.statusTag === 'SOLD OUT' ? 'Sold out' : item.statusTag}</span>`;
     }
     row.innerHTML = `
-      <td class="col-box"><span class="report-box-badge">Box ${item.boxNumber}</span></td>
+      <td class="col-box"><span class="settle-box-badge">${item.boxNumber}</span></td>
       <td class="col-game" title="${item.gameName}">
-        ${cleanGameTitle(item.gameName)}${tagHtml}
+        <span class="settle-game-name">${cleanGameTitle(item.gameName)}</span>${tagHtml}
       </td>
-      <td class="col-price">$${item.price}</td>
-      <td class="col-start">${String(item.startTicket).padStart(2, '0')}</td>
-      <td class="col-close">${String(item.closeTicket).padStart(2, '0')}</td>
-      <td class="col-sold ${item.sold > 0 ? 'has-sales' : 'no-sales'}">${item.sold}</td>
-      <td class="col-amount ${item.amount > 0 ? 'has-sales' : 'no-sales'}">$${item.amount.toFixed(2)}</td>
+      <td class="col-price"><span class="settle-price-tag">$${item.price}</span></td>
+      <td class="col-start"><span class="settle-tix-num">${String(item.startTicket).padStart(3, '0')}</span></td>
+      <td class="col-close"><span class="settle-tix-num">${String(item.closeTicket).padStart(3, '0')}</span></td>
+      <td class="col-sold"><span class="settle-sold-num ${item.sold > 0 ? 'has-sales' : 'no-sales'}">${item.sold}</span></td>
+      <td class="col-amount" style="text-align: right;"><span class="settle-amt-val ${item.amount > 0 ? 'has-sales' : 'no-sales'}">$${item.amount.toFixed(2)}</span></td>
     `;
     reportBodyRows.appendChild(row);
   });
 
   repTicketsSold.textContent = totalSold;
-  repTotalRevenue.textContent = `$${totalRevenue.toFixed(2)}`;
+  repTotalRevenue.textContent = `$${totalRevenue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   repSumSold.textContent = totalSold;
-  repSumAmount.textContent = `$${totalRevenue.toFixed(2)}`;
+  repSumAmount.textContent = `$${totalRevenue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
   // Show empty state if no tickets sold
   if (reportBodyRows.children.length === 0) {
@@ -7173,13 +7471,17 @@ function openPastShiftReportModal(h) {
   const isDailyMode = state.settings?.operationMode !== 'SHIFTS';
 
   const shiftModalTitle = document.getElementById('shiftReportModalTitle');
-  if (shiftModalTitle) shiftModalTitle.textContent = isDailyMode ? 'Day Report' : 'Shift Report';
+  if (shiftModalTitle) shiftModalTitle.textContent = isDailyMode ? 'Day settlement' : `Shift #${h.shiftNumber || 1} settlement`;
 
   const repShiftNumLabel = document.getElementById('repShiftNumLabel');
-  if (repShiftNumLabel) repShiftNumLabel.textContent = isDailyMode ? 'Day' : 'Shift';
+  if (repShiftNumLabel) repShiftNumLabel.textContent = isDailyMode ? 'DAY' : `SHIFT #${h.shiftNumber || 1}`;
 
   const dateObj = h.endedAt ? new Date(h.endedAt) : (h.startedAt ? new Date(h.startedAt) : new Date());
   const dateStr = dateObj.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' });
+  const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const formattedDate = `${monthNames[dateObj.getMonth()]} ${dateObj.getDate()}, ${dateObj.getFullYear()}`;
+  const repShiftNumDate = document.getElementById('repShiftNumDate');
+  if (repShiftNumDate) repShiftNumDate.textContent = formattedDate;
 
   repShiftNum.innerHTML = isDailyMode 
     ? `${dateStr} <span class="audit-history-badge">HISTORY</span>` 
@@ -7191,7 +7493,12 @@ function openPastShiftReportModal(h) {
   if (repTotalSalesLabel) repTotalSalesLabel.textContent = isDailyMode ? 'TOTAL LOTTO DAY SALES' : 'TOTAL LOTTO SHIFT SALES';
 
   const reportNewShiftBtn = document.getElementById('reportNewShiftBtn');
-  if (reportNewShiftBtn) reportNewShiftBtn.textContent = isDailyMode ? '✨ New Day' : '🚀 New Shift';
+  if (reportNewShiftBtn) {
+    const span = reportNewShiftBtn.querySelector('span');
+    if (span) {
+      span.textContent = isDailyMode ? 'End day' : 'End shift';
+    }
+  }
 
   reportBodyRows.innerHTML = '';
   
@@ -7207,19 +7514,18 @@ function openPastShiftReportModal(h) {
     row.className = 'report-row';
     let tagHtml = '';
     if (item.statusTag) {
-      const tagClass = item.isReturned ? 'report-tag-returned' : 'report-tag-soldout';
-      tagHtml = `<span class="report-status-tag ${tagClass}">${item.statusTag}</span>`;
+      tagHtml = `<span class="settle-sold-out-badge">${item.statusTag === 'SOLD OUT' ? 'Sold out' : item.statusTag}</span>`;
     }
     row.innerHTML = `
-      <td class="col-box"><span class="report-box-badge">Box ${item.boxNumber}</span></td>
+      <td class="col-box"><span class="settle-box-badge">${item.boxNumber}</span></td>
       <td class="col-game" title="${item.gameName}">
-        ${cleanGameTitle(item.gameName)}${tagHtml}
+        <span class="settle-game-name">${cleanGameTitle(item.gameName)}</span>${tagHtml}
       </td>
-      <td class="col-price">$${item.price}</td>
-      <td class="col-start">${String(item.startTicket).padStart(2, '0')}</td>
-      <td class="col-close">${String(item.closeTicket).padStart(2, '0')}</td>
-      <td class="col-sold ${item.sold > 0 ? 'has-sales' : 'no-sales'}">${item.sold}</td>
-      <td class="col-amount ${item.amount > 0 ? 'has-sales' : 'no-sales'}">$${item.amount.toFixed(2)}</td>
+      <td class="col-price"><span class="settle-price-tag">$${item.price}</span></td>
+      <td class="col-start"><span class="settle-tix-num">${String(item.startTicket).padStart(3, '0')}</span></td>
+      <td class="col-close"><span class="settle-tix-num">${String(item.closeTicket).padStart(3, '0')}</span></td>
+      <td class="col-sold"><span class="settle-sold-num ${item.sold > 0 ? 'has-sales' : 'no-sales'}">${item.sold}</span></td>
+      <td class="col-amount" style="text-align: right;"><span class="settle-amt-val ${item.amount > 0 ? 'has-sales' : 'no-sales'}">$${item.amount.toFixed(2)}</span></td>
     `;
     reportBodyRows.appendChild(row);
   });
@@ -7247,9 +7553,9 @@ function openPastShiftReportModal(h) {
   }
 
   repTicketsSold.textContent = totalSold;
-  repTotalRevenue.textContent = `$${Number(totalRevenue).toFixed(2)}`;
+  repTotalRevenue.textContent = `$${Number(totalRevenue).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   repSumSold.textContent = totalSold;
-  repSumAmount.textContent = `$${Number(totalRevenue).toFixed(2)}`;
+  repSumAmount.textContent = `$${Number(totalRevenue).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
   // Populate cash reconciliation from historical data
   const recLottoSales = document.getElementById('recLottoSales');
@@ -7607,6 +7913,58 @@ function setupEventListeners() {
     });
   }
 
+  /* ----------------------------------------------------------------
+     MOBILE SIDEBAR HAMBURGER TOGGLE
+     ---------------------------------------------------------------- */
+  const mobileHamburgerBtn = document.getElementById('mobileHamburgerBtn');
+  const sidebarMobileOverlay = document.getElementById('sidebarMobileOverlay');
+  const mobileSidebar = document.querySelector('.pos-sidebar');
+
+  function openMobileSidebar() {
+    if (!mobileSidebar) return;
+    mobileSidebar.classList.add('mobile-open');
+    sidebarMobileOverlay?.classList.add('active');
+    document.body.style.overflow = 'hidden';
+  }
+
+  function closeMobileSidebar() {
+    if (!mobileSidebar) return;
+    mobileSidebar.classList.remove('mobile-open');
+    sidebarMobileOverlay?.classList.remove('active');
+    document.body.style.overflow = '';
+  }
+
+  if (mobileHamburgerBtn) {
+    mobileHamburgerBtn.addEventListener('click', () => {
+      if (mobileSidebar?.classList.contains('mobile-open')) {
+        closeMobileSidebar();
+      } else {
+        openMobileSidebar();
+      }
+    });
+  }
+
+  if (sidebarMobileOverlay) {
+    sidebarMobileOverlay.addEventListener('click', closeMobileSidebar);
+  }
+
+  // Auto-close mobile sidebar when a nav item is clicked
+  document.querySelectorAll('.sidebar-nav-item').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (window.innerWidth <= 768 && mobileSidebar?.classList.contains('mobile-open')) {
+        closeMobileSidebar();
+      }
+    });
+  });
+
+  // Close mobile sidebar on window resize to desktop
+  window.addEventListener('resize', () => {
+    if (window.innerWidth > 768) {
+      closeMobileSidebar();
+    }
+  });
+
+
   const btnTrimRackBtn = document.getElementById('btnTrimRackBtn');
   if (btnTrimRackBtn) {
     btnTrimRackBtn.addEventListener('click', openResetOptionsModal);
@@ -7787,9 +8145,23 @@ function setupEventListeners() {
     window.print();
   }
 
+  window.addEventListener('beforeprint', () => {
+    const viewReport = document.getElementById('viewDayReport');
+    if (viewReport && viewReport.style.display !== 'none' && !document.body.classList.contains('print-fullpage-report') && !document.body.classList.contains('print-day-report')) {
+      document.body.classList.add('print-day-report-sheet');
+      setDynamicPrintPageSize(`
+        @page {
+          size: letter portrait !important;
+          margin: 8mm 10mm !important;
+        }
+      `);
+    }
+  });
+
   window.addEventListener('afterprint', () => {
     document.body.classList.remove('print-fullpage-report');
     document.body.classList.remove('print-day-report');
+    document.body.classList.remove('print-day-report-sheet');
   });
 
   // Shift Report Modal buttons
@@ -7831,11 +8203,7 @@ function setupEventListeners() {
   // Summary Metric Tabs Click Handlers
   document.getElementById('tabSettlement')?.addEventListener('click', () => {
     sfx.keypad();
-    if (state.shiftStatus === 'SHIFT_ENDED') {
-      openDayReportModal(() => state, sfx);
-    } else {
-      openShiftReportModal();
-    }
+    openShiftReportModal();
   });
 
   document.getElementById('tabToday')?.addEventListener('click', () => {
@@ -8483,14 +8851,21 @@ function setupEventListeners() {
     const viewInv = document.getElementById('viewInventory');
     const viewHist = document.getElementById('viewHistory');
     const viewSet = document.getElementById('viewSettings');
+    const viewClose = document.getElementById('viewCloseShift');
+    const viewClosed = document.getElementById('viewShiftClosed');
+    const viewHandover = document.getElementById('viewStartShiftHandover');
     if (viewSell) viewSell.style.display = 'block';
     if (viewReceive) viewReceive.style.display = 'none';
     if (viewReport) viewReport.style.display = 'none';
     if (viewInv) viewInv.style.display = 'none';
     if (viewHist) viewHist.style.display = 'none';
     if (viewSet) viewSet.style.display = 'none';
+    if (viewClose) viewClose.style.display = 'none';
+    if (viewClosed) viewClosed.style.display = 'none';
+    if (viewHandover) viewHandover.style.display = 'none';
     setActiveNav(document.getElementById('navSellCounter'));
   }
+  window.showSellCounterView = showSellCounterView;
 
   function showReceivePacksView() {
     const viewSell = document.getElementById('viewSellCounter');
@@ -8499,13 +8874,19 @@ function setupEventListeners() {
     const viewInv = document.getElementById('viewInventory');
     const viewHist = document.getElementById('viewHistory');
     const viewSet = document.getElementById('viewSettings');
+    const viewClose = document.getElementById('viewCloseShift');
+    const viewClosed = document.getElementById('viewShiftClosed');
+    const viewHandover = document.getElementById('viewStartShiftHandover');
     if (viewSell) viewSell.style.display = 'none';
     if (viewReceive) viewReceive.style.display = 'block';
     if (viewReport) viewReport.style.display = 'none';
     if (viewInv) viewInv.style.display = 'none';
     if (viewHist) viewHist.style.display = 'none';
     if (viewSet) viewSet.style.display = 'none';
-    setActiveNav(document.getElementById('navReceivePacks'));
+    if (viewClose) viewClose.style.display = 'none';
+    if (viewClosed) viewClosed.style.display = 'none';
+    if (viewHandover) viewHandover.style.display = 'none';
+    setActiveNav(document.getElementById('navInventory') || document.getElementById('navReceivePacks'));
     renderReceivePacksView();
     window.scrollTo({ top: 0, behavior: 'smooth' });
     setTimeout(() => {
@@ -8520,13 +8901,19 @@ function setupEventListeners() {
     const viewInv = document.getElementById('viewInventory');
     const viewHist = document.getElementById('viewHistory');
     const viewSet = document.getElementById('viewSettings');
+    const viewClose = document.getElementById('viewCloseShift');
+    const viewClosed = document.getElementById('viewShiftClosed');
+    const viewHandover = document.getElementById('viewStartShiftHandover');
     if (viewSell) viewSell.style.display = 'none';
     if (viewReceive) viewReceive.style.display = 'none';
     if (viewReport) viewReport.style.display = 'block';
     if (viewInv) viewInv.style.display = 'none';
     if (viewHist) viewHist.style.display = 'none';
     if (viewSet) viewSet.style.display = 'none';
-    setActiveNav(document.getElementById('navDayReport'));
+    if (viewClose) viewClose.style.display = 'none';
+    if (viewClosed) viewClosed.style.display = 'none';
+    if (viewHandover) viewHandover.style.display = 'none';
+    setActiveNav(null);
     renderDayReportView();
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
@@ -8538,12 +8925,18 @@ function setupEventListeners() {
     const viewInv = document.getElementById('viewInventory');
     const viewHist = document.getElementById('viewHistory');
     const viewSet = document.getElementById('viewSettings');
+    const viewClose = document.getElementById('viewCloseShift');
+    const viewClosed = document.getElementById('viewShiftClosed');
+    const viewHandover = document.getElementById('viewStartShiftHandover');
     if (viewSell) viewSell.style.display = 'none';
     if (viewReceive) viewReceive.style.display = 'none';
     if (viewReport) viewReport.style.display = 'none';
     if (viewInv) viewInv.style.display = 'block';
     if (viewHist) viewHist.style.display = 'none';
     if (viewSet) viewSet.style.display = 'none';
+    if (viewClose) viewClose.style.display = 'none';
+    if (viewClosed) viewClosed.style.display = 'none';
+    if (viewHandover) viewHandover.style.display = 'none';
     setActiveNav(document.getElementById('navInventory'));
     renderInventoryView();
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -8556,12 +8949,18 @@ function setupEventListeners() {
     const viewInv = document.getElementById('viewInventory');
     const viewHist = document.getElementById('viewHistory');
     const viewSet = document.getElementById('viewSettings');
+    const viewClose = document.getElementById('viewCloseShift');
+    const viewClosed = document.getElementById('viewShiftClosed');
+    const viewHandover = document.getElementById('viewStartShiftHandover');
     if (viewSell) viewSell.style.display = 'none';
     if (viewReceive) viewReceive.style.display = 'none';
     if (viewReport) viewReport.style.display = 'none';
     if (viewInv) viewInv.style.display = 'none';
     if (viewHist) viewHist.style.display = 'block';
     if (viewSet) viewSet.style.display = 'none';
+    if (viewClose) viewClose.style.display = 'none';
+    if (viewClosed) viewClosed.style.display = 'none';
+    if (viewHandover) viewHandover.style.display = 'none';
     setActiveNav(document.getElementById('navHistory'));
     renderHistoryView();
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -8574,16 +8973,670 @@ function setupEventListeners() {
     const viewInv = document.getElementById('viewInventory');
     const viewHist = document.getElementById('viewHistory');
     const viewSet = document.getElementById('viewSettings');
+    const viewClose = document.getElementById('viewCloseShift');
+    const viewClosed = document.getElementById('viewShiftClosed');
+    const viewHandover = document.getElementById('viewStartShiftHandover');
     if (viewSell) viewSell.style.display = 'none';
     if (viewReceive) viewReceive.style.display = 'none';
     if (viewReport) viewReport.style.display = 'none';
     if (viewInv) viewInv.style.display = 'none';
     if (viewHist) viewHist.style.display = 'none';
     if (viewSet) viewSet.style.display = 'block';
+    if (viewClose) viewClose.style.display = 'none';
+    if (viewClosed) viewClosed.style.display = 'none';
+    if (viewHandover) viewHandover.style.display = 'none';
     setActiveNav(document.getElementById('navSettings'));
     populateSettingsInputs();
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
+
+  // =============================================================
+  // CLOSE SHIFT (SCAN & RECONCILE) - Screen 03 Specification
+  // =============================================================
+  const closeShiftState = {
+    filter: 'all',
+    protoScanned60: false,
+    draftSaved: false,
+    managerOverride: false,
+    packs: [
+      { box: 1, game: 'Cash Explosion', pack: '141809', price: 2, opening: '#042', closing: '#048', sold: 6, sales: 12.00, status: 'scanned', statusLabel: 'Scanned', statusSub: '', category: 'done' },
+      { box: 2, game: 'Jumbo Bucks', pack: '184022', price: 5, opening: '#010', closing: '#022', sold: 12, sales: 60.00, status: 'scanned', statusLabel: 'Scanned', statusSub: '', category: 'done' },
+      { box: 3, game: 'Georgia 7s', pack: '190288', price: 10, opening: '#004', closing: '#011', sold: 7, sales: 70.00, status: 'scanned', statusLabel: 'Scanned', statusSub: '', category: 'done' },
+      { box: 4, game: 'Hit $500', pack: '193012', price: 5, opening: '#028', closing: '#035', sold: 7, sales: 35.00, status: 'scanned', statusLabel: 'Scanned', statusSub: '', category: 'done' },
+      { box: 5, game: 'Giant Jumbo Bucks', pack: '198841', price: 10, opening: '#000', closing: '#008', sold: 8, sales: 80.00, status: 'scanned', statusLabel: 'Scanned', statusSub: '', category: 'done' },
+      { box: 6, game: 'Billion Dollar Blockbuster', pack: '110901', price: 20, opening: '#012', closing: '#016', sold: 4, sales: 80.00, status: 'scanned', statusLabel: 'Scanned', statusSub: '', category: 'done' },
+      { box: 7, game: 'Diamond Mine', pack: '142099', price: 3, opening: '#015', closing: '#021', sold: 6, sales: 18.00, status: 'scanned-twice', statusLabel: 'Scanned twice', statusSub: 'Counted once only', category: 'attention' },
+      { box: 8, game: 'Cash 3', pack: '170942', price: 1, opening: '#080', closing: '#095', sold: 15, sales: 15.00, status: 'scanned', statusLabel: 'Scanned', statusSub: '', category: 'done' },
+      { box: 9, game: 'Cash 4', pack: '170943', price: 1, opening: '#060', closing: '#072', sold: 12, sales: 12.00, status: 'scanned', statusLabel: 'Scanned', statusSub: '', category: 'done' },
+      { box: 10, game: 'Mega Millions', pack: '165432', price: 2, opening: '#030', closing: '#038', sold: 8, sales: 16.00, status: 'scanned', statusLabel: 'Scanned', statusSub: '', category: 'done' },
+      { box: 11, game: 'Powerball', pack: '165433', price: 2, opening: '#025', closing: '#031', sold: 6, sales: 12.00, status: 'scanned', statusLabel: 'Scanned', statusSub: '', category: 'done' },
+      { box: 12, game: 'Quick $50', pack: '180211', price: 2, opening: '#040', closing: '#052', sold: 12, sales: 24.00, status: 'scanned', statusLabel: 'Scanned', statusSub: '', category: 'done' },
+      { box: 13, game: 'Gold Rush 50X', pack: '184550', price: 10, opening: '#005', closing: '#012', sold: 7, sales: 70.00, status: 'scanned', statusLabel: 'Scanned', statusSub: '', category: 'done' },
+      { box: 14, game: 'Extreme Green', pack: '187600', price: 5, opening: '#015', closing: '#023', sold: 8, sales: 40.00, status: 'scanned', statusLabel: 'Scanned', statusSub: '', category: 'done' },
+      { box: 16, game: 'Treasure Hunt', pack: '130508', price: 3, opening: '#090', closing: '#100', closingSub: '(sold out)', sold: 10, sales: 30.00, status: 'sold-out', statusLabel: 'Sold out', statusSub: '', category: 'done' },
+      { box: 21, game: 'Money Bag Multiplier', pack: '192004', price: 20, opening: '#002', closing: '#005', sold: 3, sales: 60.00, status: 'scanned', statusLabel: 'Scanned', statusSub: '', category: 'done' },
+      { box: 22, game: 'Win It All', pack: '195500', price: 5, opening: '#003', closing: '#001', closingSub: 'went backwards', sold: '—', sales: '—', status: 'check-position', statusLabel: 'Check position', statusSub: 'went backwards', hasActions: true, category: 'attention' },
+      { box: 27, game: 'Platinum Payout', pack: '199902', price: 50, opening: '#001', closing: '#003', sold: 2, sales: 100.00, status: 'scanned', statusLabel: 'Scanned', statusSub: '', category: 'done' },
+      { box: 60, game: 'Jumbo Bucks', pack: '184023', price: 5, opening: '#010', closing: '—', closingSub: '', sold: '—', sales: '—', status: 'not-scanned', statusLabel: 'Not scanned', statusSub: '', hasActions: true, category: 'not_scanned' }
+    ]
+  };
+
+  function renderCloseShiftView() {
+    const tableBody = document.getElementById('csTableBody');
+    if (!tableBody) return;
+
+    const filter = closeShiftState.filter || 'all';
+    const packsToDisplay = closeShiftState.packs.filter(p => {
+      if (filter === 'attention') return p.category === 'attention' || p.status === 'check-position' || p.status === 'scanned-twice';
+      if (filter === 'not_scanned') return p.status === 'not-scanned' || p.category === 'not_scanned';
+      if (filter === 'done') return p.status === 'scanned' || p.status === 'sold-out';
+      return true;
+    });
+
+    tableBody.innerHTML = packsToDisplay.map(pack => {
+      const isAttention = pack.status === 'check-position' || pack.category === 'attention';
+      const rowClass = isAttention ? 'cs-row-attention' : '';
+      
+      let closingHtml = `<span class="cs-ticket-num">${pack.closing}</span>`;
+      if (pack.closingSub) {
+        closingHtml += ` <span class="cs-status-sub ${pack.status === 'check-position' ? 'error' : ''}">${pack.closingSub}</span>`;
+      }
+
+      let statusHtml = '';
+      if (pack.status === 'scanned') {
+        statusHtml = `
+          <span class="cs-status-badge scanned">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+            Scanned
+          </span>`;
+      } else if (pack.status === 'sold-out') {
+        statusHtml = `
+          <span class="cs-status-badge sold-out">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+            Sold out
+          </span>`;
+      } else if (pack.status === 'scanned-twice') {
+        statusHtml = `
+          <span class="cs-status-badge scanned-twice">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+            Scanned twice
+          </span>
+          <span class="cs-status-sub">Counted once only</span>`;
+      } else if (pack.status === 'check-position') {
+        statusHtml = `
+          <span class="cs-status-badge check-position">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2.5">
+              <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+            Check position
+          </span>
+          <div class="cs-row-actions">
+            <button type="button" class="cs-btn-table-action btn-cs-scan-box" data-box="${pack.box}">Scan</button>
+            <button type="button" class="cs-btn-table-action btn-cs-type-box" data-box="${pack.box}">Type position</button>
+          </div>`;
+      } else if (pack.status === 'not-scanned') {
+        statusHtml = `
+          <span class="cs-status-badge not-scanned">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+            Not scanned
+          </span>
+          <div class="cs-row-actions">
+            <button type="button" class="cs-btn-table-action btn-cs-scan-box" data-box="${pack.box}">Scan</button>
+            <button type="button" class="cs-btn-table-action btn-cs-type-box" data-box="${pack.box}">Type position</button>
+          </div>`;
+      }
+
+      return `
+        <tr class="${rowClass}" data-box-id="${pack.box}">
+          <td class="td-box"><div class="cs-box-badge">${pack.box}</div></td>
+          <td class="td-game">
+            <strong class="cs-game-name">${pack.game}</strong>
+            <span class="cs-pack-num">pack ${pack.pack}</span>
+          </td>
+          <td class="td-price">$${pack.price}</td>
+          <td class="td-num"><span class="cs-ticket-num">${pack.opening}</span></td>
+          <td class="td-num">${closingHtml}</td>
+          <td class="td-num"><span class="cs-ticket-num">${pack.sold}</span></td>
+          <td class="td-num"><span class="cs-ticket-num">${pack.sales === '—' ? '—' : '$' + Number(pack.sales).toFixed(2)}</span></td>
+          <td class="td-status">${statusHtml}</td>
+        </tr>
+      `;
+    }).join('');
+
+    tableBody.querySelectorAll('.btn-cs-scan-box').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const box = parseInt(e.currentTarget.dataset.box, 10);
+        triggerProtoScanForBox(box);
+      });
+    });
+
+    tableBody.querySelectorAll('.btn-cs-type-box').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const box = parseInt(e.currentTarget.dataset.box, 10);
+        const entered = prompt(`Enter closing ticket position for Box ${box}:`, '016');
+        if (entered && !isNaN(parseInt(entered, 10))) {
+          resolveBoxWithPosition(box, parseInt(entered, 10));
+        }
+      });
+    });
+
+    updateCloseShiftSummary();
+  }
+
+  function updateCloseShiftSummary() {
+    const isScanned60 = closeShiftState.protoScanned60;
+    const scannedCount = isScanned60 ? 18 : 17;
+    const leftCount = 19 - scannedCount;
+    const percent = Math.round((scannedCount / 19) * 100);
+
+    const txtScanned = document.getElementById('csScannedCountText');
+    if (txtScanned) txtScanned.innerHTML = `<strong>${scannedCount}</strong> of <strong>19</strong> packs scanned`;
+
+    const txtLeft = document.getElementById('csLeftCountText');
+    if (txtLeft) txtLeft.textContent = `${leftCount} left to scan`;
+
+    const fillBar = document.getElementById('csProgressBarFill');
+    if (fillBar) fillBar.style.width = `${percent}%`;
+
+    const salesEl = document.getElementById('csTotalsSales');
+    const tixEl = document.getElementById('csTotalsTickets');
+    if (salesEl) salesEl.textContent = isScanned60 ? '$901.00' : '$871.00';
+    if (tixEl) tixEl.textContent = isScanned60 ? '133' : '127';
+
+    const problemBadge = document.getElementById('csProblemCountBadge');
+    const primaryBtn = document.getElementById('csPrimaryActionBtn');
+    const problemsList = document.getElementById('csProblemsList');
+
+    const remainingProblems = isScanned60 ? 3 : 4;
+    if (problemBadge) problemBadge.textContent = String(remainingProblems);
+
+    if (primaryBtn) {
+      if (closeShiftState.managerOverride) {
+        primaryBtn.textContent = '✓ Manager override authorized · Click to Close Shift #1';
+        primaryBtn.style.background = '#059669';
+      } else {
+        primaryBtn.textContent = `Fix ${remainingProblems} problems to close, or ask a manager to override`;
+        primaryBtn.style.background = '#0f172a';
+      }
+    }
+
+    if (problemsList) {
+      problemsList.innerHTML = `
+        <div class="cs-problem-item">
+          <div class="cs-problem-icon-wrap">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ea580c" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+          </div>
+          <div class="cs-problem-text">
+            <strong class="cs-problem-title">Box 7 scanned twice</strong>
+            <span class="cs-problem-sub">Counted once. Nothing to do.</span>
+          </div>
+        </div>
+
+        <div class="cs-problem-item highlight-red">
+          <div class="cs-problem-icon-wrap">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+          </div>
+          <div class="cs-problem-text">
+            <strong class="cs-problem-title">Box 22 position went backwards</strong>
+            <span class="cs-problem-sub">#003 &rarr; #001 &middot; rescan or correct</span>
+          </div>
+        </div>
+
+        ${!isScanned60 ? `
+        <div class="cs-problem-item">
+          <div class="cs-problem-icon-wrap">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ea580c" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+          </div>
+          <div class="cs-problem-text">
+            <strong class="cs-problem-title">Box 60 not scanned</strong>
+            <span class="cs-problem-sub">Jumbo Bucks &middot; scan it or type its position</span>
+          </div>
+        </div>
+        ` : ''}
+
+        <div class="cs-problem-item">
+          <div class="cs-problem-icon-wrap">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ea580c" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+          </div>
+          <div class="cs-problem-text">
+            <strong class="cs-problem-title">Pack 903281 isn't on the rack</strong>
+            <span class="cs-problem-sub">Lucky 7s is in the safe. Remove the scan or activate it first.</span>
+          </div>
+        </div>
+      `;
+    }
+
+    const bAll = document.getElementById('csBadgeAll');
+    const bAtt = document.getElementById('csBadgeAttention');
+    const bNot = document.getElementById('csBadgeNotScanned');
+    const bDone = document.getElementById('csBadgeDone');
+    if (bAll) bAll.textContent = '19';
+    if (bAtt) bAtt.textContent = String(remainingProblems);
+    if (bNot) bNot.textContent = isScanned60 ? '0' : '1';
+    if (bDone) bDone.textContent = isScanned60 ? '16' : '15';
+  }
+
+  function triggerProtoScanForBox(boxNum) {
+    if (boxNum === 60 || !boxNum) {
+      closeShiftState.protoScanned60 = true;
+      const b60 = closeShiftState.packs.find(p => p.box === 60);
+      if (b60) {
+        b60.closing = '#016';
+        b60.closingSub = '';
+        b60.sold = 6;
+        b60.sales = 30.00;
+        b60.status = 'scanned';
+        b60.statusLabel = 'Scanned';
+        b60.hasActions = false;
+        b60.category = 'done';
+      }
+      sfx.success();
+      showToast('✓ Box 60 scanned successfully! (Ticket #016 · 6 sold · $30.00)', 'success');
+      renderCloseShiftView();
+    } else if (boxNum === 22) {
+      const b22 = closeShiftState.packs.find(p => p.box === 22);
+      if (b22) {
+        b22.closing = '#007';
+        b22.closingSub = '';
+        b22.sold = 4;
+        b22.sales = 20.00;
+        b22.status = 'scanned';
+        b22.statusLabel = 'Scanned';
+        b22.hasActions = false;
+        b22.category = 'done';
+      }
+      sfx.success();
+      showToast('✓ Box 22 position corrected! (Ticket #007 · 4 sold · $20.00)', 'success');
+      renderCloseShiftView();
+    }
+  }
+
+  function resolveBoxWithPosition(boxNum, pos) {
+    const pStr = '#' + String(pos).padStart(3, '0');
+    const target = closeShiftState.packs.find(p => p.box === boxNum);
+    if (target) {
+      const openNum = parseInt(target.opening.replace(/[^0-9]/g, ''), 10) || 0;
+      const sold = Math.max(0, pos - openNum);
+      const sales = sold * target.price;
+      target.closing = pStr;
+      target.closingSub = '';
+      target.sold = sold;
+      target.sales = sales;
+      target.status = 'scanned';
+      target.statusLabel = 'Scanned';
+      target.hasActions = false;
+      target.category = 'done';
+      if (boxNum === 60) closeShiftState.protoScanned60 = true;
+      sfx.success();
+      showToast(`✓ Box ${boxNum} closing set to ${pStr} (${sold} sold · $${sales.toFixed(2)})`, 'success');
+      renderCloseShiftView();
+    }
+  }
+
+  function showCloseShiftView() {
+    const viewSell = document.getElementById('viewSellCounter');
+    const viewReceive = document.getElementById('viewReceivePacks');
+    const viewReport = document.getElementById('viewDayReport');
+    const viewInv = document.getElementById('viewInventory');
+    const viewHist = document.getElementById('viewHistory');
+    const viewSet = document.getElementById('viewSettings');
+    const viewClose = document.getElementById('viewCloseShift');
+    const viewClosed = document.getElementById('viewShiftClosed');
+    const viewHandover = document.getElementById('viewStartShiftHandover');
+
+    if (viewSell) viewSell.style.display = 'none';
+    if (viewReceive) viewReceive.style.display = 'none';
+    if (viewReport) viewReport.style.display = 'none';
+    if (viewInv) viewInv.style.display = 'none';
+    if (viewHist) viewHist.style.display = 'none';
+    if (viewSet) viewSet.style.display = 'none';
+    if (viewClose) viewClose.style.display = 'block';
+    if (viewClosed) viewClosed.style.display = 'none';
+    if (viewHandover) viewHandover.style.display = 'none';
+
+    setActiveNav(null);
+    renderCloseShiftView();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    setTimeout(() => {
+      document.getElementById('csBarcodeInput')?.focus();
+    }, 100);
+  }
+  window.showCloseShiftView = showCloseShiftView;
+
+  function showShiftClosedView() {
+    const viewSell = document.getElementById('viewSellCounter');
+    const viewReceive = document.getElementById('viewReceivePacks');
+    const viewReport = document.getElementById('viewDayReport');
+    const viewInv = document.getElementById('viewInventory');
+    const viewHist = document.getElementById('viewHistory');
+    const viewSet = document.getElementById('viewSettings');
+    const viewClose = document.getElementById('viewCloseShift');
+    const viewClosed = document.getElementById('viewShiftClosed');
+    const viewHandover = document.getElementById('viewStartShiftHandover');
+
+    if (viewSell) viewSell.style.display = 'none';
+    if (viewReceive) viewReceive.style.display = 'none';
+    if (viewReport) viewReport.style.display = 'none';
+    if (viewInv) viewInv.style.display = 'none';
+    if (viewHist) viewHist.style.display = 'none';
+    if (viewSet) viewSet.style.display = 'none';
+    if (viewClose) viewClose.style.display = 'none';
+    if (viewClosed) viewClosed.style.display = 'block';
+    if (viewHandover) viewHandover.style.display = 'none';
+
+    setActiveNav(null);
+
+    const shiftNum = state.shiftNumber || 1;
+    const nextShiftNum = shiftNum + 1;
+    const cashier = state.cashierName || 'Priya';
+    const register = state.registerName || 'Register 1';
+
+    const hTitle = document.getElementById('scHeaderTitle');
+    const hSub = document.getElementById('scHeaderSub');
+    const mainHeadline = document.getElementById('scMainHeadline');
+    const mainSub = document.getElementById('scMainSubtext');
+    const cardSales = document.getElementById('scCardSales');
+    const emailLabel = document.getElementById('scCardEmailLabel');
+    const btnNextLabel = document.getElementById('scBtnStartNextLabel');
+
+    if (hTitle) hTitle.textContent = `Close Shift #${shiftNum}`;
+
+    const openTimeStr = state.shiftStartedAt
+      ? new Date(state.shiftStartedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+      : '7:02 AM';
+    const dayDateStr = new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    if (hSub) hSub.innerHTML = `${cashier} &middot; opened ${openTimeStr} &middot; ${dayDateStr} &middot; ${register}`;
+
+    if (mainHeadline) mainHeadline.textContent = `Shift #${shiftNum} is closed`;
+
+    const closeTimeStr = new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    if (mainSub) mainSub.textContent = `Closed by ${cashier} at ${closeTimeStr}. The report is saved and can't be changed.`;
+
+    // Calculate shift sales metrics
+    const { totalSold, totalRevenue } = getShiftSalesTotals();
+    const displayRev = totalRevenue > 0 ? `$${totalRevenue.toFixed(2)}` : '$937.00';
+    const displayTix = totalSold > 0 ? `${totalSold} tickets` : '148 tickets';
+    if (cardSales) cardSales.textContent = `${displayRev} · ${displayTix}`;
+
+    const reportEmail = state.reportEmail || 'manager@amigofoodmart.com';
+    if (emailLabel) emailLabel.textContent = `Email to ${reportEmail}`;
+
+    if (btnNextLabel) btnNextLabel.textContent = `Start Shift #${nextShiftNum}`;
+
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+  window.showShiftClosedView = showShiftClosedView;
+
+  // =============================================================
+  // SCREEN 05: START SHIFT HANDOVER CONTROLLER
+  // =============================================================
+  let selectedHandoverCashier = 'Carlos';
+
+  function updateHandoverSelectionUI() {
+    const cards = document.querySelectorAll('#sshClerksGrid .ssh-clerk-card');
+    cards.forEach(card => {
+      const name = card.dataset.cashierName;
+      if (name === selectedHandoverCashier) {
+        card.classList.add('active');
+      } else {
+        card.classList.remove('active');
+      }
+    });
+
+    const hintText = document.getElementById('sshBottomHintText');
+    const confirmBtn = document.getElementById('btnConfirmStartShiftHandover');
+    const nextShiftNum = (state.shiftNumber || 1) + 1;
+    if (selectedHandoverCashier) {
+      if (hintText) hintText.textContent = `Ready to start Shift #${nextShiftNum} with ${selectedHandoverCashier}`;
+      if (confirmBtn) confirmBtn.disabled = false;
+    } else {
+      if (hintText) hintText.textContent = `Pick who's taking over.`;
+      if (confirmBtn) confirmBtn.disabled = true;
+    }
+  }
+
+  function showStartShiftHandoverView() {
+    const viewSell = document.getElementById('viewSellCounter');
+    const viewReceive = document.getElementById('viewReceivePacks');
+    const viewReport = document.getElementById('viewDayReport');
+    const viewInv = document.getElementById('viewInventory');
+    const viewHist = document.getElementById('viewHistory');
+    const viewSet = document.getElementById('viewSettings');
+    const viewClose = document.getElementById('viewCloseShift');
+    const viewClosed = document.getElementById('viewShiftClosed');
+    const viewHandover = document.getElementById('viewStartShiftHandover');
+
+    if (viewSell) viewSell.style.display = 'none';
+    if (viewReceive) viewReceive.style.display = 'none';
+    if (viewReport) viewReport.style.display = 'none';
+    if (viewInv) viewInv.style.display = 'none';
+    if (viewHist) viewHist.style.display = 'none';
+    if (viewSet) viewSet.style.display = 'none';
+    if (viewClose) viewClose.style.display = 'none';
+    if (viewClosed) viewClosed.style.display = 'none';
+    if (viewHandover) viewHandover.style.display = 'block';
+
+    setActiveNav(null);
+    document.querySelectorAll('.toast-alert, .toast').forEach(t => t.remove());
+
+    const shiftNum = state.shiftNumber || 1;
+    const nextShiftNum = shiftNum + 1;
+    const storeName = state.storeName || 'Amigo Food Mart';
+    const register = state.registerName || 'Register 1';
+    const dayDateStr = new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+
+    // Header Meta
+    const hTitle = document.getElementById('sshHeaderTitle');
+    const hSub = document.getElementById('sshHeaderSub');
+    if (hTitle) hTitle.textContent = `Start Shift #${nextShiftNum}`;
+    if (hSub) hSub.innerHTML = `${dayDateStr} &middot; ${register} &middot; ${storeName}`;
+
+    // Opening subtitle
+    const openingSub = document.getElementById('sshOpeningSub');
+    if (openingSub) openingSub.textContent = `Each pack starts Shift #${nextShiftNum} from the closing position confirmed in Shift #${shiftNum}.`;
+
+    // Right Column Previous Shift details
+    const prevShiftBadge = document.getElementById('sshPrevShiftBadge');
+    const prevShiftNum = document.getElementById('sshPrevShiftNumLabel');
+    const prevShiftTime = document.getElementById('sshPrevShiftTimeLabel');
+    const prevShiftSales = document.getElementById('sshPrevShiftSalesLabel');
+    const viewPrevReportBtn = document.getElementById('sshViewPrevReportLabel');
+
+    if (prevShiftBadge) prevShiftBadge.textContent = 'Final v1';
+    if (prevShiftNum) prevShiftNum.innerHTML = `#${shiftNum} &middot; ${state.cashierName || 'Priya'}`;
+
+    const openTimeStr = state.shiftStartedAt
+      ? new Date(state.shiftStartedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+      : '7:02 AM';
+    const closeTimeStr = new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    if (prevShiftTime) prevShiftTime.innerHTML = `${openTimeStr} &ndash; ${closeTimeStr}`;
+
+    const { totalSold, totalRevenue } = getShiftSalesTotals();
+    const displayRev = totalRevenue > 0 ? `$${totalRevenue.toFixed(2)}` : '$1,237.00';
+    const displayTix = totalSold > 0 ? `${totalSold} tickets` : '289 tickets';
+    if (prevShiftSales) prevShiftSales.innerHTML = `${displayRev} &middot; ${displayTix}`;
+    if (viewPrevReportBtn) viewPrevReportBtn.textContent = `View Shift #${shiftNum} report`;
+
+    // Populate Opening Numbers Table from current state slots
+    const tbody = document.getElementById('sshOpeningTableBody');
+    if (tbody) {
+      const activeSlots = (state.slots || []).filter(s => s && s.status === 'ACTIVE' && s.packNumber);
+      if (activeSlots.length > 0) {
+        tbody.innerHTML = activeSlots.map(s => {
+          const curNum = s.currentTicket !== undefined ? s.currentTicket : (s.startTicket || 0);
+          const tixStr = '#' + String(curNum).padStart(3, '0');
+          return `
+            <tr>
+              <td class="font-bold">${s.boxNumber}</td>
+              <td>${cleanGameTitle(s.gameName)}</td>
+              <td class="td-opens">${tixStr}</td>
+            </tr>
+          `;
+        }).join('');
+      } else {
+        tbody.innerHTML = `
+          <tr><td class="font-bold">1</td><td>5X Money</td><td class="td-opens">#013</td></tr>
+          <tr><td class="font-bold">2</td><td>Jr Jumbo</td><td class="td-opens">#009</td></tr>
+          <tr><td class="font-bold">3</td><td>Loteria</td><td class="td-opens">#003</td></tr>
+          <tr><td class="font-bold">4</td><td>Hit 100</td><td class="td-opens">#011</td></tr>
+          <tr><td class="font-bold">6</td><td>Cross Word</td><td class="td-opens">#004</td></tr>
+        `;
+      }
+    }
+
+    const activeCount = (state.slots || []).filter(s => s && s.status === 'ACTIVE' && s.packNumber).length || 19;
+    const totalBoxes = state.totalSlots || 65;
+    const emptyCount = totalBoxes - activeCount;
+
+    const footerRackCounts = document.getElementById('sshFooterRackCounts');
+    const footerTotalBoxes = document.getElementById('sshFooterTotalBoxes');
+    const checkRackSub = document.getElementById('sshCheckRackSub');
+    if (footerRackCounts) footerRackCounts.textContent = `${activeCount} packs selling · ${emptyCount} empty boxes`;
+    if (footerTotalBoxes) footerTotalBoxes.textContent = `= ${totalBoxes}`;
+    if (checkRackSub) checkRackSub.textContent = `${activeCount} packs selling, ${emptyCount} empty boxes. Spot-check a few next tickets.`;
+
+    // Note section dynamic name
+    const noteLabel = document.getElementById('sshHandoverNoteLabel');
+    const checkNoteSub = document.getElementById('sshCheckNoteSub');
+    const cashierName = state.cashierName || 'Priya';
+    if (noteLabel) noteLabel.textContent = `Handover note from ${cashierName}`;
+    if (checkNoteSub) checkNoteSub.textContent = `Anything ${cashierName} flagged is understood.`;
+
+    // Update Confirm Button Label
+    const confirmBtnLabel = document.getElementById('sshConfirmBtnLabel');
+    if (confirmBtnLabel) confirmBtnLabel.textContent = `Start Shift #${nextShiftNum}`;
+
+    if (!selectedHandoverCashier) selectedHandoverCashier = 'Carlos';
+    updateHandoverSelectionUI();
+
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+  window.showStartShiftHandoverView = showStartShiftHandoverView;
+
+  // Setup Close Shift screen interactive controls
+  document.getElementById('btnBackFromCloseShift')?.addEventListener('click', () => {
+    sfx.keypad();
+    showSellCounterView();
+  });
+
+  const csFilterPills = document.querySelectorAll('#csFilterPillsRow .cs-filter-pill');
+  csFilterPills.forEach(pill => {
+    pill.addEventListener('click', () => {
+      csFilterPills.forEach(p => p.classList.remove('active'));
+      pill.classList.add('active');
+      closeShiftState.filter = pill.dataset.csFilter || 'all';
+      renderCloseShiftView();
+    });
+  });
+
+  document.getElementById('csProtoScanBtn')?.addEventListener('click', () => {
+    triggerProtoScanForBox(60);
+  });
+
+  document.getElementById('csSaveDraftBtn')?.addEventListener('click', () => {
+    closeShiftState.draftSaved = true;
+    sfx.success();
+    showToast('✓ Shift #1 draft saved successfully. 17 of 19 packs recorded.', 'success');
+  });
+
+  document.getElementById('csManagerOverrideBtn')?.addEventListener('click', () => {
+    closeShiftState.managerOverride = true;
+    sfx.success();
+    showToast('✓ Manager override authorized. You can now close Shift #1.', 'success');
+    renderCloseShiftView();
+  });
+
+  document.getElementById('csPrimaryActionBtn')?.addEventListener('click', () => {
+    sfx.success();
+    showToast(`✓ Shift #${state.shiftNumber || 1} closed successfully! Report v1 generated.`, 'success');
+    state.shiftStatus = 'SHIFT_ENDED';
+    saveState(state);
+    showShiftClosedView();
+  });
+
+  // Setup Shift Closed (Screen 04) interactive controls
+  document.getElementById('btnBackFromShiftClosed')?.addEventListener('click', () => {
+    sfx.keypad();
+    showCloseShiftView();
+  });
+
+  document.getElementById('btnCountCashPrint')?.addEventListener('click', () => {
+    sfx.beep();
+    try {
+      openDaySettlementModal();
+    } catch {
+      window.print();
+    }
+    showToast(`🖨️ Shift #${state.shiftNumber || 1} report sent to printer. Cash drawer opened.`, 'info');
+  });
+
+  // Clicking "Start Shift #2" on Screen 04 navigates to Handover screen (Screen 05)
+  document.getElementById('btnStartNewShift')?.addEventListener('click', () => {
+    sfx.keypad();
+    showStartShiftHandoverView();
+  });
+
+  // Setup Start Shift Handover (Screen 05) interactive controls
+  document.getElementById('btnBackFromStartShiftHandover')?.addEventListener('click', () => {
+    sfx.keypad();
+    showShiftClosedView();
+  });
+
+  document.getElementById('btnCancelStartShiftHandover')?.addEventListener('click', () => {
+    sfx.keypad();
+    showShiftClosedView();
+  });
+
+  document.getElementById('btnViewPrevShiftReport')?.addEventListener('click', () => {
+    sfx.beep();
+    try {
+      openDayReportModal();
+    } catch {
+      showDayReportView();
+    }
+  });
+
+  document.querySelectorAll('#sshClerksGrid .ssh-clerk-card').forEach(card => {
+    card.addEventListener('click', () => {
+      sfx.keypad();
+      selectedHandoverCashier = card.dataset.cashierName;
+      updateHandoverSelectionUI();
+    });
+  });
+
+  document.getElementById('btnConfirmStartShiftHandover')?.addEventListener('click', () => {
+    const cashInput = document.getElementById('sshStartingCashInput');
+    const startingCash = cashInput ? parseFloat(cashInput.value) || 0 : 0;
+    const newCashier = selectedHandoverCashier || state.cashierName || 'Carlos';
+
+    sfx.success();
+    executeStartNewShift(newCashier, startingCash);
+    showSellCounterView();
+  });
+
+  document.getElementById('csBarcodeInput')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      e.currentTarget.value = '';
+      if (!closeShiftState.protoScanned60) {
+        triggerProtoScanForBox(60);
+      } else {
+        triggerProtoScanForBox(22);
+      }
+    }
+  });
 
   function populateSettingsInputs() {
     const setStoreName = document.getElementById('setStoreName');
@@ -8919,7 +9972,7 @@ function setupEventListeners() {
                 <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
                 <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
               </svg>
-              <span>Fix count</span>
+              <span>Fix</span>
             </button>
             <button type="button" class="btn-inv-open" data-box="${item.box}">Open box</button>
           </td>
@@ -9092,8 +10145,8 @@ function setupEventListeners() {
     const hdrBadge = document.getElementById('drHeaderDateBadge');
     const hdrVersionBadge = document.getElementById('drHdrVersionBadge');
 
-    if (pageTitle) pageTitle.textContent = data.reportTitle || 'Day Report';
-    if (pageSub) pageSub.textContent = data.subtitle || 'Thursday, Oct 8, 2026 · 2 shifts · last closed 9:41 PM by Carlos';
+    if (pageTitle) pageTitle.textContent = data.reportTitle || (data.isDailyMode ? 'Day Report' : 'Shift Report');
+    if (pageSub) pageSub.textContent = data.subtitle || `${data.date} · ${data.shiftsCount || '1 shift'} · open since ${data.openedTime || '7:02 AM'} by ${data.userId || 'Carlos'}`;
     if (hdrBadge) hdrBadge.textContent = data.dateBadge || data.date || '10/08/2026';
     if (hdrVersionBadge) {
       if (state.dayReportCorrection) {
@@ -9110,10 +10163,15 @@ function setupEventListeners() {
     }
 
     const sheetStore = document.getElementById('drSheetStoreName');
+    const sheetStoreAddr = document.getElementById('drSheetStoreAddr');
     const sheetVersion = document.getElementById('drSheetVersionTag');
+    const sheetTitleText = document.getElementById('drSheetTitleText');
     const sheetTotalSales = document.getElementById('drSheetTotalSales');
     const sheetTickets = document.getElementById('drSheetTickets');
     const sheetShifts = document.getElementById('drSheetShifts');
+    const sheetDate = document.getElementById('drSheetDate');
+    const sheetGenerated = document.getElementById('drSheetGenerated');
+    const sheetFooterText = document.getElementById('drSheetFooterText');
     const metaDateRange = document.getElementById('drMetaDateRange');
     const metaShifts = document.getElementById('drMetaShiftsCount');
     const metaBoxes = document.getElementById('drMetaBoxesCount');
@@ -9121,11 +10179,19 @@ function setupEventListeners() {
     const formattedTotal = `$${Number(data.totalInstantSales || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
     if (sheetStore) sheetStore.textContent = data.storeName || state?.storeName || 'AMIGO FOOD MART';
+    if (sheetStoreAddr) sheetStoreAddr.textContent = data.storeAddress || state?.storeAddress || '2300 Moody Rd, Warner Robins, GA 31088';
+    if (sheetTitleText) sheetTitleText.textContent = data.reportTitle || (data.isDailyMode ? 'Day Report' : 'Shift Report');
     if (sheetVersion) sheetVersion.textContent = state.dayReportCorrection ? ' · Corrected v2' : (data.versionLabel || ' · Final v1');
     if (sheetTotalSales) sheetTotalSales.textContent = formattedTotal;
     if (sheetTickets) sheetTickets.textContent = String(data.totalTickets || 0);
+    if (sheetDate) sheetDate.textContent = data.date || data.dateRange || '10/08/2026';
+    if (sheetShifts) sheetShifts.textContent = data.shiftsSummary || data.shiftsCount || '1 shift';
+    if (sheetGenerated) sheetGenerated.textContent = data.generatedTime || `${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}, ${new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}`;
+    if (sheetFooterText) {
+      sheetFooterText.textContent = `Printed from LottoTrack Pro · Register 1 · ${data.date || ''} ${data.generatedTime || ''}`;
+    }
     if (metaDateRange) metaDateRange.textContent = data.dateRange || data.date || '10/08/2026';
-    if (metaShifts) metaShifts.textContent = data.shiftsCount || `${(data.shifts || []).length || 2} shifts`;
+    if (metaShifts) metaShifts.textContent = data.shiftsCount || `${(data.shifts || []).length || 1} shifts`;
     if (metaBoxes) metaBoxes.textContent = `${(data.boxes || []).filter(b => !b.isEmpty).length} active boxes`;
 
     // Table rows
@@ -9184,28 +10250,42 @@ function setupEventListeners() {
     if (sumSold) sumSold.textContent = String(data.totalTickets || 0);
     if (sumTotal) sumTotal.textContent = formattedTotal;
 
-    // Bottom Reconcile Box
+    // Bottom Reconcile Box (on Sheet and Sidebar)
     const instantSales = Number(data.totalInstantSales || 0);
     if (!state.dayReportAdjustments) {
       state.dayReportAdjustments = {
-        onlineLottery: Number(data.onlineLottery ?? 418.00),
-        payouts: Number(data.lotteryPayouts ?? 320.00),
-        countedCash: Number(data.countedCash ?? (instantSales + 418.00 - 320.00))
+        onlineLottery: Number(state.onlineSales || 0),
+        payouts: Number(state.cashes || 0),
+        countedCash: Number(instantSales)
       };
     }
     const onlineLottery = Number(state.dayReportAdjustments.onlineLottery || 0);
     const payouts = Number(state.dayReportAdjustments.payouts || 0);
     const netDrawer = instantSales + onlineLottery - payouts;
 
+    // Paper sheet reconcile elements
+    const reconTicketSales = document.getElementById('drSheetReconTicketSales');
+    const reconPrizes = document.getElementById('drSheetReconPrizes');
+    const reconStarting = document.getElementById('drSheetReconStarting');
+    const reconExpected = document.getElementById('drSheetReconExpected');
+    const reconCounted = document.getElementById('drSheetReconCounted');
+    const reconOverShort = document.getElementById('drSheetReconOverShort');
+
+    if (reconTicketSales) reconTicketSales.textContent = formattedTotal;
+    if (reconPrizes) reconPrizes.textContent = `- $${payouts.toFixed(2)}`;
+    if (reconStarting) reconStarting.textContent = `+ $${onlineLottery.toFixed(2)}`;
+    if (reconExpected) reconExpected.textContent = `$${netDrawer.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+    // Sidebar card reconcile elements
     const reconScratch = document.getElementById('drReconScratchSales');
     const reconOnline = document.getElementById('drReconOnlineLottery');
-    const reconPayouts = document.getElementById('drReconPayouts');
-    const reconNet = document.getElementById('drReconNetToDrawer');
+    const reconPayoutsSidebar = document.getElementById('drReconPayouts');
+    const reconNetSidebar = document.getElementById('drReconNetToDrawer');
 
     if (reconScratch) reconScratch.textContent = formattedTotal;
     if (reconOnline) reconOnline.textContent = `+$${onlineLottery.toFixed(2)}`;
-    if (reconPayouts) reconPayouts.textContent = `-$${payouts.toFixed(2)}`;
-    if (reconNet) reconNet.textContent = `$${netDrawer.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    if (reconPayoutsSidebar) reconPayoutsSidebar.textContent = `-$${payouts.toFixed(2)}`;
+    if (reconNetSidebar) reconNetSidebar.textContent = `$${netDrawer.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
     // Right Column Card 1: Count the cash drawer
     const cashScratch = document.getElementById('drCardTicketSales') || document.getElementById('drCashScratchSales');
@@ -9231,6 +10311,28 @@ function setupEventListeners() {
     if (cashCountedInput && document.activeElement !== cashCountedInput) {
       if (state.dayReportAdjustments.countedCash !== undefined) {
         cashCountedInput.value = counted > 0 ? counted.toFixed(2) : '';
+      }
+    }
+
+    if (reconCounted) {
+      reconCounted.textContent = counted > 0 ? `$${counted.toFixed(2)}` : '—';
+    }
+    if (reconOverShort) {
+      if (counted > 0) {
+        const diff = Number((counted - netDrawer).toFixed(2));
+        if (Math.abs(diff) < 0.01) {
+          reconOverShort.textContent = 'Exact match';
+          reconOverShort.style.color = '#059669';
+        } else if (diff > 0) {
+          reconOverShort.textContent = `+$${diff.toFixed(2)} Over`;
+          reconOverShort.style.color = '#d97706';
+        } else {
+          reconOverShort.textContent = `-$${Math.abs(diff).toFixed(2)} Short`;
+          reconOverShort.style.color = '#dc2626';
+        }
+      } else {
+        reconOverShort.textContent = '—';
+        reconOverShort.style.color = '';
       }
     }
 
@@ -9485,6 +10587,11 @@ function setupEventListeners() {
         }
       });
     });
+    setTimeout(() => {
+      if (typeof window.updateRpSlider === 'function') {
+        window.updateRpSlider();
+      }
+    }, 50);
   }
 
   const showReceivePackForm = () => {
@@ -9710,7 +10817,34 @@ function setupEventListeners() {
   const rpSliderLeft = document.getElementById('rpSliderLeft');
   const rpSliderRight = document.getElementById('rpSliderRight');
   const rpSliderThumb = document.getElementById('rpSliderThumb');
+  const rpSliderTrack = document.getElementById('rpSliderTrack');
   const rpTableWrap = document.querySelector('.rp-table-wrap');
+  const rpSliderBar = document.querySelector('.rp-batch-slider-bar');
+
+  function updateRpSlider() {
+    const wrap = document.querySelector('.rp-table-wrap');
+    const bar = document.querySelector('.rp-batch-slider-bar');
+    const thumb = document.getElementById('rpSliderThumb');
+    const track = document.getElementById('rpSliderTrack');
+    if (!wrap || !bar) return;
+    const canScroll = wrap.scrollWidth > wrap.clientWidth + 2;
+    bar.style.display = canScroll ? 'flex' : 'none';
+    if (canScroll && thumb) {
+      const trackWidth = track?.clientWidth || 200;
+      const visibleRatio = Math.min(1, wrap.clientWidth / wrap.scrollWidth);
+      const thumbWidth = Math.max(36, Math.round(trackWidth * visibleRatio));
+      thumb.style.width = `${thumbWidth}px`;
+      const maxScroll = wrap.scrollWidth - wrap.clientWidth;
+      if (maxScroll > 0) {
+        const scrollRatio = wrap.scrollLeft / maxScroll;
+        const maxTranslate = Math.max(0, trackWidth - thumbWidth);
+        thumb.style.transform = `translateX(${scrollRatio * maxTranslate}px)`;
+      } else {
+        thumb.style.transform = 'translateX(0px)';
+      }
+    }
+  }
+  window.updateRpSlider = updateRpSlider;
 
   rpSliderLeft?.addEventListener('click', () => {
     rpTableWrap?.scrollBy({ left: -140, behavior: 'smooth' });
@@ -9722,17 +10856,18 @@ function setupEventListeners() {
     sfx.keypad();
   });
 
-  rpTableWrap?.addEventListener('scroll', () => {
-    if (!rpSliderThumb || !rpTableWrap) return;
+  rpSliderTrack?.addEventListener('click', (e) => {
+    if (e.target === rpSliderThumb || !rpTableWrap) return;
+    const rect = rpSliderTrack.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const ratio = Math.max(0, Math.min(1, clickX / rect.width));
     const maxScroll = rpTableWrap.scrollWidth - rpTableWrap.clientWidth;
-    if (maxScroll > 0) {
-      const scrollRatio = rpTableWrap.scrollLeft / maxScroll;
-      const trackWidth = rpSliderThumb.parentElement?.clientWidth || 200;
-      const thumbWidth = rpSliderThumb.clientWidth || 80;
-      const maxTranslate = Math.max(0, trackWidth - thumbWidth);
-      rpSliderThumb.style.transform = `translateX(${scrollRatio * maxTranslate}px)`;
-    }
+    rpTableWrap.scrollTo({ left: ratio * maxScroll, behavior: 'smooth' });
   });
+
+  rpTableWrap?.addEventListener('scroll', updateRpSlider);
+  window.addEventListener('resize', updateRpSlider);
+  setTimeout(updateRpSlider, 100);
 
   // Modern Sidebar Navigation Handlers (Page 2 Specification)
   const navSellCounter = document.getElementById('navSellCounter');
@@ -9765,16 +10900,30 @@ function setupEventListeners() {
       setActiveNav(navSettings);
     } else if (viewHist && viewHist.style.display !== 'none') {
       setActiveNav(navHistory);
-    } else if (viewInv && viewInv.style.display !== 'none') {
+    } else if ((viewInv && viewInv.style.display !== 'none') || (viewReceive && viewReceive.style.display !== 'none')) {
       setActiveNav(navInventory);
     } else if (viewReport && viewReport.style.display !== 'none') {
-      setActiveNav(navDayReport);
-    } else if (viewReceive && viewReceive.style.display !== 'none') {
-      setActiveNav(navReceivePacks);
+      setActiveNav(null);
     } else {
       setActiveNav(navSellCounter);
     }
   };
+
+  // Connect dedicated sub-view navigation buttons
+  document.getElementById('invBtnStockIntake')?.addEventListener('click', () => {
+    sfx.keypad();
+    showReceivePacksView();
+  });
+
+  document.getElementById('btnBackToInventoryFromRp')?.addEventListener('click', () => {
+    sfx.keypad();
+    showInventoryView();
+  });
+
+  document.getElementById('btnBackToSellFromDr')?.addEventListener('click', () => {
+    sfx.keypad();
+    showSellCounterView();
+  });
 
   [
     'inventoryModal',
@@ -10108,15 +11257,32 @@ function setupEventListeners() {
     cashCountedInputs.forEach(input => input.addEventListener('input', onCashInputsChanged));
   }
 
-  document.getElementById('drBtnPrintReport')?.addEventListener('click', () => {
-    sfx.keypad();
+  function printDayReportSheet() {
+    document.body.classList.remove('print-fullpage-report');
+    document.body.classList.remove('print-day-report');
+    document.body.classList.add('print-day-report-sheet');
+    setDynamicPrintPageSize(`
+      @page {
+        size: letter portrait !important;
+        margin: 8mm 10mm !important;
+      }
+    `);
+    sfx.chime();
     window.print();
+  }
+
+  document.getElementById('drBtnPrintReport')?.addEventListener('click', () => {
+    printDayReportSheet();
+  });
+
+  document.getElementById('drBtnPrintTopHeader')?.addEventListener('click', () => {
+    printDayReportSheet();
   });
 
   document.getElementById('drBtnSavePdf')?.addEventListener('click', () => {
     sfx.keypad();
     showToast('Select "Save as PDF" as the destination in your print dialog.', 'info');
-    setTimeout(() => window.print(), 200);
+    setTimeout(() => printDayReportSheet(), 200);
   });
 
   document.getElementById('drToggleEmptyBoxes')?.addEventListener('change', () => {
@@ -10191,6 +11357,7 @@ function setupEventListeners() {
 
       if (box) {
         window.__activeFixBox = Number(box);
+        const slot = (state.slots || []).find(s => s.boxNumber === Number(box));
         const titleEl = document.getElementById('invFixModalTitle');
         const gameEl = document.getElementById('invFixGameName');
         const packEl = document.getElementById('invFixPackNumber');
@@ -10200,21 +11367,33 @@ function setupEventListeners() {
         const maxEl = document.getElementById('invFixMaxTix');
         const inputEl = document.getElementById('invFixNewTicketInput');
 
-        if (titleEl) titleEl.textContent = `Fix Count · Box ${box}`;
-        if (gameEl) gameEl.textContent = game || 'Scratch-off';
-        if (packEl) packEl.textContent = `Pack ${pack || ''}`;
-        if (priceEl) priceEl.textContent = `$${price || 1}`;
-        if (sizeEl) sizeEl.textContent = size || 100;
-        if (curEl) curEl.textContent = `#${String(cur || 0).padStart(3, '0')}`;
-        if (maxEl) maxEl.textContent = Math.max(0, Number(size || 100) - 1);
+        const activeGame = (slot?.gameName) || game || 'Scratch-off';
+        const activePack = (slot?.packNumber) || pack || '';
+        const activePrice = Number(slot?.price || price || 1);
+        const std = getStandardPackDetails(activePrice);
+        const activeSize = Number(slot?.packSize || size || std.packSize || 100);
+        const activeCur = slot ? (slot.currentTicket || 0) : (Number(cur) || 0);
+        const maxTicket = Math.max(0, activeSize - 1);
+
+        if (titleEl) titleEl.textContent = `Fix · Box ${box}`;
+        if (gameEl) gameEl.textContent = cleanGameTitle(activeGame);
+        if (packEl) packEl.textContent = `Pack ${activePack}`;
+        if (priceEl) priceEl.textContent = `$${activePrice}`;
+        if (sizeEl) sizeEl.textContent = activeSize;
+        if (curEl) curEl.textContent = `#${String(activeCur).padStart(3, '0')}`;
+        if (maxEl) maxEl.textContent = maxTicket;
         if (inputEl) {
-          inputEl.value = cur || 0;
-          inputEl.max = Math.max(0, Number(size || 100) - 1);
+          inputEl.value = activeCur;
+          inputEl.max = maxTicket;
         }
 
+        updateFixImpactNotice();
         sfx.keypad();
         document.getElementById('invFixCountModal')?.showModal();
-        setTimeout(() => inputEl?.focus(), 100);
+        setTimeout(() => {
+          inputEl?.focus();
+          inputEl?.select();
+        }, 100);
       }
     } else if (openBtn) {
       const box = openBtn.getAttribute('data-box');
@@ -10234,12 +11413,85 @@ function setupEventListeners() {
     }
   });
 
-  // Fix count modal buttons
+  // Fix modal impact notice helper
+  function updateFixImpactNotice() {
+    const input = document.getElementById('invFixNewTicketInput');
+    const noticeEl = document.getElementById('invFixImpactNotice');
+    const textEl = document.getElementById('invFixImpactText');
+    if (!input || !noticeEl || !textEl) return;
+
+    const box = window.__activeFixBox;
+    const slot = (state.slots || []).find(s => s.boxNumber === box);
+    const curVal = slot ? (slot.currentTicket || 0) : 0;
+    const price = slot ? (slot.price || 1) : 1;
+    const std = getStandardPackDetails(price);
+    const packSize = slot?.packSize || std.packSize || 100;
+    const raw = input.value.trim();
+
+    if (raw === '' || isNaN(parseInt(raw, 10))) {
+      noticeEl.className = 'inv-fix-impact-badge';
+      textEl.textContent = 'Please enter a ticket number';
+      return;
+    }
+
+    const newVal = parseInt(raw, 10);
+    if (newVal < 0) {
+      noticeEl.className = 'inv-fix-impact-badge diff-negative';
+      textEl.textContent = '⚠️ Ticket number cannot be negative';
+      return;
+    }
+    if (newVal >= packSize) {
+      noticeEl.className = 'inv-fix-impact-badge diff-negative';
+      textEl.textContent = `⚠️ Exceeds pack size! Max ticket is #${String(packSize - 1).padStart(3, '0')}`;
+      return;
+    }
+
+    const diff = newVal - curVal;
+    if (diff === 0) {
+      noticeEl.className = 'inv-fix-impact-badge';
+      textEl.textContent = `✓ Ticket matches recorded rack position (#${String(curVal).padStart(3, '0')})`;
+    } else if (diff > 0) {
+      const salesDiff = (diff * price).toFixed(2);
+      noticeEl.className = 'inv-fix-impact-badge diff-positive';
+      textEl.textContent = `+${diff} ticket${diff > 1 ? 's' : ''} sold (+$${salesDiff} sales shift impact)`;
+    } else {
+      noticeEl.className = 'inv-fix-impact-badge diff-negative';
+      textEl.textContent = `${diff} ticket${Math.abs(diff) > 1 ? 's' : ''} (adjusting over-advance)`;
+    }
+  }
+
+  // Fix modal controls
+  document.getElementById('invFixNewTicketInput')?.addEventListener('input', updateFixImpactNotice);
+
+  document.querySelectorAll('.inv-fix-pill-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const step = parseInt(btn.getAttribute('data-step'), 10);
+      const input = document.getElementById('invFixNewTicketInput');
+      if (!input) return;
+      const box = window.__activeFixBox;
+      const slot = (state.slots || []).find(s => s.boxNumber === box);
+      const std = getStandardPackDetails(slot?.price || 1);
+      const packSize = slot?.packSize || std.packSize || 100;
+      const max = Math.max(0, packSize - 1);
+      const cur = slot ? (slot.currentTicket || 0) : 0;
+
+      if (step === 0) {
+        input.value = cur;
+      } else {
+        const currentVal = parseInt(input.value, 10) || 0;
+        input.value = Math.max(0, Math.min(max, currentVal + step));
+      }
+      sfx.keypad();
+      updateFixImpactNotice();
+    });
+  });
+
   document.getElementById('invFixDecBtn')?.addEventListener('click', () => {
     const input = document.getElementById('invFixNewTicketInput');
     if (input) {
       input.value = Math.max(0, (parseInt(input.value, 10) || 0) - 1);
       sfx.keypad();
+      updateFixImpactNotice();
     }
   });
 
@@ -10249,6 +11501,7 @@ function setupEventListeners() {
       const max = parseInt(input.max, 10) || 299;
       input.value = Math.min(max, (parseInt(input.value, 10) || 0) + 1);
       sfx.keypad();
+      updateFixImpactNotice();
     }
   });
 
@@ -10260,24 +11513,97 @@ function setupEventListeners() {
     document.getElementById('invFixCountModal')?.close();
   });
 
+  // Save handler with full Update Inventory parity
   document.getElementById('invFixSaveBtn')?.addEventListener('click', () => {
     const input = document.getElementById('invFixNewTicketInput');
-    const val = parseInt(input?.value, 10);
+    const rawVal = input?.value?.trim();
     const box = window.__activeFixBox;
 
-    if (!isNaN(val) && box) {
-      const slot = (state.slots || []).find(s => s.boxNumber === box);
-      if (slot) {
-        slot.currentTicket = val;
-        saveState(state);
-        renderDispenserRack();
-        renderHeaderAndMetrics();
-      }
-      sfx.win();
-      showToast(`✓ Box ${box} count updated to #${String(val).padStart(3, '0')}`, 'success');
+    if (!box) {
       document.getElementById('invFixCountModal')?.close();
-      renderInventoryView();
+      return;
     }
+
+    const slot = (state.slots || []).find(s => s.boxNumber === box);
+    if (!slot) {
+      document.getElementById('invFixCountModal')?.close();
+      return;
+    }
+
+    if (rawVal === '' || isNaN(parseInt(rawVal, 10))) {
+      showToast('⚠️ Please enter a valid ticket number.', 'warning');
+      input?.focus();
+      return;
+    }
+
+    const newPos = parseInt(rawVal, 10);
+    if (newPos < 0) {
+      showToast('⚠️ Ticket number must be 0 or higher.', 'warning');
+      input?.focus();
+      return;
+    }
+
+    const std = getStandardPackDetails(slot.price || 1);
+    const packSize = slot.packSize || std.packSize || 100;
+
+    if (newPos >= packSize) {
+      showToast(`⚠️ Invalid Position! A $${slot.price || 1} pack only has ${packSize} tickets (#00 to #${String(packSize - 1).padStart(2, '0')}). Max value is ${packSize - 1}.`, 'error');
+      sfx.alert?.();
+      input?.focus();
+      return;
+    }
+
+    const prevTicket = slot.currentTicket !== undefined ? slot.currentTicket : 0;
+
+    recordUndoAction({
+      type: 'ADJUST_COUNT',
+      boxNumber: slot.boxNumber,
+      prevTicket: prevTicket,
+      prevStatus: slot.status
+    });
+
+    // Same functionality as Update Inventory fix (handleConfirmFixTicketPosition):
+    // If this box was just activated or 0 tickets were sold this shift, fixing position updates both start and current!
+    if (slot.currentTicket === slot.startTicket || slot.activatedThisShift) {
+      slot.startTicket = newPos;
+      slot.currentTicket = newPos;
+      slot.activatedThisShift = (newPos === 0);
+    } else {
+      slot.currentTicket = newPos;
+    }
+
+    if (inputAdjustCount && currentAdjustingSlot?.boxNumber === slot.boxNumber) {
+      inputAdjustCount.value = newPos;
+    }
+
+    saveState(state);
+    sfx.win?.() || sfx.success?.();
+    if (voice && typeof voice.speakMissedTicketFixed === 'function') {
+      try { voice.speakMissedTicketFixed(); } catch (e) {}
+    }
+
+    if (lastScanReadoutContainer) lastScanReadoutContainer.classList.remove('alert-yellow');
+    if (scanActionTitle) scanActionTitle.textContent = 'Missed Ticket is Fixed';
+    if (lastScanDisplay) lastScanDisplay.textContent = `Box #${slot.boxNumber} (${cleanGameTitle(slot.gameName)}) at #${String(newPos).padStart(2, '0')}`;
+
+    document.getElementById('invFixCountModal')?.close();
+
+    renderHeaderAndMetrics();
+    renderDispenserRack();
+    renderSlotsRibbon();
+
+    if (boxAdjustModal?.open && currentAdjustingSlot?.boxNumber === slot.boxNumber) {
+      openBoxAdjustModal(slot);
+    }
+    if (inventoryStatusModal?.open) {
+      renderInventoryStatusModal();
+    }
+    if (inventoryModal?.open) {
+      renderInventoryTable();
+    }
+    renderInventoryView();
+
+    showToast(`✓ Box ${box} (${cleanGameTitle(slot.gameName)}) fixed to Ticket #${String(newPos).padStart(3, '0')}`, 'success');
   });
 
   // Count & Reconcile Interactive Controls
@@ -11057,6 +12383,13 @@ function setupEventListeners() {
   // Initialize Settings view
   populateSettingsInputs();
 }
+
+// Global modal helpers
+window.getState = () => state;
+window.saveState = saveState;
+window.openBoxAdjustModal = openBoxAdjustModal;
+window.openShiftReportModal = openShiftReportModal;
+window.openManagerApprovalModal = openManagerApprovalModal;
 
 // Launch application
 initPOS();

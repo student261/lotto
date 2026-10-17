@@ -1,5 +1,5 @@
 // LottoTrack Pro - Service Worker for PWA Installability
-const CACHE_NAME = 'lottotrack-pro-v2';
+const CACHE_NAME = 'lottotrack-pro-v4';
 
 // Install: activate immediately
 self.addEventListener('install', event => {
@@ -14,11 +14,11 @@ self.addEventListener('activate', event => {
   self.clients.claim();
 });
 
-// Fetch: Always bypass service worker cache for local development & localhost
+// Fetch: Always bypass service worker cache for local development, localhost & localtunnel
 self.addEventListener('fetch', event => {
   const url = event.request.url;
-  if (url.includes('localhost') || url.includes('127.0.0.1') || url.includes(':5173') || url.includes('/src/')) {
-    // Direct network pass-through for development
+  if (url.includes('localhost') || url.includes('127.0.0.1') || url.includes(':5173') || url.includes('/src/') || url.includes('loca.lt')) {
+    // Direct network pass-through for development and live tunnel
     return;
   }
 

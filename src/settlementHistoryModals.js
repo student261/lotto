@@ -41,6 +41,10 @@ export const REFERENCE_PAST_DAYS = [
  * Open and render Day Settlement Modal (Matching Image 1)
  */
 export function openDaySettlementModal(state, onFullReport = null, onCloseDay = null) {
+  if (typeof window !== 'undefined' && typeof window.openShiftReportModal === 'function') {
+    window.openShiftReportModal();
+    return;
+  }
   const modal = document.getElementById('daySettlementModal');
   if (!modal) return;
 

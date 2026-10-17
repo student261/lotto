@@ -502,12 +502,7 @@ export const AMIGO_SCREENSHOT_DAY_REPORT = {
 export function getScreenDayReportData(state, options = {}) {
   const { showEmptyBoxes = false, forceSample = false } = options;
 
-  // Check if store state has any actual ticket sales
-  const hasLiveSales = !forceSample && state && Array.isArray(state.slots) && state.slots.some(s => {
-    return s && s.status === 'ACTIVE' && typeof s.startTicket === 'number' && typeof s.currentTicket === 'number' && s.currentTicket > s.startTicket;
-  });
-
-  if (!hasLiveSales) {
+  if (!state || forceSample) {
     // Return sample matching user screenshot exactly
     const ref = JSON.parse(JSON.stringify(AMIGO_SCREENSHOT_DAY_REPORT));
     if (state?.storeName) ref.storeName = state.storeName;
@@ -543,24 +538,29 @@ export function getScreenDayReportData(state, options = {}) {
   // Calculate live report data from state
   const now = new Date();
   const dateStr = now.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' });
-  const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+  const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
   const dayName = now.toLocaleDateString('en-US', { weekday: 'long' });
   const monthName = now.toLocaleDateString('en-US', { month: 'short' });
   const dayNum = now.getDate();
   const yearNum = now.getFullYear();
 
   const openTime = state?.shiftStartedAt 
-    ? new Date(state.shiftStartedAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
+    ? new Date(state.shiftStartedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
     : '7:02 AM';
 
-  const user = state?.cashierName || 'master';
-  const subtitle = `${dayName}, ${monthName} ${dayNum}, ${yearNum} · ${state?.shiftEndedAt ? 'Closed' : 'Open'} ${timeStr} by ${user}`;
+  const user = state?.cashierName || 'Carlos';
+  const isDailyMode = state?.settings?.operationMode !== 'SHIFTS';
 
   let totalTickets = 0;
   let totalInstantSales = 0;
   const priceMap = new Map();
   const boxes = [];
-  const soldOutList = state?.soldOutThisShift || [];
+  
+  // Only count sold-out packs that had actual sales
+  const soldOutList = (state?.soldOutThisShift || []).filter(sp => {
+    const sSold = sp.ticketsSold !== undefined ? sp.ticketsSold : Math.max(0, (sp.closeTicket || 0) - (sp.startTicket || 0));
+    return sSold > 0;
+  });
   let soldOutCount = soldOutList.length;
   let soldOutBox = soldOutList.length > 0 ? `Box ${soldOutList[0].boxNumber || ''}` : '-';
 
@@ -641,16 +641,73 @@ export function getScreenDayReportData(state, options = {}) {
     .map(([price, data]) => ({ price, count: data.count, total: data.total }))
     .sort((a, b) => a.price - b.price);
 
+  // Shift breakdown
+  const shifts = [];
+  const isToday = (dStr) => {
+    if (!dStr) return false;
+    const d = new Date(dStr);
+    return d.getFullYear() === now.getFullYear() &&
+           d.getMonth() === now.getMonth() &&
+           d.getDate() === now.getDate();
+  };
+
+  if (Array.isArray(state?.shiftHistory)) {
+    state.shiftHistory.filter(h => isToday(h.endedAt || h.startedAt)).forEach((h, idx) => {
+      const sNum = h.shiftNumber || (idx + 1);
+      const cName = h.cashierName || 'Cashier';
+      const sStart = h.startedAt ? new Date(h.startedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }) : '7:02 AM';
+      const sEnd = h.endedAt ? new Date(h.endedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }) : '3:30 PM';
+      shifts.push({
+        id: sNum,
+        name: `Shift #${sNum} · ${cName}`,
+        cashier: cName,
+        time: `${sStart} – ${sEnd}`,
+        total: Number(h.totalSalesRevenue || 0),
+        tickets: Number(h.totalTicketsSold || 0),
+        isOpen: false
+      });
+    });
+  }
+
+  // Current open shift
+  const currentShiftNum = state?.shiftNumber || (shifts.length + 1);
+  const currentShiftName = isDailyMode 
+    ? `Day · ${user}`
+    : `Shift #${currentShiftNum} · ${user}`;
+  const currentShiftTime = `${openTime} – Present`;
+  shifts.push({
+    id: currentShiftNum,
+    name: currentShiftName,
+    cashier: user,
+    time: currentShiftTime,
+    total: totalInstantSales,
+    tickets: totalTickets,
+    isOpen: true
+  });
+
+  const shiftsSummary = shifts.map(s => `${s.name.replace('Shift #', '#')} (${s.time})`).join(' · ');
+  const shiftsCount = isDailyMode ? '1 day' : `${shifts.length} shift${shifts.length === 1 ? '' : 's'}`;
+  const reportHeading = isDailyMode ? 'Day Report' : 'Shift Report';
+  const reportTitle = isDailyMode ? 'Day Report' : `Shift #${currentShiftNum} Report`;
+  const subtitle = `${dayName}, ${monthName} ${dayNum}, ${yearNum} · ${shiftsCount} · open since ${openTime} by ${user}`;
+
   return {
     isLive: true,
-    reportTitle: 'Day Report',
+    isDailyMode,
+    reportHeading,
+    reportTitle,
     storeName: state?.storeName || 'AMIGO FOOD MART',
     storeAddress: state?.storeAddress || '2300 Moody Rd, Warner Robins, GA 31088',
     subtitle,
     date: dateStr,
+    dateRange: dateStr,
+    generatedTime: `${monthName} ${dayNum}, ${timeStr}`,
     openedTime: openTime,
     closedTime: timeStr,
     userId: user,
+    shifts,
+    shiftsCount,
+    shiftsSummary,
     totalInstantSales,
     totalTickets,
     soldOutCount,

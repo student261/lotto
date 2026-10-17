@@ -11,8 +11,9 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/src/style.css">
-  <link rel="stylesheet" href="/src/design-system.css">
+  <link rel="stylesheet" href="/src/style.css?v=20261017c">
+  <link rel="stylesheet" href="/src/design-system.css?v=20261017c">
+  <link rel="stylesheet" href="/src/responsive.css?v=20261017c">
 </head>
 <body>
 
@@ -21,6 +22,16 @@
        240px Persistent Left Sidebar + Sell Counter Main Workspace
        ==================================================================== -->
   <div class="pos-app-layout">
+    <!-- MOBILE HAMBURGER BUTTON (visible only on small screens) -->
+    <button type="button" class="mobile-hamburger-btn" id="mobileHamburgerBtn" title="Open Menu" aria-label="Open navigation menu">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="3" y1="6" x2="21" y2="6"/>
+        <line x1="3" y1="12" x2="21" y2="12"/>
+        <line x1="3" y1="18" x2="21" y2="18"/>
+      </svg>
+    </button>
+    <!-- MOBILE SIDEBAR OVERLAY -->
+    <div class="sidebar-mobile-overlay" id="sidebarMobileOverlay"></div>
     <!-- PERSISTENT LEFT SIDEBAR -->
     <aside class="pos-sidebar">
       <div class="sidebar-brand">
@@ -53,24 +64,15 @@
           </svg>
           <span>Sell Counter</span>
         </button>
-        <button type="button" class="sidebar-nav-item" id="navReceivePacks" title="Update Inventory">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="1" y="3" width="15" height="13" rx="2"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/>
-          </svg>
-          <span>Update Inventory</span>
-        </button>
         <button type="button" class="sidebar-nav-item" id="navInventory" title="Inventory">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4"/><path d="M12 16h4"/><path d="M8 11h.01"/><path d="M8 16h.01"/>
           </svg>
           <span>Inventory</span>
         </button>
-        <button type="button" class="sidebar-nav-item" id="navDayReport" title="Day Report">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/>
-          </svg>
-          <span>Day Report</span>
-        </button>
+        <!-- Legacy buttons kept hidden for programmatic and test compatibility -->
+        <button type="button" class="sidebar-nav-item" id="navReceivePacks" title="Update Inventory" style="display: none !important;" aria-hidden="true"></button>
+        <button type="button" class="sidebar-nav-item" id="navDayReport" title="Day Report" style="display: none !important;" aria-hidden="true"></button>
 
         <div class="nav-group-title" style="margin-top: 1.5rem;">BACK OFFICE</div>
         <button type="button" class="sidebar-nav-item" id="navHistory" title="Reports">
@@ -126,7 +128,11 @@
           <div class="hdr-left-actions">
             <!-- 1. End Shift Card -->
             <button type="button" class="btn-header-end-shift hdr-btn-end-shift-card" id="mainShiftActionBtn">
-              <span class="hdr-moon-icon">🌙</span>
+              <span class="hdr-moon-icon">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+                </svg>
+              </span>
               <div class="hdr-card-text">
                 <strong class="hdr-card-title" id="mainShiftBtnLabel">End Shift</strong>
                 <span class="hdr-card-sub" id="shiftSubMeta">
@@ -162,38 +168,41 @@
             </button>
           </div>
 
-          <!-- Center: Barcode Scanner Input Pill -->
-          <div class="header-scanner-box">
-            <div class="scanner-barcode-icon">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/>
-                <line x1="7" x2="7" y1="8" y2="16"/><line x1="12" x2="12" y1="8" y2="16"/><line x1="17" x2="17" y1="8" y2="16"/>
-              </svg>
+          <!-- Right Action Cluster: Barcode Scanner + Last Scan Box Card -->
+          <div class="hdr-right-actions">
+            <!-- Barcode Scanner Input Pill -->
+            <div class="header-scanner-box">
+              <div class="scanner-barcode-icon">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/>
+                  <line x1="7" x2="7" y1="8" y2="16"/><line x1="12" x2="12" y1="8" y2="16"/><line x1="17" x2="17" y1="8" y2="16"/>
+                </svg>
+              </div>
+              <input 
+                type="text" 
+                id="barcodeInput" 
+                class="header-scanner-input" 
+                placeholder="Scan a ticket or pack — or type the barcode" 
+                autocomplete="off" 
+                autofocus
+              >
+              <button type="button" class="btn-scanner-enter-blue" id="barcodeEnterBtn" style="display:none;">Enter</button>
             </div>
-            <input 
-              type="text" 
-              id="barcodeInput" 
-              class="header-scanner-input" 
-              placeholder="Scan a ticket or pack — or type the barcode" 
-              autocomplete="off" 
-              autofocus
-            >
-            <button type="button" class="btn-scanner-enter-blue" id="barcodeEnterBtn" style="display:none;">Enter</button>
-          </div>
 
-          <!-- Right: Last Scan Box Card with Embedded Undo Button -->
-          <div class="card-last-scan-box header-last-scan-card" id="lastScanReadoutContainer">
-            <div class="last-scan-huge-box header-last-scan-badge" id="largeStatReadout">7</div>
-            <div class="last-scan-meta-lines header-last-scan-details">
-              <span class="last-scan-micro-label">LAST SCAN</span>
-              <strong class="last-scan-game-name header-last-scan-game" id="scanActionTitle">2026 Happy New</strong>
-              <span class="last-scan-ticket-detail header-last-scan-meta" id="lastScanDisplay">#003 &middot; <span class="last-scan-price-accent">$3</span></span>
+            <!-- Last Scan Box Card with Embedded Undo Button -->
+            <div class="card-last-scan-box header-last-scan-card" id="lastScanReadoutContainer">
+              <div class="last-scan-huge-box header-last-scan-badge" id="largeStatReadout">7</div>
+              <div class="last-scan-meta-lines header-last-scan-details">
+                <span class="last-scan-micro-label">LAST SCAN</span>
+                <strong class="last-scan-game-name header-last-scan-game" id="scanActionTitle">2026 Happy New</strong>
+                <span class="last-scan-ticket-detail header-last-scan-meta" id="lastScanDisplay">#003 &middot; <span class="last-scan-price-accent">$3</span></span>
+              </div>
+              <button type="button" class="btn-header-undo-ghost" id="undoActionBtn" title="Undo Last Sale or Move">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/>
+                </svg>
+              </button>
             </div>
-            <button type="button" class="btn-header-undo-ghost" id="undoActionBtn" title="Undo Last Sale or Move">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/>
-              </svg>
-            </button>
           </div>
 
           <!-- Hidden Shift Status Hooks to preserve test & JS compatibility -->
@@ -325,12 +334,518 @@
         </div>
       </section>
 
+      <!-- VIEW: CLOSE SHIFT (SCAN & RECONCILE) - Screen 03 Specification -->
+      <section class="close-shift-view" id="viewCloseShift" style="display: none;">
+        <!-- HEADER -->
+        <header class="cs-header-strip">
+          <div class="cs-header-left">
+            <button type="button" class="btn-back-header" id="btnBackFromCloseShift" title="Back to Sell Counter">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="19" y1="12" x2="5" y2="12"></line>
+                <polyline points="12 19 5 12 12 5"></polyline>
+              </svg>
+            </button>
+            <div class="cs-title-meta">
+              <h1 class="cs-page-title" id="csPageTitle">Close Shift #1</h1>
+              <p class="cs-page-sub" id="csPageSub">master &middot; opened 7:02 AM &middot; Thu, Oct 8 &middot; Register 1</p>
+            </div>
+          </div>
+        </header>
+
+        <!-- MAIN TWO-COLUMN CLOSE SHIFT WORKSPACE -->
+        <div class="cs-workspace-grid">
+          <!-- LEFT MAIN CONTENT: Scanning, Progress, Filters & Table -->
+          <div class="cs-main-column">
+            <!-- White Card Container -->
+            <div class="cs-reconcile-card">
+              <!-- Top Scanner Pill with Prototype Button -->
+              <div class="cs-scanner-pill-wrap">
+                <div class="cs-scanner-icon">
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/>
+                    <line x1="7" x2="7" y1="8" y2="16"/><line x1="12" x2="12" y1="8" y2="16"/><line x1="17" x2="17" y1="8" y2="16"/>
+                  </svg>
+                </div>
+                <input 
+                  type="text" 
+                  id="csBarcodeInput" 
+                  class="cs-scanner-input" 
+                  placeholder="Scan the next ticket in each pack" 
+                  autocomplete="off"
+                >
+                <button type="button" class="cs-proto-scan-btn" id="csProtoScanBtn">Prototype: scan next</button>
+              </div>
+
+              <!-- Progress Bar -->
+              <div class="cs-progress-container">
+                <div class="cs-progress-labels">
+                  <span class="cs-scanned-count-text" id="csScannedCountText"><strong>17</strong> of <strong>19</strong> packs scanned</span>
+                  <span class="cs-left-count-text" id="csLeftCountText">2 left to scan</span>
+                </div>
+                <div class="cs-progress-bar-track">
+                  <div class="cs-progress-bar-fill" id="csProgressBarFill" style="width: 89%;"></div>
+                </div>
+              </div>
+
+              <!-- Filter Pills Row -->
+              <div class="cs-filter-pills-row" id="csFilterPillsRow">
+                <button type="button" class="cs-filter-pill active" data-cs-filter="all">All packs <span class="cs-pill-badge" id="csBadgeAll">19</span></button>
+                <button type="button" class="cs-filter-pill" data-cs-filter="attention">Needs attention <span class="cs-pill-badge badge-attention" id="csBadgeAttention">4</span></button>
+                <button type="button" class="cs-filter-pill" data-cs-filter="not_scanned">Not scanned <span class="cs-pill-badge" id="csBadgeNotScanned">2</span></button>
+                <button type="button" class="cs-filter-pill" data-cs-filter="done">Done <span class="cs-pill-badge" id="csBadgeDone">14</span></button>
+              </div>
+
+              <!-- Reconciliation Table -->
+              <div class="cs-table-responsive-wrapper">
+                <table class="cs-reconcile-table" id="csReconcileTable">
+                  <thead>
+                    <tr>
+                      <th class="th-box">BOX</th>
+                      <th class="th-game">GAME &amp; PACK</th>
+                      <th class="th-price">PRICE</th>
+                      <th class="th-num">OPENING</th>
+                      <th class="th-num">CLOSING</th>
+                      <th class="th-num">SOLD</th>
+                      <th class="th-num">SALES</th>
+                      <th class="th-status">STATUS</th>
+                    </tr>
+                  </thead>
+                  <tbody id="csTableBody">
+                    <!-- Populated dynamically via renderCloseShiftView() in main.js -->
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <!-- RIGHT SIDEBAR: Shift Totals, Problems to Fix & Actions -->
+          <div class="cs-side-column">
+            <!-- 1. Shift Totals Card -->
+            <div class="cs-card cs-totals-card">
+              <div class="cs-card-header-row">
+                <h2 class="cs-card-heading">Shift totals</h2>
+                <span class="cs-draft-tag">Draft</span>
+              </div>
+              <div class="cs-totals-metric-row">
+                <div class="cs-stat-block">
+                  <span class="cs-stat-lbl text-emerald">SALES</span>
+                  <strong class="cs-stat-num text-emerald" id="csTotalsSales">$871.00</strong>
+                </div>
+                <div class="cs-stat-block">
+                  <span class="cs-stat-lbl">TICKETS</span>
+                  <strong class="cs-stat-num" id="csTotalsTickets">127</strong>
+                </div>
+              </div>
+              <div class="cs-meta-divider"></div>
+              <div class="cs-totals-meta-list">
+                <div class="cs-meta-item">
+                  <span class="cs-meta-name">Packs activated</span>
+                  <strong class="cs-meta-val" id="csTotalsActivated">2 &middot; EFT $600.00</strong>
+                </div>
+                <div class="cs-meta-item">
+                  <span class="cs-meta-name">Sold out</span>
+                  <strong class="cs-meta-val" id="csTotalsSoldOut">1 pack</strong>
+                </div>
+                <div class="cs-meta-item">
+                  <span class="cs-meta-name">Boxes</span>
+                  <strong class="cs-meta-val" id="csTotalsBoxes">19 selling + 46 empty = 65</strong>
+                </div>
+              </div>
+              <div class="cs-totals-footnote">
+                Draft: rows marked &ldquo;Not scanned&rdquo; or &ldquo;Check position&rdquo; aren't counted yet.
+              </div>
+            </div>
+
+            <!-- 2. Problems to Fix Card -->
+            <div class="cs-card cs-problems-card" id="csProblemsCard">
+              <div class="cs-card-header-row">
+                <h2 class="cs-card-heading">Problems to fix</h2>
+                <span class="cs-problem-badge" id="csProblemCountBadge">4</span>
+              </div>
+              <div class="cs-problems-list" id="csProblemsList">
+                <div class="cs-problem-item">
+                  <div class="cs-problem-icon-wrap">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ea580c" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+                    </svg>
+                  </div>
+                  <div class="cs-problem-text">
+                    <strong class="cs-problem-title">Box 7 scanned twice</strong>
+                    <span class="cs-problem-sub">Counted once. Nothing to do.</span>
+                  </div>
+                </div>
+
+                <div class="cs-problem-item highlight-red">
+                  <div class="cs-problem-icon-wrap">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+                    </svg>
+                  </div>
+                  <div class="cs-problem-text">
+                    <strong class="cs-problem-title">Box 22 position went backwards</strong>
+                    <span class="cs-problem-sub">#003 &rarr; #001 &middot; rescan or correct</span>
+                  </div>
+                </div>
+
+                <div class="cs-problem-item">
+                  <div class="cs-problem-icon-wrap">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ea580c" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+                    </svg>
+                  </div>
+                  <div class="cs-problem-text">
+                    <strong class="cs-problem-title">Box 60 not scanned</strong>
+                    <span class="cs-problem-sub">Jumbo Bucks &middot; scan it or type its position</span>
+                  </div>
+                </div>
+
+                <div class="cs-problem-item">
+                  <div class="cs-problem-icon-wrap">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ea580c" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+                    </svg>
+                  </div>
+                  <div class="cs-problem-text">
+                    <strong class="cs-problem-title">Pack 903281 isn't on the rack</strong>
+                    <span class="cs-problem-sub">Lucky 7s is in the safe. Remove the scan or activate it first.</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 3. Bottom Action Buttons Cluster -->
+            <div class="cs-actions-card">
+              <button type="button" class="cs-btn-primary-dark" id="csPrimaryActionBtn">
+                Fix 4 problems to close, or ask a manager to override
+              </button>
+              <div class="cs-btn-secondary-row">
+                <button type="button" class="cs-btn-secondary" id="csSaveDraftBtn">Save draft</button>
+                <button type="button" class="cs-btn-secondary" id="csManagerOverrideBtn">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                  </svg>
+                  Manager override
+                </button>
+              </div>
+              <p class="cs-actions-footnote">
+                A draft is not a report. Closing saves Report v1, which can't be edited; corrections create v2.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- VIEW: SHIFT IS CLOSED / START NEW SHIFT - Screen 04 Specification (media_1792219965973.png) -->
+      <section class="shift-closed-view" id="viewShiftClosed" style="display: none;">
+        <!-- Top Header Strip -->
+        <header class="sc-header-strip">
+          <div class="sc-header-left">
+            <button type="button" class="btn-back-header" id="btnBackFromShiftClosed" title="Back">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="19" y1="12" x2="5" y2="12"></line>
+                <polyline points="12 19 5 12 12 5"></polyline>
+              </svg>
+            </button>
+            <div class="sc-title-meta">
+              <h1 class="sc-page-title" id="scHeaderTitle">Close Shift #1</h1>
+              <p class="sc-page-sub" id="scHeaderSub">Priya &middot; opened 7:02 AM &middot; Thu, Oct 8 &middot; Register 1</p>
+            </div>
+          </div>
+          <!-- 3 Step Pills on Right (Matching Reference Screenshot) -->
+          <div class="sc-steps-cluster">
+            <div class="sc-step-pill done">
+              <span class="sc-step-num">1</span>
+              <span class="sc-step-label">Scan every pack</span>
+            </div>
+            <div class="sc-step-pill done">
+              <span class="sc-step-num">2</span>
+              <span class="sc-step-label">Fix problems</span>
+            </div>
+            <div class="sc-step-pill active-done">
+              <span class="sc-step-num">3</span>
+              <span class="sc-step-label">Close &amp; save report</span>
+            </div>
+          </div>
+        </header>
+
+        <!-- Centered Main Content Area -->
+        <div class="sc-center-container">
+          <!-- Big Green Check Circle -->
+          <div class="sc-success-circle">
+            <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+          </div>
+
+          <!-- Headline and Subtitle -->
+          <h2 class="sc-main-headline" id="scMainHeadline">Shift #1 is closed</h2>
+          <p class="sc-main-subtext" id="scMainSubtext">
+            Closed by Priya at 3:02 PM. The report is saved and can't be changed.
+          </p>
+
+          <!-- Report Details Card -->
+          <div class="sc-summary-card">
+            <div class="sc-card-row">
+              <span class="sc-row-lbl">Report</span>
+              <div class="sc-row-val">
+                <span class="sc-badge-final">Final v1</span>
+                <span class="sc-text-rules">&middot; Rules v3</span>
+              </div>
+            </div>
+            <div class="sc-card-row">
+              <span class="sc-row-lbl">Sales</span>
+              <div class="sc-row-val">
+                <strong class="sc-stat-sales text-emerald" id="scCardSales">$937.00 &middot; 148 tickets</strong>
+              </div>
+            </div>
+            <div class="sc-card-row">
+              <span class="sc-row-lbl" id="scCardEmailLabel">Email to manager@amigofoodmart.com</span>
+              <div class="sc-row-val">
+                <span class="sc-badge-sent">Sent</span>
+              </div>
+            </div>
+            <div class="sc-card-row">
+              <span class="sc-row-lbl">Cloud backup</span>
+              <div class="sc-row-val">
+                <span class="sc-badge-backup">Saved on this computer &middot; syncs when online</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Bottom Action Buttons -->
+          <div class="sc-actions-row">
+            <button type="button" class="sc-btn-count-cash" id="btnCountCashPrint">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect width="20" height="12" x="2" y="6" rx="2"></rect>
+                <circle cx="12" cy="12" r="2"></circle>
+                <path d="M6 12h.01M18 12h.01"></path>
+              </svg>
+              <span>Count cash &amp; print</span>
+            </button>
+            <button type="button" class="sc-btn-start-next-shift" id="btnStartNewShift">
+              <span id="scBtnStartNextLabel">Start Shift #2</span>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+                <polyline points="12 5 19 12 12 19"></polyline>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- VIEW: START SHIFT (HANDOVER) - Specification matching user image (04 - Start Shift handover) -->
+      <section class="start-shift-handover-view" id="viewStartShiftHandover" style="display: none;">
+        <!-- Top Header Strip -->
+        <header class="ssh-header-strip">
+          <button type="button" class="btn-back-header" id="btnBackFromStartShiftHandover" title="Back">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="19" y1="12" x2="5" y2="12"></line>
+              <polyline points="12 19 5 12 12 5"></polyline>
+            </svg>
+          </button>
+          <div class="ssh-title-meta">
+            <h1 class="ssh-page-title" id="sshHeaderTitle">Start Shift #2</h1>
+            <p class="ssh-page-sub" id="sshHeaderSub">Thu, Oct 8 &middot; Register 1 &middot; Amigo Food Mart</p>
+          </div>
+        </header>
+
+        <!-- Main 2-Column Handover Grid -->
+        <div class="ssh-layout-grid">
+          <!-- LEFT COLUMN (Steps 1, 2, 3) -->
+          <div class="ssh-left-column">
+            
+            <!-- Step 1: Who's taking over? -->
+            <div class="ssh-card">
+              <div class="ssh-card-header">
+                <span class="ssh-step-badge">1</span>
+                <h2 class="ssh-card-title">Who's taking over?</h2>
+              </div>
+              <div class="ssh-clerks-grid" id="sshClerksGrid">
+                <!-- Clerk Option 1: Carlos -->
+                <div class="ssh-clerk-card" data-cashier-name="Carlos">
+                  <div class="ssh-clerk-avatar">C</div>
+                  <div class="ssh-clerk-info">
+                    <strong class="ssh-clerk-name">Carlos</strong>
+                    <span class="ssh-clerk-role">Shift Manager</span>
+                  </div>
+                </div>
+
+                <!-- Clerk Option 2: master (selected by default or selectable) -->
+                <div class="ssh-clerk-card active" data-cashier-name="master">
+                  <div class="ssh-clerk-avatar">M</div>
+                  <div class="ssh-clerk-info">
+                    <strong class="ssh-clerk-name">master</strong>
+                    <span class="ssh-clerk-role">Owner</span>
+                  </div>
+                </div>
+
+                <!-- Clerk Option 3: Priya -->
+                <div class="ssh-clerk-card" data-cashier-name="Priya">
+                  <div class="ssh-clerk-avatar">P</div>
+                  <div class="ssh-clerk-info">
+                    <strong class="ssh-clerk-name">Priya</strong>
+                    <span class="ssh-clerk-role">Cashier &middot; just closed Shift #1</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Step 2: Drawer and note -->
+            <div class="ssh-card">
+              <div class="ssh-card-header">
+                <span class="ssh-step-badge">2</span>
+                <h2 class="ssh-card-title">Drawer and note</h2>
+              </div>
+              <div class="ssh-drawer-inputs-row">
+                <div class="ssh-input-group">
+                  <label class="ssh-input-label" for="sshStartingCashInput">Starting cash in drawer</label>
+                  <div class="ssh-currency-input-wrap">
+                    <span class="ssh-currency-prefix">$</span>
+                    <input type="number" step="0.01" class="ssh-input" id="sshStartingCashInput" value="0.00" placeholder="0.00">
+                  </div>
+                  <span class="ssh-input-helper">Lottery cash only. Used in this shift's cash count.</span>
+                </div>
+                <div class="ssh-input-group">
+                  <label class="ssh-input-label" for="sshDrawerRefInput">Drawer / bag reference (optional)</label>
+                  <input type="text" class="ssh-input" id="sshDrawerRefInput" placeholder="e.g. BAG-0412">
+                </div>
+              </div>
+
+              <div class="ssh-note-section">
+                <label class="ssh-input-label" id="sshHandoverNoteLabel">Handover note from Priya</label>
+                <div class="ssh-handover-note-box" id="sshHandoverNoteBox">
+                  Box 22 (Epic Riches) position was corrected at close. 2 packs of Lucky 7s are in the safe from today's delivery.
+                </div>
+              </div>
+            </div>
+
+            <!-- Step 3: Quick checks -->
+            <div class="ssh-card">
+              <div class="ssh-card-header">
+                <span class="ssh-step-badge">3</span>
+                <h2 class="ssh-card-title">Quick checks</h2>
+              </div>
+              <div class="ssh-checks-list">
+                <label class="ssh-check-item">
+                  <input type="checkbox" class="ssh-checkbox" id="sshCheckCountedCash" checked>
+                  <div class="ssh-check-content">
+                    <strong class="ssh-check-title">I counted the starting cash</strong>
+                    <span class="ssh-check-sub">The drawer amount above is what's really there.</span>
+                  </div>
+                </label>
+                <label class="ssh-check-item">
+                  <input type="checkbox" class="ssh-checkbox" id="sshCheckRackMatches" checked>
+                  <div class="ssh-check-content">
+                    <strong class="ssh-check-title">The rack matches the screen</strong>
+                    <span class="ssh-check-sub" id="sshCheckRackSub">19 packs selling, 46 empty boxes. Spot-check a few next tickets.</span>
+                  </div>
+                </label>
+                <label class="ssh-check-item">
+                  <input type="checkbox" class="ssh-checkbox" id="sshCheckReadNote" checked>
+                  <div class="ssh-check-content">
+                    <strong class="ssh-check-title">I read the handover note</strong>
+                    <span class="ssh-check-sub" id="sshCheckNoteSub">Anything Priya flagged is understood.</span>
+                  </div>
+                </label>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- RIGHT COLUMN (Previous shift & Opening numbers) -->
+          <div class="ssh-right-column">
+            
+            <!-- Previous shift Card -->
+            <div class="ssh-card ssh-prev-shift-card">
+              <div class="ssh-card-header-between">
+                <h2 class="ssh-card-title">Previous shift</h2>
+                <span class="sc-badge-final" id="sshPrevShiftBadge">Final v1</span>
+              </div>
+              <div class="ssh-summary-rows">
+                <div class="ssh-summary-row">
+                  <span class="ssh-row-label">Shift</span>
+                  <span class="ssh-row-value font-semibold" id="sshPrevShiftNumLabel">#1 &middot; Priya</span>
+                </div>
+                <div class="ssh-summary-row">
+                  <span class="ssh-row-label">Time</span>
+                  <span class="ssh-row-value" id="sshPrevShiftTimeLabel">7:02 AM &ndash; 3:02 PM</span>
+                </div>
+                <div class="ssh-summary-row">
+                  <span class="ssh-row-label">Sales</span>
+                  <span class="ssh-row-value text-emerald font-bold" id="sshPrevShiftSalesLabel">$1,237.00 &middot; 289 tickets</span>
+                </div>
+                <div class="ssh-summary-row">
+                  <span class="ssh-row-label">Cash count</span>
+                  <span class="sc-badge-sent">Balanced</span>
+                </div>
+                <div class="ssh-summary-row">
+                  <span class="ssh-row-label">Override</span>
+                  <span class="ssh-row-value" id="sshPrevShiftOverrideLabel">None</span>
+                </div>
+              </div>
+              <button type="button" class="ssh-btn-outline" id="btnViewPrevShiftReport">
+                <span id="sshViewPrevReportLabel">View Shift #1 report</span>
+              </button>
+            </div>
+
+            <!-- Opening numbers Card -->
+            <div class="ssh-card ssh-opening-numbers-card">
+              <div class="ssh-card-header-between">
+                <h2 class="ssh-card-title">Opening numbers</h2>
+                <span class="ssh-badge-confirmed">Confirmed &middot; 0 problems</span>
+              </div>
+              <p class="ssh-card-subtitle" id="sshOpeningSub">Each pack starts Shift #2 from the closing position confirmed in Shift #1.</p>
+              
+              <div class="ssh-opening-table-wrap">
+                <table class="ssh-opening-table">
+                  <thead>
+                    <tr>
+                      <th class="th-box">BOX</th>
+                      <th class="th-game">GAME</th>
+                      <th class="th-opens">OPENS AT</th>
+                    </tr>
+                  </thead>
+                  <tbody id="sshOpeningTableBody">
+                    <!-- Dynamic rows inserted by JS -->
+                  </tbody>
+                </table>
+              </div>
+
+              <div class="ssh-table-footer">
+                <span id="sshFooterRackCounts">19 packs selling &middot; 46 empty boxes</span>
+                <span class="ssh-footer-total" id="sshFooterTotalBoxes">= 65</span>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- Bottom Action Bar -->
+        <div class="ssh-bottom-bar">
+          <button type="button" class="ssh-btn-cancel" id="btnCancelStartShiftHandover">Cancel</button>
+          <div class="ssh-bottom-right-cluster">
+            <span class="ssh-hint-text" id="sshBottomHintText">Ready to start Shift #2 with master</span>
+            <button type="button" class="ssh-btn-confirm-start" id="btnConfirmStartShiftHandover">
+              <span id="sshConfirmBtnLabel">Start Shift #2</span>
+            </button>
+          </div>
+        </div>
+      </section>
+
       <!-- VIEW: UPDATE INVENTORY (Matching reference design) -->
       <section class="receive-packs-view" id="viewReceivePacks" style="display: none;">
         <!-- HEADER -->
-        <header class="receive-packs-header">
-          <h1 class="page-main-title">Update Inventory</h1>
-          <p class="page-subtitle">Record every pack that comes in or goes out. Each movement is saved with who, when and why.</p>
+        <header class="receive-packs-header" style="display: flex; align-items: center; gap: 14px; margin-bottom: 1.25rem;">
+          <button type="button" class="btn-back-header" id="btnBackToInventoryFromRp" title="Back to Inventory" style="display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: 10px; border: 1px solid var(--ds-border, #e2e8f0); background: var(--ds-surface, #ffffff); color: var(--ds-ink, #0f172a); cursor: pointer; flex-shrink: 0; box-shadow: 0 1px 3px rgba(0,0,0,0.04);">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="19" y1="12" x2="5" y2="12"></line>
+              <polyline points="12 19 5 12 12 5"></polyline>
+            </svg>
+          </button>
+          <div class="header-titles">
+            <h1 class="page-main-title">Stock Intake &amp; Pack Movement</h1>
+            <p class="page-subtitle">Record every pack that comes in or goes out. Each movement is saved with who, when and why.</p>
+          </div>
         </header>
 
         <!-- WHAT ARE YOU RECORDING? 6-CARD OPTION BAR -->
@@ -537,16 +1052,32 @@
       <!-- VIEW: DAY REPORT (Matching Reference UI Design Image 1) -->
       <section class="day-report-view" id="viewDayReport" style="display: none;">
         <!-- TOP HEADER -->
-        <header class="day-report-header">
-          <div class="header-titles">
-            <h1 class="page-main-title" id="dayReportPageTitle">Day Report</h1>
-            <div class="page-subtitle" id="dayReportPageSubtitle">
-              Thursday, Oct 8, 2026 · 2 shifts · last closed 9:41 PM by Carlos
+        <header class="day-report-header" style="display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap;">
+          <div style="display: flex; align-items: center; gap: 14px;">
+            <button type="button" class="btn-back-header" id="btnBackToSellFromDr" title="Back to Sell Counter" style="display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: 10px; border: 1px solid var(--ds-border, #e2e8f0); background: var(--ds-surface, #ffffff); color: var(--ds-ink, #0f172a); cursor: pointer; flex-shrink: 0; box-shadow: 0 1px 3px rgba(0,0,0,0.04);">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="19" y1="12" x2="5" y2="12"></line>
+                <polyline points="12 19 5 12 12 5"></polyline>
+              </svg>
+            </button>
+            <div class="header-titles">
+              <h1 class="page-main-title" id="dayReportPageTitle">Day Report</h1>
+              <div class="page-subtitle" id="dayReportPageSubtitle">
+                Thursday, Oct 8, 2026 · 2 shifts · last closed 9:41 PM by Carlos
+              </div>
             </div>
           </div>
           <div class="day-report-header-actions">
             <span class="dr-hdr-badge" id="drHdrVersionBadge">Final v1</span>
             <span class="dr-hdr-badge" id="drHdrRulesBadge">Rules v3</span>
+            <button type="button" class="btn-dr-correct" id="drBtnPrintTopHeader" title="Print this report" style="background: var(--ds-primary, #2563eb); color: #ffffff; border-color: var(--ds-primary, #2563eb);">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="6 9 6 2 18 2 18 9"></polyline>
+                <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path>
+                <rect x="6" y="14" width="12" height="8"></rect>
+              </svg>
+              <span>Print report</span>
+            </button>
             <button type="button" class="btn-dr-correct" id="drBtnCorrectReport" title="Correct this report">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M12 20h9"></path>
@@ -868,12 +1399,20 @@
       <!-- VIEW: INVENTORY & AUDIT (Matching Reference UI Design) -->
       <section class="inventory-view" id="viewInventory" style="display: none;">
         <!-- TOP HEADER -->
-        <header class="inv-header">
+        <header class="inv-header" style="display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap;">
           <div class="header-titles">
             <h1 class="page-main-title">Inventory &amp; count</h1>
             <div class="page-subtitle">
               Every pack is in exactly one status. Count the safe and the rack to find differences.
             </div>
+          </div>
+          <div class="inv-header-actions">
+            <button type="button" class="btn-primary" id="invBtnStockIntake" style="display: inline-flex; align-items: center; gap: 8px; padding: 10px 18px; border-radius: 10px; font-weight: 700; font-size: 0.88rem; background: var(--ds-brand, #2563eb); color: #ffffff; border: none; cursor: pointer; transition: all 0.15s ease; box-shadow: 0 1px 3px rgba(37,99,235,0.2);">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="1" y="3" width="15" height="13" rx="2"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/>
+              </svg>
+              <span>+ Stock Intake / Record Movement</span>
+            </button>
           </div>
         </header>
 
@@ -1064,52 +1603,104 @@
               </svg>
             </div>
             <div class="inv-audit-tip-text">
-              <strong>Audit tip:</strong> walk the rack and compare each box's next ticket number with the screen. Use &ldquo;Fix count&rdquo; for any box that's off.
+              <strong>Audit tip:</strong> walk the rack and compare each box's next ticket number with the screen. Use &ldquo;Fix&rdquo; for any box that's off.
             </div>
           </div>
         </div>
       </section>
 
-      <!-- MODAL: Fix / Recount Box Tickets -->
+      <!-- MODAL: Fix Box Ticket Position (Redesigned UI) -->
       <dialog id="invFixCountModal" class="activation-dialog inv-fix-count-dialog">
-        <div class="modal-header">
-          <div class="modal-title">
-            <span>✏️</span> <span id="invFixModalTitle">Fix Count · Box 1</span>
-          </div>
-          <button type="button" class="modal-close-btn" id="closeInvFixModalBtn" title="Close Dialog">&times;</button>
-        </div>
-        <div class="modal-body" style="padding: 24px;">
-          <div class="inv-fix-card">
-            <div class="inv-fix-game-line">
-              <strong id="invFixGameName" style="font-size: 1.1rem; color: #0f172a;">5X Money</strong>
-              <span id="invFixPackNumber" style="color: #64748b; font-size: 0.88rem;">Pack 128842</span>
-            </div>
-            <div class="inv-fix-meta-row" style="display:flex; gap:16px; margin: 12px 0 20px; font-size: 0.88rem; color:#475569;">
-              <span>Price: <strong id="invFixPrice">$1</strong></span>
-              <span>Pack Size: <strong id="invFixPackSize">300</strong></span>
-              <span>Currently on screen: <strong id="invFixCurrentTix">#013</strong></span>
-            </div>
-            <div class="inv-fix-input-block">
-              <label for="invFixNewTicketInput" style="display:block; font-size: 0.84rem; font-weight:700; color:#334155; margin-bottom: 6px;">
-                Actual next ticket number on rack (0 - <span id="invFixMaxTix">299</span>):
-              </label>
-              <div style="display: flex; gap: 8px; align-items: center;">
-                <input 
-                  type="number" 
-                  id="invFixNewTicketInput" 
-                  class="scanner-input-field" 
-                  style="width: 140px; font-size: 1.3rem; font-weight: 800; text-align: center;" 
-                  min="0" 
-                  max="299" 
-                  step="1"
-                >
-                <button type="button" class="btn-rack-action secondary" id="invFixDecBtn" style="height:44px; width:44px; font-size:1.2rem; font-weight:bold;">-1</button>
-                <button type="button" class="btn-rack-action secondary" id="invFixIncBtn" style="height:44px; width:44px; font-size:1.2rem; font-weight:bold;">+1</button>
+        <div class="inv-fix-modal-container">
+          <div class="inv-fix-header">
+            <div class="inv-fix-title-wrap">
+              <div class="inv-fix-icon-badge">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                  <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                </svg>
+              </div>
+              <div>
+                <h3 class="inv-fix-modal-title" id="invFixModalTitle">Fix · Box 1</h3>
+                <p class="inv-fix-subtitle">Verify &amp; synchronize actual ticket on dispenser rack</p>
               </div>
             </div>
-            <div style="margin-top: 24px; display:flex; justify-content: flex-end; gap: 10px;">
-              <button type="button" class="btn-cancel-modal" id="invFixCancelBtn">Cancel</button>
-              <button type="button" class="btn-scanner-enter" id="invFixSaveBtn" style="padding: 0 24px; height: 44px;">Save &amp; Update</button>
+            <button type="button" class="inv-fix-close-btn" id="closeInvFixModalBtn" title="Close Dialog" aria-label="Close dialog">&times;</button>
+          </div>
+
+          <div class="inv-fix-body">
+            <!-- Game & Pack Info Card -->
+            <div class="inv-fix-game-card">
+              <div class="inv-fix-game-header">
+                <span class="inv-fix-game-title" id="invFixGameName">5X Money</span>
+                <span class="inv-fix-pack-pill" id="invFixPackNumber">Pack 128842</span>
+              </div>
+              <div class="inv-fix-meta-badges">
+                <div class="inv-fix-badge price">
+                  <span class="badge-lbl">Price:</span>
+                  <span class="badge-val" id="invFixPrice">$1</span>
+                </div>
+                <div class="inv-fix-badge size">
+                  <span class="badge-lbl">Pack Size:</span>
+                  <span class="badge-val" id="invFixPackSize">300</span>
+                </div>
+                <div class="inv-fix-badge recorded">
+                  <span class="badge-lbl">Currently on screen:</span>
+                  <span class="badge-val" id="invFixCurrentTix">#013</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Stepper / Input Block -->
+            <div class="inv-fix-stepper-section">
+              <div class="inv-fix-input-label-row">
+                <label for="invFixNewTicketInput" class="inv-fix-input-label">
+                  Actual next ticket number on rack (0 - <span id="invFixMaxTix">299</span>):
+                </label>
+                <span class="inv-fix-input-hint">Dispensing next</span>
+              </div>
+
+              <div class="inv-fix-stepper-control">
+                <button type="button" class="inv-fix-step-btn" id="invFixDecBtn" title="Decrease ticket by 1" aria-label="Decrease ticket by 1">-1</button>
+                <div class="inv-fix-input-wrapper">
+                  <span class="inv-fix-input-prefix">#</span>
+                  <input 
+                    type="number" 
+                    id="invFixNewTicketInput" 
+                    class="inv-fix-ticket-field" 
+                    min="0" 
+                    max="299" 
+                    step="1"
+                    autocomplete="off"
+                  >
+                </div>
+                <button type="button" class="inv-fix-step-btn" id="invFixIncBtn" title="Increase ticket by 1" aria-label="Increase ticket by 1">+1</button>
+              </div>
+
+              <!-- Quick Step Pills -->
+              <div class="inv-fix-quick-steps">
+                <button type="button" class="inv-fix-pill-btn" data-step="-5">-5</button>
+                <button type="button" class="inv-fix-pill-btn" data-step="-1">-1</button>
+                <button type="button" class="inv-fix-pill-btn" data-step="0">Reset</button>
+                <button type="button" class="inv-fix-pill-btn" data-step="1">+1</button>
+                <button type="button" class="inv-fix-pill-btn" data-step="5">+5</button>
+              </div>
+
+              <!-- Live impact status -->
+              <div class="inv-fix-impact-badge" id="invFixImpactNotice">
+                <span id="invFixImpactText">Ticket matches recorded rack position</span>
+              </div>
+            </div>
+
+            <!-- Modal Action Buttons -->
+            <div class="inv-fix-footer-actions">
+              <button type="button" class="inv-fix-cancel-btn btn-cancel-modal" id="invFixCancelBtn">Cancel</button>
+              <button type="button" class="inv-fix-save-btn btn-scanner-enter" id="invFixSaveBtn">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+                <span>Save &amp; Update</span>
+              </button>
             </div>
           </div>
         </div>
@@ -2098,7 +2689,10 @@
               </svg>
             </div>
             <div class="box-action-text">
-              <strong class="box-action-title">Fix ticket number</strong>
+              <div class="box-action-title-row">
+                <strong class="box-action-title">Fix ticket number</strong>
+                <span class="box-action-manager-badge">Manager</span>
+              </div>
               <span class="box-action-desc">Count is off? Set the next ticket #</span>
             </div>
           </button>
@@ -2125,7 +2719,7 @@
           </button>
 
           <!-- Loaded by mistake -->
-          <button type="button" class="box-action-card danger" id="btnSetCountZero">
+          <button type="button" class="box-action-card danger mistake-action" id="btnSetCountZero">
             <div class="box-action-icon red-icon">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <polyline points="3 6 5 6 21 6"></polyline>
@@ -2133,10 +2727,21 @@
               </svg>
             </div>
             <div class="box-action-text">
-              <strong class="box-action-title">Loaded by mistake</strong>
+              <div class="box-action-title-row">
+                <strong class="box-action-title">Loaded by mistake</strong>
+                <span class="box-action-manager-badge">Manager</span>
+              </div>
               <span class="box-action-desc">Clear the box. No sales are recorded</span>
             </div>
           </button>
+        </div>
+      </div>
+
+      <!-- Action Section 4: PACK HISTORY (Matching Reference UI Specification) -->
+      <div class="box-action-section">
+        <div class="box-action-section-title">PACK HISTORY</div>
+        <div class="box-pack-history-timeline" id="boxDetailPackHistoryTimeline">
+          <!-- Populated dynamically by renderBoxPackHistory(slot) -->
         </div>
       </div>
 
@@ -2161,6 +2766,78 @@
         <span id="adjustSoldLabel"></span>
         <input type="text" id="inputAdjustCount">
         <div id="boxAdjustErrorBanner"></div>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- MODAL: Manager Approval Needed (Matching Image 3 Reference UI Specification) -->
+  <dialog id="managerApprovalModal" class="manager-approval-dialog">
+    <div class="mgr-appr-container">
+      <div class="mgr-appr-header">
+        <div class="mgr-appr-title-group">
+          <div class="mgr-appr-icon-badge">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+            </svg>
+          </div>
+          <div>
+            <h3 class="mgr-appr-title">Manager approval needed</h3>
+            <p class="mgr-appr-subtitle" id="mgrApprSubtitle">Clearing a box removes an activation. A manager must approve it.</p>
+          </div>
+        </div>
+        <button type="button" class="mgr-appr-close-btn" id="closeManagerApprBtn" title="Close Dialog">&times;</button>
+      </div>
+
+      <div class="mgr-appr-body">
+        <!-- Reason Selection -->
+        <div class="mgr-appr-field">
+          <label class="mgr-appr-label">Reason (saved in the audit log)</label>
+          <div class="mgr-appr-reasons-row" id="mgrApprReasonsGroup">
+            <button type="button" class="mgr-reason-pill active" data-reason="Scanned wrong pack">Scanned wrong pack</button>
+            <button type="button" class="mgr-reason-pill" data-reason="Count was off">Count was off</button>
+            <button type="button" class="mgr-reason-pill" data-reason="Other">Other</button>
+          </div>
+        </div>
+
+        <!-- PIN Section -->
+        <div class="mgr-appr-field">
+          <label class="mgr-appr-label">Manager PIN &middot; master or Carlos</label>
+          <div class="mgr-appr-dots-row" id="mgrPinDots">
+            <span class="mgr-pin-dot"></span>
+            <span class="mgr-pin-dot"></span>
+            <span class="mgr-pin-dot"></span>
+            <span class="mgr-pin-dot"></span>
+          </div>
+
+          <!-- Touch Keypad -->
+          <div class="mgr-appr-keypad" id="mgrApprKeypad">
+            <button type="button" class="mgr-key-btn" data-key="1">1</button>
+            <button type="button" class="mgr-key-btn" data-key="2">2</button>
+            <button type="button" class="mgr-key-btn" data-key="3">3</button>
+
+            <button type="button" class="mgr-key-btn" data-key="4">4</button>
+            <button type="button" class="mgr-key-btn" data-key="5">5</button>
+            <button type="button" class="mgr-key-btn" data-key="6">6</button>
+
+            <button type="button" class="mgr-key-btn" data-key="7">7</button>
+            <button type="button" class="mgr-key-btn" data-key="8">8</button>
+            <button type="button" class="mgr-key-btn" data-key="9">9</button>
+
+            <button type="button" class="mgr-key-btn fn-key" data-key="clear">Clear</button>
+            <button type="button" class="mgr-key-btn" data-key="0">0</button>
+            <button type="button" class="mgr-key-btn fn-key" data-key="backspace">&#x232B;</button>
+          </div>
+        </div>
+
+        <!-- Error message banner if wrong PIN -->
+        <div class="mgr-appr-error" id="mgrApprErrorMsg" style="display: none;"></div>
+
+        <!-- Footer Actions -->
+        <div class="mgr-appr-footer">
+          <button type="button" class="mgr-appr-btn-cancel" id="cancelManagerApprBtn">Cancel</button>
+          <button type="button" class="mgr-appr-btn-approve" id="confirmManagerApprBtn">Approve</button>
+        </div>
       </div>
     </div>
   </dialog>
@@ -2509,149 +3186,171 @@
     </div>
   </dialog>
 
-  <!-- MODAL 3: Shift Audit Report & Settlement -->
-  <dialog id="shiftReportModal" class="shift-report-dialog">
-    <div class="modal-header shift-report-header">
-      <div class="modal-title">
-        <div class="report-title-main" id="shiftReportModalTitle">Shift Report</div>
-      </div>
-      <button class="modal-close-btn" id="closeReportBtn" title="Close">&times;</button>
-    </div>
-    <div class="modal-body report-content">
-      <!-- Compact Stats Strip -->
-      <div class="shift-report-stats-strip">
-        <div class="sr-stat">
-          <span class="sr-stat-label" id="repShiftNumLabel">Shift</span>
-          <span class="sr-stat-value" id="repShiftNum">#1</span>
+  <!-- MODAL 3: Shift Audit Report & Settlement (Matching Image 2 Reference UI Specification) -->
+  <dialog id="shiftReportModal" class="shift-report-dialog settle-dialog-modern">
+    <div class="settle-modal-container">
+      <!-- Modern Header with Green Banknote Icon -->
+      <div class="settle-modal-header">
+        <div class="settle-header-left">
+          <div class="settle-icon-badge">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="2" y="6" width="20" height="12" rx="2"></rect>
+              <circle cx="12" cy="12" r="2"></circle>
+              <path d="M6 12h.01M18 12h.01"></path>
+            </svg>
+          </div>
+          <div>
+            <h2 class="settle-modal-title" id="shiftReportModalTitle">Shift #1 settlement</h2>
+            <p class="settle-modal-subtitle">Count the lottery cash and check it against today's sales</p>
+          </div>
         </div>
-        <div class="sr-stat-divider"></div>
-        <div class="sr-stat">
-          <span class="sr-stat-label">Cashier</span>
-          <span class="sr-stat-value" id="repCashier">master</span>
-        </div>
-        <div class="sr-stat-divider"></div>
-        <div class="sr-stat">
-          <span class="sr-stat-label">Tickets Sold</span>
-          <span class="sr-stat-value" id="repTicketsSold">0</span>
-        </div>
-        <div class="sr-stat-divider"></div>
-        <div class="sr-stat sr-stat-highlight">
-          <span class="sr-stat-label">Total Sales</span>
-          <span class="sr-stat-value sr-stat-green" id="repTotalRevenue">$0.00</span>
-        </div>
+        <button class="settle-close-btn" id="closeReportBtn" title="Close" aria-label="Close dialog">&times;</button>
       </div>
 
-      <!-- Cash Reconciliation -->
-      <div class="cash-reconciliation-card">
-        <div class="reconcile-card-header">
-          <span class="reconcile-header-title">Cash Drawer Reconciliation</span>
-          <span id="repDrawerBalance" class="drawer-balance-pill status-pending">Enter Counted Cash</span>
+      <div class="settle-modal-body">
+        <!-- Top 4 KPI Metrics Row -->
+        <div class="settle-kpi-grid">
+          <div class="settle-kpi-card">
+            <span class="settle-kpi-label" id="repShiftNumLabel">SHIFT #1</span>
+            <strong class="settle-kpi-val" id="repShiftNumDate">Oct 8, 2026</strong>
+            <span id="repShiftNum" style="display:none;">#1</span>
+          </div>
+          <div class="settle-kpi-card">
+            <span class="settle-kpi-label">CASHIER</span>
+            <strong class="settle-kpi-val" id="repCashier">master</strong>
+          </div>
+          <div class="settle-kpi-card">
+            <span class="settle-kpi-label">TICKETS SOLD</span>
+            <strong class="settle-kpi-val" id="repTicketsSold">0</strong>
+          </div>
+          <div class="settle-kpi-card highlight-green">
+            <span class="settle-kpi-label">TOTAL SALES</span>
+            <strong class="settle-kpi-val text-green" id="repTotalRevenue">$0.00</strong>
+          </div>
         </div>
 
-        <div class="drawer-reconcile-grid">
-          <!-- Left: Flow Breakdown -->
-          <div class="reconcile-pane flow-pane">
-            <div class="reconcile-item-row">
-              <span class="reconcile-item-label">(+) Ticket Sales:</span>
-              <strong id="recLottoSales" class="reconcile-amount-success">$0.00</strong>
+        <!-- 2-Column Cash Drawer Reconciliation Grid -->
+        <div class="settle-reconcile-grid">
+          <!-- Left: Flow Breakdown Card -->
+          <div class="settle-card flow-card">
+            <div class="settle-flow-row">
+              <span class="flow-lbl">(+) Ticket sales</span>
+              <strong class="flow-val text-green" id="recLottoSales">$0.00</strong>
             </div>
-            <div class="reconcile-item-row">
-              <span class="reconcile-item-label" title="Prize cash paid out to customers for winning tickets">(-) Payouts:</span>
-              <div class="reconcile-input-box payout-box">
-                <span class="reconcile-prefix prefix-red">-$</span>
-                <input type="number" id="inputShiftPayouts" step="1" min="0" value="0.00" class="reconcile-num-input input-red">
+            <div class="settle-flow-row">
+              <span class="flow-lbl">(-) Prizes paid out</span>
+              <div class="settle-input-wrap">
+                <span class="curr-sign">$</span>
+                <input type="number" id="inputShiftPayouts" step="1" min="0" value="0.00" class="settle-inline-input">
               </div>
             </div>
-            <div class="reconcile-item-row">
-              <span class="reconcile-item-label" title="Starting cash in register at start of shift">(+) Bank Float:</span>
-              <div class="reconcile-input-box">
-                <span class="reconcile-prefix prefix-dim">+$</span>
-                <input type="number" id="inputDrawerFloat" step="1" min="0" value="0.00" class="reconcile-num-input">
+            <div class="settle-flow-row">
+              <span class="flow-lbl">(+) Starting cash in drawer</span>
+              <div class="settle-input-wrap">
+                <span class="curr-sign">$</span>
+                <input type="number" id="inputDrawerFloat" step="1" min="0" value="0.00" class="settle-inline-input">
               </div>
             </div>
-            <div class="reconcile-item-row expected-row">
-              <span class="reconcile-item-label font-bold">(=) Expected Cash:</span>
-              <strong id="recExpectedCash" class="reconcile-amount-expected">$0.00</strong>
+            <div class="settle-flow-row expected-row">
+              <span class="flow-lbl font-bold">(=) Cash you should have</span>
+              <strong class="flow-val font-bold" id="recExpectedCash">$0.00</strong>
             </div>
             <div id="recPayoutNote" class="reconcile-payout-warning" style="display:none;">
               ⚠️ <strong>Payouts exceed sales:</strong> Cash drawer paid out more in winning tickets than it took in from sales.
             </div>
+            <div id="repDrawerBalance" class="drawer-balance-pill status-pending" style="display:none;">Enter Counted Cash</div>
           </div>
 
-          <!-- Right: Counted Cash -->
-          <div class="reconcile-pane count-pane">
-            <div class="cash-count-group">
-              <div class="cash-count-meta">
-                <span class="cash-count-title">Cash Counted:</span>
-              </div>
-              <div class="cash-count-input-wrapper">
-                <span class="cash-symbol">$</span>
-                <input type="number" id="inputActualCashCounted" step="0.01" placeholder="0.00" class="cash-count-input" inputmode="decimal">
-              </div>
+          <!-- Right: Counted Cash Card -->
+          <div class="settle-card count-card">
+            <div class="count-header">
+              <span class="count-title">Cash you counted</span>
+            </div>
+            <div class="counted-big-input-wrap">
+              <span class="counted-dollar-sign">$</span>
+              <input type="number" id="inputActualCashCounted" step="0.01" placeholder="0.00" class="counted-big-input" inputmode="decimal">
+            </div>
+            <div class="settle-info-banner">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="16" x2="12" y2="12"></line>
+                <line x1="12" y1="8" x2="12.01" y2="8"></line>
+              </svg>
+              <span id="settleInfoBannerText">Count the lottery cash and type the total. We'll tell you if it's over or short.</span>
             </div>
           </div>
         </div>
-      </div>
 
-      <!-- Report Table -->
-      <div class="report-table-card">
-        <table class="report-table">
-          <thead>
-            <tr>
-              <th class="col-box">BOX</th>
-              <th class="col-game">GAME TITLE</th>
-              <th class="col-price">PRICE</th>
-              <th class="col-start">START #</th>
-              <th class="col-close">CLOSE #</th>
-              <th class="col-sold">SOLD</th>
-              <th class="col-amount">AMOUNT ($)</th>
-            </tr>
-          </thead>
-          <tbody id="reportBodyRows">
-            <!-- Populated dynamically -->
-          </tbody>
-          <tfoot>
-            <tr class="report-total-row">
-              <td colspan="5" class="col-total-label" id="repTotalSalesLabel">TOTAL LOTTO SHIFT SALES</td>
-              <td id="repSumSold" class="col-sold">0</td>
-              <td id="repSumAmount" class="col-amount">$0.00</td>
-            </tr>
-          </tfoot>
-        </table>
-      </div>
-
-      <!-- Email Dispatch Strip -->
-      <div class="report-email-strip">
-        <div class="email-strip-details">
-          <span class="email-strip-icon">📧</span>
-          <div>
-            <div class="email-strip-title">Email Report</div>
-            <div class="email-strip-subtitle">To: <strong id="repTargetEmails">manager@eltesystemsoftware.com</strong></div>
-          </div>
+        <!-- Table Card with Clean Scrollable View -->
+        <div class="settle-table-container">
+          <table class="settle-table">
+            <thead>
+              <tr>
+                <th style="width: 55px;">BOX</th>
+                <th>GAME</th>
+                <th style="width: 75px;">PRICE</th>
+                <th style="width: 85px;">START #</th>
+                <th style="width: 85px;">CLOSE #</th>
+                <th style="width: 75px;">SOLD</th>
+                <th style="width: 100px; text-align: right;">AMOUNT</th>
+              </tr>
+            </thead>
+            <tbody id="reportBodyRows">
+              <!-- Populated dynamically -->
+            </tbody>
+            <tfoot>
+              <tr class="report-total-row">
+                <td colspan="5" class="col-total-label" id="repTotalSalesLabel">TOTAL LOTTO SHIFT SALES</td>
+                <td id="repSumSold" class="col-sold">0</td>
+                <td id="repSumAmount" class="col-amount">$0.00</td>
+              </tr>
+            </tfoot>
+          </table>
         </div>
-        <div class="email-strip-status">
-          <span class="email-status-chip">✓ Ready</span>
+
+        <!-- Hidden compatibility hook for email target -->
+        <div style="display: none;" aria-hidden="true">
+          <span id="repTargetEmails">manager@eltesystemsoftware.com</span>
         </div>
       </div>
-    </div>
 
-    <!-- Footer Actions -->
-    <div class="modal-footer shift-report-footer">
-      <div class="footer-left-group">
-        <button class="btn btn-print-receipt" id="reportPrintBtn" title="Optimized for 80mm thermal receipt roll">
-          🧾 Print Receipt
-        </button>
-        <button class="btn btn-view-day-report" id="reportPrintFullBtn" title="Full 2-Page Official Day Report">
-          📄 Day Report
-        </button>
-      </div>
-      <div class="footer-right-group">
-        <button class="btn btn-email-report" id="reportEmailBtn">
-          📧 Email
-        </button>
-        <button class="btn btn-start-shift" id="reportNewShiftBtn">
-          🚀 New Shift
-        </button>
+      <!-- Modern Footer Actions (Matching Image 2 Reference) -->
+      <div class="settle-footer">
+        <div class="settle-footer-left">
+          <button type="button" class="btn btn-settle-pill btn-print-receipt" id="reportPrintBtn">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="6 9 6 2 18 2 18 9"></polyline>
+              <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path>
+              <rect x="6" y="14" width="12" height="8"></rect>
+            </svg>
+            <span>Print receipt</span>
+          </button>
+          <button type="button" class="btn btn-settle-pill btn-view-day-report" id="reportPrintFullBtn">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <polyline points="14 2 14 8 20 8"></polyline>
+              <line x1="16" y1="13" x2="8" y2="13"></line>
+              <line x1="16" y1="17" x2="8" y2="17"></line>
+              <polyline points="10 9 9 9 8 9"></polyline>
+            </svg>
+            <span>Full report</span>
+          </button>
+          <button type="button" class="btn btn-settle-pill btn-email-report" id="reportEmailBtn">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
+              <polyline points="22,6 12,13 2,6"></polyline>
+            </svg>
+            <span>Email</span>
+          </button>
+        </div>
+        <div class="settle-footer-right">
+          <button type="button" class="btn btn-settle-dark-end btn-start-shift" id="reportNewShiftBtn">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+            </svg>
+            <span>End shift</span>
+          </button>
+        </div>
       </div>
     </div>
   </dialog>

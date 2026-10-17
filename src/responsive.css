@@ -1,0 +1,1709 @@
+/* ==========================================================================
+   RESPONSIVE DESIGN SYSTEM - LottoTrack Pro
+   Seamless Cross-Device Responsiveness for Retail Lottery POS
+   Breakpoints:
+     • xs:  < 480px   (Phones / Small screens)
+     • sm:  480px-768px (Large phones / Phablets)
+     • md:  769px-1024px (Tablets / Slim laptops)
+     • lg:  1025px-1399px (Standard laptops & displays)
+     • xl:  1400px-1799px (Desktop monitors)
+     • 2xl: ≥ 1800px  (Large desktop monitors)
+     • 3xl: ≥ 2400px  (QHD / Ultrawide / 4K displays)
+   ========================================================================== */
+
+/* ------------------------------------------------------------------
+   1. GLOBAL RESET & OVERFLOW DEFENSE
+   Prevents accidental horizontal scrolling across all viewports
+   ------------------------------------------------------------------ */
+html, body {
+  max-width: 100vw !important;
+  overflow-x: hidden !important;
+  position: relative !important;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+.pos-app-layout {
+  display: flex !important;
+  width: 100% !important;
+  max-width: 100vw !important;
+  min-height: 100vh !important;
+  overflow-x: hidden !important;
+  position: relative !important;
+}
+
+.pos-main-container {
+  flex: 1 1 0% !important;
+  min-width: 0 !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  overflow-x: hidden !important;
+  box-sizing: border-box !important;
+}
+
+/* ------------------------------------------------------------------
+   1B. SELL COUNTER VIEWPORT-LOCKED POS TERMINAL LAYOUT (≥ 769px)
+   Guarantees the footer ribbon (#cardAllBoxesMap) and the unified header
+   are ALWAYS visible on screen without page scrolling.
+   Dispensers grid wrapper scrolls internally when boxes exceed height.
+   ------------------------------------------------------------------ */
+@media (min-width: 769px) {
+  body, html {
+    height: 100vh !important;
+    max-height: 100vh !important;
+    overflow: hidden !important;
+  }
+
+  .pos-app-layout {
+    height: 100vh !important;
+    max-height: 100vh !important;
+    overflow: hidden !important;
+  }
+
+  .pos-main-container {
+    display: flex !important;
+    flex-direction: column !important;
+    height: 100vh !important;
+    max-height: 100vh !important;
+    overflow-y: auto !important;
+    box-sizing: border-box !important;
+    padding-bottom: 8px !important;
+  }
+
+  .sell-counter-view {
+    flex: 1 1 0% !important;
+    display: flex !important;
+    flex-direction: column !important;
+    min-height: 0 !important;
+    height: 100% !important;
+    overflow: hidden !important;
+  }
+
+  .pos-unified-header-bar {
+    flex-shrink: 0 !important;
+  }
+
+  .dispenser-rack-container {
+    flex: 1 1 0% !important;
+    min-height: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+    padding: 0.75rem 1.25rem 0.5rem !important;
+  }
+
+  .rack-headline-bar,
+  .filter-chips-row {
+    flex-shrink: 0 !important;
+    margin-bottom: 0.5rem !important;
+  }
+
+  .dispensers-grid-wrapper {
+    flex: 1 1 0% !important;
+    min-height: 0 !important;
+    overflow-y: auto !important;
+    padding-right: 6px !important;
+    scrollbar-width: thin !important;
+    scrollbar-color: #cbd5e1 transparent !important;
+  }
+
+  .dispensers-grid-wrapper::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .dispensers-grid-wrapper::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .dispensers-grid-wrapper::-webkit-scrollbar-thumb {
+    background-color: #cbd5e1;
+    border-radius: 4px;
+  }
+
+  .card-all-boxes-map {
+    flex-shrink: 0 !important;
+    margin-top: 8px !important;
+    margin-bottom: 0 !important;
+    padding: 0.65rem 1.25rem !important;
+    box-shadow: 0 -1px 3px rgba(0, 0, 0, 0.02) !important;
+  }
+
+  .all-boxes-map-header {
+    margin-bottom: 6px !important;
+  }
+
+  .all-boxes-map-title {
+    font-size: 0.95rem !important;
+  }
+}
+
+[data-theme="dark"] .dispensers-grid-wrapper {
+  scrollbar-color: #33486e transparent !important;
+}
+
+[data-theme="dark"] .dispensers-grid-wrapper::-webkit-scrollbar-thumb {
+  background-color: #33486e !important;
+}
+
+/* ------------------------------------------------------------------
+   2. MOBILE HAMBURGER BUTTON & BACKDROP OVERLAY
+   Visible strictly on viewports ≤ 768px
+   ------------------------------------------------------------------ */
+.mobile-hamburger-btn {
+  display: none;
+  position: fixed;
+  top: 10px;
+  left: 10px;
+  z-index: 120;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  border: 1px solid var(--ds-border, #e2e8f0);
+  background: var(--ds-surface, #ffffff);
+  color: var(--ds-ink, #0f172a);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.mobile-hamburger-btn:hover {
+  background: var(--ds-surface-hover, #f8fafc);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.16);
+  transform: translateY(-1px);
+}
+
+.mobile-hamburger-btn:active {
+  transform: scale(0.95);
+}
+
+.mobile-hamburger-btn svg {
+  width: 20px;
+  height: 20px;
+  pointer-events: none;
+}
+
+.sidebar-mobile-overlay {
+  display: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 99;
+  background: rgba(10, 16, 30, 0.6);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease;
+}
+
+.sidebar-mobile-overlay.active {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* ------------------------------------------------------------------
+   3. LARGE & ULTRA-WIDE SCREENS (≥ 1400px, ≥ 1800px, ≥ 2400px)
+   Eliminates massive empty side voids by making containers fluid,
+   and adapts dispenser grid so cards do NOT stretch awkwardly.
+   ------------------------------------------------------------------ */
+@media (min-width: 1400px) {
+  /* Allow views to expand fluidly instead of being clipped to 1400px */
+  .receive-packs-view,
+  .day-report-view,
+  .inventory-view,
+  .history-view,
+  .settings-view {
+    max-width: 2200px !important;
+    margin: 0 auto !important;
+    width: 100% !important;
+    padding-left: 2rem !important;
+    padding-right: 2rem !important;
+  }
+
+  .pos-main-container {
+    padding: 0 2.5rem 1rem !important;
+  }
+
+  .dispensers-grid {
+    grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)) !important;
+    gap: 10px !important;
+  }
+
+  .slots-ribbon-grid {
+    grid-template-columns: repeat(33, minmax(0, 1fr)) !important;
+    gap: 4px !important;
+  }
+}
+
+@media (min-width: 1800px) {
+  .pos-main-container {
+    padding: 0 1.5rem 1rem !important;
+  }
+
+  .pos-unified-header-bar {
+    padding: 8px 0 !important;
+    margin-bottom: 8px !important;
+  }
+
+  .card-last-scan-box.header-last-scan-card {
+    height: 48px !important;
+    min-height: 48px !important;
+    max-height: 48px !important;
+  }
+
+  .dispenser-rack-container {
+    margin-top: 0 !important;
+  }
+
+  .dispensers-grid {
+    grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)) !important;
+    gap: 10px !important;
+  }
+
+  .box-card {
+    min-height: 185px !important;
+    padding: 10px 10px 8px 10px !important;
+  }
+
+  .box-main-number {
+    font-size: 3.4rem !important;
+  }
+
+  .slots-ribbon-grid {
+    gap: 5px !important;
+  }
+
+  .ribbon-cell {
+    height: 32px !important;
+    font-size: 0.78rem !important;
+  }
+
+  /* Day Report on large screen */
+  .dr-main-grid {
+    grid-template-columns: minmax(0, 1fr) 380px !important;
+    gap: 28px !important;
+  }
+
+  .dr-paper-sheet {
+    padding: 36px 42px 32px !important;
+  }
+
+  /* Receive Packs on large screen */
+  .rp-entry-split {
+    grid-template-columns: 480px 1fr !important;
+    gap: 24px !important;
+  }
+
+  /* Inventory & History KPI clusters */
+  .inv-kpi-row,
+  .hist-kpi-row {
+    grid-template-columns: repeat(5, 1fr) !important;
+    gap: 16px !important;
+  }
+}
+
+@media (min-width: 2400px) {
+  .pos-main-container {
+    padding: 0 4.5rem 1rem !important;
+  }
+
+  .dispensers-grid {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)) !important;
+    gap: 12px !important;
+  }
+
+  .box-card {
+    min-height: 220px !important;
+  }
+
+  .slots-ribbon-grid {
+    gap: 6px !important;
+  }
+
+  .ribbon-cell {
+    height: 36px !important;
+    font-size: 0.84rem !important;
+  }
+}
+
+/* ------------------------------------------------------------------
+   4. STANDARD LAPTOPS & DESKTOPS (1025px – 1399px)
+   CRITICAL FIX: Prevents top header card overflow and Day Report
+   paper sheet table clipping on standard 1200px / 1366px screens.
+   ------------------------------------------------------------------ */
+@media (max-width: 1399px) and (min-width: 1025px) {
+  .pos-sidebar {
+    width: 210px !important;
+    min-width: 210px !important;
+  }
+
+  .pos-main-container {
+    padding: 0 1.25rem 1rem !important;
+  }
+
+  /* Unified Header Bar: Transparent strip matching user design */
+  .pos-unified-header-bar {
+    gap: 12px !important;
+    padding: 8px 0 !important;
+    margin-bottom: 8px !important;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    flex-wrap: nowrap !important;
+  }
+
+  .hdr-left-actions {
+    display: flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+    flex-shrink: 0 !important;
+  }
+
+  .hdr-btn-end-shift-card,
+  .btn-header-end-shift,
+  .hdr-btn-action-card {
+    padding: 6px 12px !important;
+    gap: 8px !important;
+    height: 48px !important;
+    flex-shrink: 0 !important;
+  }
+
+  .hdr-card-title {
+    font-size: 13px !important;
+    white-space: nowrap !important;
+  }
+
+  .hdr-card-sub {
+    font-size: 11px !important;
+    white-space: nowrap !important;
+  }
+
+  .hdr-right-actions {
+    display: flex !important;
+    align-items: center !important;
+    gap: 10px !important;
+    flex: 1 1 auto !important;
+    justify-content: flex-end !important;
+    min-width: 0 !important;
+  }
+
+  .header-scanner-box {
+    flex: 1 1 260px !important;
+    width: auto !important;
+    min-width: 220px !important;
+    max-width: 340px !important;
+    height: 48px !important;
+    padding: 0 12px !important;
+  }
+
+  .header-scanner-input {
+    font-size: 12px !important;
+  }
+
+  .card-last-scan-box.header-last-scan-card {
+    padding: 5px 12px !important;
+    gap: 8px !important;
+    height: 48px !important;
+    min-height: 48px !important;
+    max-height: 48px !important;
+    flex-shrink: 0 !important;
+  }
+
+  .dispenser-rack-container {
+    margin-top: 0 !important;
+  }
+
+  .last-scan-huge-box.header-last-scan-badge {
+    width: 34px !important;
+    height: 34px !important;
+    font-size: 17px !important;
+  }
+
+  .last-scan-game-name.header-last-scan-game {
+    font-size: 13px !important;
+  }
+
+  .last-scan-ticket-detail.header-last-scan-meta {
+    font-size: 11px !important;
+  }
+
+  /* Dispensers Grid: auto-fill on laptop */
+  .dispensers-grid {
+    grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)) !important;
+    gap: 10px !important;
+  }
+
+  /* Slots Ribbon on laptop */
+  .slots-ribbon-grid {
+    grid-template-columns: repeat(22, minmax(0, 1fr)) !important;
+    gap: 3px !important;
+  }
+
+  /* Day Report fix for 1200px */
+  .dr-main-grid {
+    grid-template-columns: minmax(0, 1fr) 300px !important;
+    gap: 16px !important;
+  }
+
+  .dr-paper-sheet {
+    padding: 24px 22px 20px !important;
+  }
+
+  .dr-report-table th,
+  .dr-report-table td {
+    padding: 7px 6px !important;
+    font-size: 0.8rem !important;
+  }
+
+  /* Settings 4-column row fix */
+  .settings-form-row-4 {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+}
+
+/* ------------------------------------------------------------------
+   5. TABLETS & COMPACT LAPTOPS (769px – 1024px)
+   Sidebar collapses to slim icon rail, content reflows gracefully.
+   ------------------------------------------------------------------ */
+@media (max-width: 1024px) and (min-width: 769px) {
+  /* Sidebar collapses to slim 68px icon rail */
+  .pos-sidebar {
+    width: 68px !important;
+    min-width: 68px !important;
+    padding: 1rem 0.5rem !important;
+    transition: width 0.2s ease, min-width 0.2s ease !important;
+  }
+
+  .pos-sidebar .brand-text-block,
+  .pos-sidebar .nav-group-title,
+  .pos-sidebar .sidebar-nav-item span,
+  .pos-sidebar #themeToggleText,
+  .pos-sidebar .sidebar-user-pill .user-meta-block,
+  .pos-sidebar .sidebar-signout-btn span,
+  .pos-sidebar .sidebar-sync-pill .sync-text {
+    display: none !important;
+  }
+
+  .pos-sidebar .sidebar-nav-item {
+    justify-content: center !important;
+    padding: 0 !important;
+    width: 44px !important;
+    height: 44px !important;
+    margin: 0 auto !important;
+    border-radius: 10px !important;
+  }
+
+  .pos-sidebar .sidebar-brand {
+    flex-direction: column !important;
+    align-items: center !important;
+    gap: 0.5rem !important;
+    padding-bottom: 0.75rem !important;
+  }
+
+  .pos-sidebar .sidebar-collapse-btn {
+    display: none !important;
+  }
+
+  .pos-sidebar .sidebar-footer {
+    align-items: center !important;
+    gap: 0.5rem !important;
+  }
+
+  .pos-sidebar .sidebar-action-btn,
+  .pos-sidebar #themeToggleBtn,
+  .pos-sidebar .sidebar-sync-pill,
+  .pos-sidebar .sidebar-user-pill,
+  .pos-sidebar .sidebar-signout-btn {
+    width: 40px !important;
+    height: 40px !important;
+    padding: 0 !important;
+    justify-content: center !important;
+    border-radius: 10px !important;
+  }
+
+  .pos-main-container {
+    padding: 0 1rem 1rem !important;
+  }
+
+  /* Header Bar wraps neatly */
+  .pos-unified-header-bar {
+    flex-wrap: wrap !important;
+    gap: 12px !important;
+    padding: 8px 0 !important;
+    margin-bottom: 8px !important;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+  }
+
+  .hdr-left-actions {
+    flex: 1 1 auto !important;
+    gap: 8px !important;
+  }
+
+  .hdr-right-actions {
+    display: flex !important;
+    align-items: center !important;
+    gap: 10px !important;
+    flex: 1 1 auto !important;
+    justify-content: flex-end !important;
+    flex-wrap: wrap !important;
+  }
+
+  .header-scanner-box {
+    flex: 1 1 280px !important;
+    min-width: 240px !important;
+    height: 48px !important;
+  }
+
+  .card-last-scan-box.header-last-scan-card {
+    height: 48px !important;
+    min-height: 48px !important;
+    max-height: 48px !important;
+    flex-shrink: 0 !important;
+  }
+
+  .dispenser-rack-container {
+    margin-top: 0 !important;
+  }
+
+  /* Dispensers Grid: auto-fill on tablet */
+  .dispensers-grid {
+    grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)) !important;
+    gap: 10px !important;
+  }
+
+  .slots-ribbon-grid {
+    grid-template-columns: repeat(17, minmax(0, 1fr)) !important;
+    gap: 3px !important;
+  }
+
+  /* Rack KPI Cluster */
+  .rack-headline-bar {
+    flex-wrap: wrap !important;
+    gap: 10px !important;
+  }
+
+  .rack-kpi-cluster {
+    flex-wrap: wrap !important;
+    gap: 8px !important;
+    width: 100% !important;
+  }
+
+  .rack-kpi-pill {
+    flex: 1 1 calc(25% - 8px) !important;
+    min-width: 110px !important;
+  }
+
+  /* Day Report stacks vertically on tablet */
+  .dr-main-grid {
+    grid-template-columns: 1fr !important;
+    gap: 16px !important;
+  }
+
+  .dr-paper-sheet {
+    padding: 24px 20px 20px !important;
+  }
+
+  /* Receive Packs split */
+  .rp-entry-split {
+    grid-template-columns: 1fr !important;
+    gap: 16px !important;
+  }
+
+  /* Settings tabs */
+  .settings-layout-grid {
+    grid-template-columns: 1fr !important;
+    gap: 16px !important;
+  }
+
+  .settings-tabs-nav {
+    flex-direction: row !important;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+    gap: 6px !important;
+    padding-bottom: 6px !important;
+    scrollbar-width: none !important;
+  }
+
+  .settings-tabs-nav::-webkit-scrollbar {
+    display: none !important;
+  }
+
+  .settings-tab-btn {
+    white-space: nowrap !important;
+    flex-shrink: 0 !important;
+    padding: 8px 14px !important;
+    font-size: 0.84rem !important;
+  }
+}
+
+/* ------------------------------------------------------------------
+   6. MOBILE VIEWPORTS (≤ 768px)
+   Slide-in drawer sidebar, single-column & 2-column mobile layout,
+   full modal scrollability, touch-friendly UI.
+   ------------------------------------------------------------------ */
+@media (max-width: 768px) {
+  /* Show hamburger button */
+  .mobile-hamburger-btn {
+    display: flex !important;
+  }
+
+  .sidebar-mobile-overlay {
+    display: block !important;
+  }
+
+  /* Sidebar becomes off-canvas drawer */
+  .pos-sidebar {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    bottom: 0 !important;
+    z-index: 105 !important;
+    width: 270px !important;
+    min-width: 270px !important;
+    padding: 1.25rem 1rem !important;
+    transform: translateX(-100%) !important;
+    transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1) !important;
+    box-shadow: 4px 0 24px rgba(0, 0, 0, 0.3) !important;
+    background: var(--ds-surface, #ffffff) !important;
+  }
+
+  .pos-sidebar.mobile-open {
+    transform: translateX(0) !important;
+  }
+
+  /* Ensure text is visible in mobile drawer */
+  .pos-sidebar.mobile-open .brand-text-block,
+  .pos-sidebar.mobile-open .nav-group-title,
+  .pos-sidebar.mobile-open .sidebar-nav-item span,
+  .pos-sidebar.mobile-open #themeToggleText,
+  .pos-sidebar.mobile-open .sidebar-user-pill .user-meta-block,
+  .pos-sidebar.mobile-open .sidebar-signout-btn span,
+  .pos-sidebar.mobile-open .sidebar-sync-pill .sync-text {
+    display: flex !important;
+  }
+
+  .pos-sidebar.mobile-open .sidebar-nav-item {
+    justify-content: flex-start !important;
+    padding: 0.65rem 0.85rem !important;
+    width: 100% !important;
+    height: auto !important;
+    margin: 0 !important;
+  }
+
+  .pos-sidebar.mobile-open .sidebar-brand {
+    flex-direction: row !important;
+    align-items: center !important;
+    gap: 0.75rem !important;
+    padding-bottom: 1.25rem !important;
+  }
+
+  .pos-sidebar.mobile-open .sidebar-footer {
+    align-items: stretch !important;
+    gap: 0.65rem !important;
+  }
+
+  .pos-sidebar.mobile-open .sidebar-action-btn,
+  .pos-sidebar.mobile-open #themeToggleBtn,
+  .pos-sidebar.mobile-open .sidebar-sync-pill,
+  .pos-sidebar.mobile-open .sidebar-signout-btn,
+  .pos-sidebar.mobile-open .sidebar-user-pill {
+    width: 100% !important;
+    height: auto !important;
+    padding: 0.55rem 0.75rem !important;
+    justify-content: flex-start !important;
+  }
+
+  .sidebar-collapse-btn {
+    display: none !important;
+  }
+
+  /* Main container clears top hamburger button */
+  .pos-main-container {
+    padding: 58px 10px 12px 10px !important;
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  /* Unified Header Bar Mobile Reflow */
+  .pos-unified-header-bar {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 8px !important;
+    padding: 6px 0 !important;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    margin-bottom: 8px !important;
+  }
+
+  .hdr-left-actions {
+    display: flex !important;
+    width: 100% !important;
+    gap: 6px !important;
+  }
+
+  /* Tablets (541px - 768px) keep left buttons in a single row */
+  @media (min-width: 541px) {
+    .hdr-left-actions {
+      flex-wrap: nowrap !important;
+    }
+    .hdr-btn-end-shift-card,
+    .btn-header-end-shift {
+      flex: 1.2 1 auto !important;
+      padding: 7px 12px !important;
+    }
+    .hdr-btn-action-card {
+      flex: 1 1 auto !important;
+      padding: 7px 10px !important;
+    }
+  }
+
+  /* Phones (≤ 540px) stack End Shift full row, Report & Refresh 50/50 */
+  @media (max-width: 540px) {
+    .hdr-left-actions {
+      flex-wrap: wrap !important;
+    }
+    .hdr-btn-end-shift-card,
+    .btn-header-end-shift {
+      flex: 1 1 100% !important;
+      width: 100% !important;
+      padding: 8px 12px !important;
+    }
+    .hdr-btn-action-card {
+      flex: 1 1 calc(50% - 3px) !important;
+      min-width: 0 !important;
+      padding: 7px 10px !important;
+    }
+  }
+
+  .hdr-card-title {
+    font-size: 13px !important;
+  }
+
+  .hdr-card-sub {
+    font-size: 11px !important;
+  }
+
+  .hdr-right-actions {
+    display: flex !important;
+    flex-direction: column !important;
+    width: 100% !important;
+    gap: 8px !important;
+  }
+
+  /* Scanner box gets full width */
+  .header-scanner-box {
+    width: 100% !important;
+    min-width: 100% !important;
+    max-width: 100% !important;
+    height: 48px !important;
+    padding: 0 12px !important;
+    box-sizing: border-box !important;
+  }
+
+  .header-scanner-input {
+    font-size: 13px !important;
+    min-width: 0 !important;
+  }
+
+  /* Last scan card gets full width */
+  .card-last-scan-box.header-last-scan-card {
+    width: 100% !important;
+    height: 48px !important;
+    min-height: 48px !important;
+    max-height: 48px !important;
+    padding: 8px 12px !important;
+    box-sizing: border-box !important;
+  }
+
+  .btn-header-undo-ghost {
+    margin-left: auto !important;
+  }
+
+  /* Dispenser rack container */
+  .dispenser-rack-container {
+    padding: 10px 8px !important;
+    margin-top: 0 !important;
+  }
+
+  .rack-headline-bar {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 8px !important;
+    margin-bottom: 10px !important;
+  }
+
+  .rack-title-left {
+    width: 100% !important;
+    justify-content: space-between !important;
+  }
+
+  /* Rack KPI Cluster: 4-col on tablet (541px-768px), 2x2 on phone (≤540px) */
+  .rack-kpi-cluster {
+    width: 100% !important;
+    display: grid !important;
+    gap: 6px !important;
+  }
+
+  @media (min-width: 541px) {
+    .rack-kpi-cluster {
+      grid-template-columns: repeat(4, 1fr) !important;
+    }
+  }
+
+  @media (max-width: 540px) {
+    .rack-kpi-cluster {
+      grid-template-columns: repeat(2, 1fr) !important;
+    }
+  }
+
+  .rack-kpi-pill {
+    min-width: 0 !important;
+    padding: 8px 10px !important;
+  }
+
+  .kpi-tag-label {
+    font-size: 0.65rem !important;
+  }
+
+  .kpi-stat-value {
+    font-size: 1.25rem !important;
+  }
+
+  .kpi-stat-footer {
+    font-size: 0.68rem !important;
+  }
+
+  /* Filter chips horizontal scroll */
+  .filter-chips-row {
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+    padding-bottom: 4px !important;
+    gap: 6px !important;
+    scrollbar-width: none !important;
+  }
+
+  .filter-chips-row::-webkit-scrollbar {
+    display: none !important;
+  }
+
+  .filter-chip {
+    flex-shrink: 0 !important;
+    padding: 0.3rem 0.75rem !important;
+    font-size: 0.78rem !important;
+    min-height: 32px !important;
+  }
+
+  /* Dispensers Grid: 3-4 cols on tablet (541px-768px), 2 cols on phones (≤540px) */
+  .dispensers-grid {
+    display: grid !important;
+    gap: 8px !important;
+    width: 100% !important;
+  }
+
+  @media (min-width: 541px) {
+    .dispensers-grid {
+      grid-template-columns: repeat(auto-fill, minmax(125px, 1fr)) !important;
+      gap: 10px !important;
+    }
+  }
+
+  @media (max-width: 540px) {
+    .dispensers-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+      gap: 8px !important;
+    }
+  }
+
+  .box-card {
+    min-height: 165px !important;
+    padding: 8px 10px 8px 10px !important;
+    min-width: 0 !important;
+    overflow: hidden !important;
+  }
+
+  .box-main-number {
+    font-size: 2.2rem !important;
+    margin: 2px 0 !important;
+  }
+
+  .box-game-name {
+    font-size: 0.82rem !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+  }
+
+  .price-tag {
+    font-size: 1rem !important;
+  }
+
+  .sold-today-badge {
+    padding: 1px 5px !important;
+    font-size: 0.65rem !important;
+  }
+
+  .quick-sell-btn {
+    padding: 2px 6px !important;
+    font-size: 0.75rem !important;
+  }
+
+  /* Slots Ribbon Grid */
+  .slots-ribbon-grid {
+    grid-template-columns: repeat(11, minmax(0, 1fr)) !important;
+    gap: 2.5px !important;
+  }
+
+  .ribbon-cell {
+    height: 24px !important;
+    font-size: 0.65rem !important;
+  }
+
+  /* Mini-map header */
+  .card-all-boxes-map {
+    padding: 10px 12px !important;
+    margin-top: 10px !important;
+  }
+
+  .all-boxes-map-header {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 6px !important;
+  }
+
+  .legend-block {
+    flex-wrap: wrap !important;
+    gap: 8px !important;
+    font-size: 0.72rem !important;
+  }
+
+  /* View Containers Padding */
+  .receive-packs-view,
+  .day-report-view,
+  .inventory-view,
+  .history-view,
+  .settings-view {
+    padding: 12px 6px 36px !important;
+    width: 100% !important;
+  }
+
+  .page-main-title {
+    font-size: 1.35rem !important;
+  }
+
+  /* Day Report on mobile */
+  .dr-main-grid {
+    grid-template-columns: 1fr !important;
+    gap: 14px !important;
+  }
+
+  .dr-paper-sheet {
+    padding: 16px 12px 14px !important;
+    border-radius: 10px !important;
+  }
+
+  .dr-sheet-top-header {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 8px !important;
+  }
+
+  .dr-sales-headline-block {
+    text-align: left !important;
+  }
+
+  .dr-sheet-title {
+    font-size: 1.25rem !important;
+  }
+
+  .dr-table-wrapper {
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+    margin: 0 -6px 14px -6px !important;
+    padding: 0 6px !important;
+  }
+
+  .dr-report-table {
+    min-width: 520px !important;
+  }
+
+  .dr-report-table th,
+  .dr-report-table td {
+    padding: 6px 6px !important;
+    font-size: 0.76rem !important;
+  }
+
+  /* Receive Packs on mobile */
+  .rp-movement-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 6px !important;
+  }
+
+  .rp-movement-card {
+    padding: 10px !important;
+  }
+
+  .rp-entry-split {
+    grid-template-columns: 1fr !important;
+    gap: 12px !important;
+  }
+
+  .rp-scan-log-header {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 8px !important;
+  }
+
+  .rp-log-table-wrap {
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+  }
+
+  /* Inventory & History tables */
+  .inv-kpi-row,
+  .hist-kpi-row {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 8px !important;
+  }
+
+  .inv-kpi-card,
+  .hist-kpi-card {
+    padding: 12px 10px !important;
+  }
+
+  .inv-kpi-value,
+  .hist-kpi-value {
+    font-size: 1.35rem !important;
+  }
+
+  .reconcile-cards-split {
+    grid-template-columns: 1fr !important;
+    gap: 12px !important;
+  }
+
+  .inv-filter-bar,
+  .hist-filter-bar {
+    flex-wrap: wrap !important;
+    gap: 6px !important;
+  }
+
+  .inv-table-wrap,
+  .hist-table-wrap {
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+    width: 100% !important;
+  }
+
+  .inv-audit-table,
+  .hist-shifts-table {
+    min-width: 580px !important;
+  }
+
+  /* Settings Screen on mobile */
+  .settings-layout-grid {
+    grid-template-columns: 1fr !important;
+    gap: 12px !important;
+  }
+
+  .settings-tabs-nav {
+    flex-direction: row !important;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+    gap: 4px !important;
+    padding-bottom: 4px !important;
+    scrollbar-width: none !important;
+  }
+
+  .settings-tabs-nav::-webkit-scrollbar {
+    display: none !important;
+  }
+
+  .settings-tab-btn {
+    white-space: nowrap !important;
+    flex-shrink: 0 !important;
+    padding: 7px 12px !important;
+    font-size: 0.8rem !important;
+  }
+
+  .settings-card-panel {
+    padding: 14px 12px !important;
+  }
+
+  .settings-form-row {
+    flex-direction: column !important;
+    gap: 10px !important;
+  }
+
+  .settings-form-row-4 {
+    grid-template-columns: 1fr !important;
+    gap: 10px !important;
+  }
+
+  .settings-form-col {
+    width: 100% !important;
+  }
+
+  .settings-people-table {
+    display: block !important;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+    min-width: 480px !important;
+  }
+
+  /* -------------------------------------------------------------
+     ALL MODALS & ACTION DIALOGS MOBILE SCROLLABILITY
+     Guarantees modals never cut off vertically or horizontally
+     ------------------------------------------------------------- */
+  dialog,
+  dialog[open] {
+    width: 95vw !important;
+    max-width: 95vw !important;
+    max-height: 90vh !important;
+    margin: auto !important;
+    border-radius: 14px !important;
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+    box-sizing: border-box !important;
+  }
+
+  /* Box Details Modal (#boxAdjustModal) */
+  dialog#boxAdjustModal {
+    width: 95vw !important;
+    max-width: 95vw !important;
+    max-height: 90vh !important;
+    overflow-y: auto !important;
+    border-radius: 14px !important;
+  }
+
+  .box-details-card {
+    padding: 16px 14px !important;
+    overflow-y: auto !important;
+  }
+
+  .box-details-header {
+    margin-bottom: 14px !important;
+  }
+
+  .box-details-kpi-row {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 8px !important;
+    margin-bottom: 12px !important;
+  }
+
+  .box-details-kpi-card {
+    padding: 8px 10px !important;
+  }
+
+  .box-details-kpi-card .kpi-micro-val {
+    font-size: 1.05rem !important;
+  }
+
+  .box-action-grid-2 {
+    grid-template-columns: 1fr !important;
+    gap: 8px !important;
+  }
+
+  .box-action-grid-3 {
+    grid-template-columns: 1fr !important;
+    gap: 8px !important;
+  }
+
+  .box-action-card {
+    padding: 10px 12px !important;
+    gap: 10px !important;
+  }
+
+  /* Cashier Switch Modal (#cashierModal) */
+  #cashierModal,
+  dialog#cashierModal {
+    width: 95vw !important;
+    max-width: 95vw !important;
+    max-height: 90vh !important;
+    overflow-y: auto !important;
+  }
+
+  .cashier-dialog-split {
+    grid-template-columns: 1fr !important;
+    min-height: auto !important;
+  }
+
+  .cashier-left-panel {
+    padding: 14px 16px !important;
+  }
+
+  .cashier-right-panel {
+    padding: 14px 16px !important;
+  }
+
+  .cashier-keypad-grid {
+    gap: 8px !important;
+  }
+
+  .cashier-key-btn {
+    height: 44px !important;
+    font-size: 1.15rem !important;
+  }
+
+  /* Activation Modal (#activationModal) */
+  #activationModal.activation-dialog {
+    width: 95vw !important;
+    max-width: 95vw !important;
+    max-height: 90vh !important;
+    overflow-y: auto !important;
+  }
+
+  .activation-input-split {
+    grid-template-columns: 1fr !important;
+    gap: 12px !important;
+  }
+
+  .activation-preset-row {
+    flex-wrap: wrap !important;
+    gap: 6px !important;
+  }
+
+  /* Inventory Status / Item Details Modal */
+  #inventoryModal[open],
+  #inventoryStatusModal[open] {
+    width: 96vw !important;
+    max-width: 96vw !important;
+    height: 90vh !important;
+    max-height: 90vh !important;
+    min-height: auto !important;
+  }
+
+  .inv-table {
+    min-width: 580px !important;
+  }
+
+  /* Return & Adjust Pack Dialogs */
+  #returnPackModal,
+  #changeBoxModal {
+    width: 95vw !important;
+    max-width: 95vw !important;
+    max-height: 90vh !important;
+    overflow-y: auto !important;
+  }
+
+  /* Toast notification floating mobile positioning */
+  #toastContainer,
+  .toast-bubble,
+  .toast-notification {
+    left: 12px !important;
+    right: 12px !important;
+    bottom: 12px !important;
+    max-width: calc(100vw - 24px) !important;
+    z-index: 9999 !important;
+  }
+}
+
+/* ------------------------------------------------------------------
+   7. SMALL PHONES (≤ 480px, e.g. iPhone SE / Galaxy S)
+   Tighter paddings & guarantees 2 clean columns for box cards.
+   ------------------------------------------------------------------ */
+@media (max-width: 480px) {
+  .pos-main-container {
+    padding: 56px 8px 12px 8px !important;
+  }
+
+  .dispenser-rack-container {
+    padding: 8px 4px !important;
+  }
+
+  .dispensers-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 6px !important;
+  }
+
+  .box-card {
+    min-height: 155px !important;
+    padding: 7px 7px 6px 7px !important;
+    border-radius: 10px !important;
+  }
+
+  .card-header-actions {
+    gap: 2px !important;
+  }
+
+  .price-tag {
+    font-size: 0.95rem !important;
+  }
+
+  .sold-today-badge {
+    padding: 1px 4px !important;
+    font-size: 0.62rem !important;
+  }
+
+  .quick-sell-btn {
+    padding: 1px 5px !important;
+    font-size: 0.72rem !important;
+    min-width: 22px !important;
+    height: 22px !important;
+  }
+
+  .box-main-number {
+    font-size: 1.95rem !important;
+  }
+
+  .box-game-name {
+    font-size: 0.78rem !important;
+  }
+
+  .card-progress-meta-row {
+    font-size: 0.68rem !important;
+  }
+
+  .slots-ribbon-grid {
+    grid-template-columns: repeat(8, minmax(0, 1fr)) !important;
+    gap: 2px !important;
+  }
+
+  .ribbon-cell {
+    height: 22px !important;
+    font-size: 0.6rem !important;
+  }
+
+  /* Rack KPI pills 2-col or single */
+  .rack-kpi-cluster {
+    grid-template-columns: 1fr 1fr !important;
+    gap: 5px !important;
+  }
+
+  .rack-kpi-pill {
+    padding: 6px 8px !important;
+  }
+
+  .kpi-stat-value {
+    font-size: 1.15rem !important;
+  }
+
+  /* Receive Packs Movement Cards single column */
+  .rp-movement-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Inventory & History KPI cards single col */
+  .inv-kpi-row,
+  .hist-kpi-row {
+    grid-template-columns: 1fr !important;
+    gap: 6px !important;
+  }
+
+  /* Modals */
+  dialog,
+  dialog[open],
+  dialog#boxAdjustModal {
+    width: 98vw !important;
+    max-width: 98vw !important;
+    max-height: 94vh !important;
+    border-radius: 12px !important;
+  }
+
+  .box-details-card {
+    padding: 12px 10px !important;
+  }
+
+  .box-details-kpi-card {
+    padding: 6px 8px !important;
+  }
+
+  .box-details-kpi-card .kpi-micro-val {
+    font-size: 0.95rem !important;
+  }
+
+  .box-action-card {
+    padding: 8px 10px !important;
+  }
+
+  .box-action-title {
+    font-size: 0.85rem !important;
+  }
+
+  .box-action-desc {
+    font-size: 0.72rem !important;
+  }
+}
+
+/* ------------------------------------------------------------------
+   8. ULTRA COMPACT PHONES (< 340px)
+   ------------------------------------------------------------------ */
+@media (max-width: 340px) {
+  .dispensers-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .rack-kpi-cluster {
+    grid-template-columns: 1fr !important;
+  }
+
+  .box-details-kpi-row {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+/* ------------------------------------------------------------------
+   9. PRINT MEDIA STYLES
+   Clean receipts and paper reports without web UI artifacts
+   ------------------------------------------------------------------ */
+@media print {
+  .pos-sidebar,
+  .mobile-hamburger-btn,
+  .sidebar-mobile-overlay,
+  .pos-unified-header-bar,
+  .sell-counter-header,
+  .header-actions-cluster,
+  .filter-chips-row,
+  .rack-footer-bar,
+  #toastContainer,
+  .toast-bubble {
+    display: none !important;
+  }
+
+  .pos-app-layout {
+    display: block !important;
+  }
+
+  .pos-main-container {
+    padding: 0 !important;
+    overflow: visible !important;
+  }
+
+  .dr-paper-sheet {
+    box-shadow: none !important;
+    border: none !important;
+    padding: 0 !important;
+    width: 100% !important;
+  }
+}
+
+/* ------------------------------------------------------------------
+   10. TOUCH OPTIMIZATIONS
+   ------------------------------------------------------------------ */
+@media (hover: none) and (pointer: coarse) {
+  .box-card:hover {
+    transform: none !important;
+  }
+
+  .ribbon-cell:hover {
+    transform: none !important;
+  }
+
+  .filter-chip {
+    min-height: 38px !important;
+  }
+
+  .quick-sell-btn {
+    min-width: 28px !important;
+    min-height: 28px !important;
+  }
+}
+
+/* ------------------------------------------------------------------
+   11. DARK MODE RESPONSIVE TWEAKS
+   ------------------------------------------------------------------ */
+[data-theme="dark"] .mobile-hamburger-btn {
+  background: #111c35;
+  border-color: #24355a;
+  color: #f8fafc;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
+}
+
+[data-theme="dark"] .mobile-hamburger-btn:hover {
+  background: #162444;
+}
+
+[data-theme="dark"] .sidebar-mobile-overlay {
+  background: rgba(5, 8, 15, 0.75);
+}
+
+/* ------------------------------------------------------------------
+   12. CLOSE SHIFT (SCAN & RECONCILE) RESPONSIVE RULES
+   ------------------------------------------------------------------ */
+@media (max-width: 1024px) {
+  .cs-workspace-grid {
+    grid-template-columns: 1fr !important;
+    gap: 16px !important;
+  }
+
+  .cs-side-column {
+    order: 2 !important;
+  }
+}
+
+@media (max-width: 768px) {
+  .close-shift-view {
+    max-width: 100% !important;
+    overflow-x: hidden !important;
+  }
+
+  .cs-workspace-grid {
+    grid-template-columns: 100% !important;
+    width: 100% !important;
+    gap: 16px !important;
+  }
+
+  .cs-main-column,
+  .cs-side-column {
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  .cs-reconcile-card {
+    padding: 12px !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+  }
+
+  .cs-scanner-pill-wrap {
+    height: auto !important;
+    min-height: 44px !important;
+    padding: 8px 10px !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    border-radius: 12px !important;
+    gap: 8px !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+  }
+
+  .cs-scanner-top-row {
+    display: flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+    width: 100% !important;
+  }
+
+  .cs-scanner-input {
+    flex: 1 !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    font-size: 13px !important;
+  }
+
+  .cs-proto-scan-btn {
+    width: 100% !important;
+    text-align: center !important;
+    padding: 8px 12px !important;
+    font-size: 12px !important;
+    border-radius: 6px !important;
+  }
+
+  .cs-totals-metric-row {
+    grid-template-columns: 1fr 1fr !important;
+  }
+
+  .cs-table-responsive-wrapper {
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+    padding-bottom: 8px !important;
+  }
+
+  .cs-filter-pills-row {
+    gap: 6px !important;
+  }
+
+  .cs-filter-pill {
+    padding: 5px 10px !important;
+    font-size: 12px !important;
+  }
+}
+
+@media (max-width: 640px) {
+  .sc-header-strip {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 12px !important;
+  }
+
+  .sc-steps-cluster {
+    width: 100% !important;
+    overflow-x: auto !important;
+    padding-bottom: 4px !important;
+    flex-wrap: nowrap !important;
+  }
+
+  .sc-step-pill {
+    white-space: nowrap !important;
+    font-size: 11px !important;
+    padding: 4px 8px !important;
+  }
+
+  .sc-center-container {
+    padding: 2rem 0.5rem 1rem !important;
+  }
+
+  .sc-main-headline {
+    font-size: 24px !important;
+  }
+
+  .sc-card-row {
+    padding: 12px 14px !important;
+    font-size: 12.5px !important;
+  }
+
+  .sc-actions-row {
+    flex-direction: column !important;
+    width: 100% !important;
+    gap: 10px !important;
+  }
+
+  .sc-btn-count-cash,
+  .sc-btn-start-next-shift {
+    width: 100% !important;
+    justify-content: center !important;
+  }
+
+  /* Screen 05: Start Shift Handover Mobile Adaptations */
+  .ssh-layout-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .ssh-clerks-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .ssh-drawer-inputs-row {
+    grid-template-columns: 1fr !important;
+    gap: 12px !important;
+  }
+
+  .ssh-bottom-bar {
+    flex-direction: column-reverse !important;
+    gap: 12px !important;
+  }
+
+  .ssh-bottom-right-cluster {
+    flex-direction: column !important;
+    width: 100% !important;
+    align-items: stretch !important;
+  }
+
+  .ssh-btn-confirm-start,
+  .ssh-btn-cancel {
+    width: 100% !important;
+    justify-content: center !important;
+    text-align: center !important;
+  }
+}
+
+@media (max-width: 1024px) {
+  .ssh-layout-grid {
+    grid-template-columns: 1fr !important;
+  }
+}

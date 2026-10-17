@@ -4,6 +4,7 @@ export default defineConfig({
   server: {
     host: true, // Expose to all network interfaces (LAN / Wi-Fi)
     port: 5173,
+    allowedHosts: true,
     proxy: {
       '/api': {
         target: 'http://localhost:3001',

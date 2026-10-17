@@ -1,7 +1,7 @@
 // State Management & Lottery POS Data Model
 import { syncPOSStateToDB } from './dbSync.js';
 
-const STORAGE_KEY = 'lotto_track_pos_data_v2';
+const STORAGE_KEY = 'lotto_track_pos_data_v3';
 
 export const SAMPLE_GAMES = [
   { id: 'g101', name: '5X MONEY', price: 1, bookValue: 300, packSize: 300, barcodePrefix: '1417' },
@@ -999,7 +999,6 @@ export function getInitialState() {
     { boxNumber: 6, gameName: 'Cross Word', price: 3, packNumber: '935561', packSize: 100, currentTicket: 4, startTicket: 0, daysActive: 3 },
     { boxNumber: 7, gameName: '2026 Happy New', price: 3, packNumber: '558848', packSize: 100, currentTicket: 4, startTicket: 0, daysActive: 12 },
     { boxNumber: 14, gameName: '50X Money', price: 10, packNumber: '493848', packSize: 30, currentTicket: 11, startTicket: 0, daysActive: 3 },
-    { boxNumber: 15, gameName: '500X The Money', price: 50, packNumber: '159981', packSize: 20, currentTicket: 2, startTicket: 0, daysActive: 3 },
     { boxNumber: 17, gameName: 'Gold $500,000', price: 5, packNumber: '176917', packSize: 60, currentTicket: 12, startTicket: 0, daysActive: 2 },
     { boxNumber: 18, gameName: '25X Tra', price: 5, packNumber: '196515', packSize: 60, currentTicket: 8, startTicket: 0, daysActive: 2 },
     { boxNumber: 21, gameName: 'Lucky 7s', price: 5, packNumber: '903287', packSize: 60, currentTicket: 7, startTicket: 0, daysActive: 7 },
@@ -1038,7 +1037,7 @@ export function getInitialState() {
     shiftStartedAt: new Date().toISOString(),
     totalSlots: TOTAL_SLOTS,
     slots,
-    visibleBoxNumbers: [3, 7, 21, 27, 60, 62, 63, 1, 2, 4, 6, 14, 15, 17, 18, 22, 25, 56, 57, 61],
+    visibleBoxNumbers: [3, 7, 21, 27, 60, 62, 63, 1, 2, 4, 6, 14, 17, 18, 22, 25, 56, 57, 61],
     boxAccessTimes: {},
     inventory: [
       { packNumber: '600994', gameName: 'Jumbo Bucks', price: 2, packSize: 150, bookValue: 300, status: 'STORED', scannedAt: new Date().toISOString() },
@@ -1050,7 +1049,7 @@ export function getInitialState() {
     cashes: 0,
     onlineCashes: 0,
     discontinuedCount: 0,
-    shiftOpeningActiveCount: 20,
+    shiftOpeningActiveCount: 19,
     soldOutThisShift: [
       { boxNumber: 16, packNumber: '130508', gameName: 'Treasure Hunt', price: 3, packSize: 100 }
     ],
@@ -1072,9 +1071,12 @@ export function getInitialState() {
 
 export function loadState() {
   try {
-    // Purge old v1 mock data if present
+    // Purge old v1 and v2 mock data if present
     if (localStorage.getItem('lotto_track_pos_data_v1')) {
       localStorage.removeItem('lotto_track_pos_data_v1');
+    }
+    if (localStorage.getItem('lotto_track_pos_data_v2')) {
+      localStorage.removeItem('lotto_track_pos_data_v2');
     }
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
