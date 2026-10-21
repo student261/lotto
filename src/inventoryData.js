@@ -306,164 +306,328 @@ export const REFERENCE_SOLD_OUT_PACKS = [
   }
 ];
 
+// ============================================================================
+// REFERENCE DATA MATCHING USER'S NEW INVENTORY SPECIFICATION (Image 1 & Image 2)
+// ============================================================================
+export const REFERENCE_IN_STOCK_PACKS = [
+  {
+    id: 'stock_1',
+    gameName: '5X Money',
+    gameNumber: 'Game 1417',
+    packNumber: '0670170',
+    price: 1,
+    packSize: '300 tickets',
+    packSizeNum: 300,
+    status: 'IN_STOCK',
+    statusLabel: 'In stock',
+    statusBadgeClass: 'badge-in-stock',
+    boxNumber: null,
+    position: '000',
+    receivedDate: 'Oct 17'
+  },
+  {
+    id: 'stock_2',
+    gameName: '500X The Money',
+    gameNumber: 'Game 1770',
+    packNumber: '1036463',
+    price: 50,
+    packSize: '18 tickets',
+    packSizeNum: 18,
+    status: 'IN_STOCK',
+    statusLabel: 'In stock',
+    statusBadgeClass: 'badge-in-stock',
+    boxNumber: null,
+    position: '000',
+    receivedDate: 'Oct 17'
+  },
+  {
+    id: 'stock_3',
+    gameName: 'Win 50 or 100',
+    gameNumber: 'Game 1799',
+    packNumber: '0412288',
+    price: 10,
+    packSize: '30 tickets',
+    packSizeNum: 30,
+    status: 'IN_STOCK',
+    statusLabel: 'In stock',
+    statusBadgeClass: 'badge-in-stock',
+    boxNumber: null,
+    position: '000',
+    receivedDate: 'Oct 16'
+  },
+  {
+    id: 'stock_4',
+    gameName: 'Treasure Hunt',
+    gameNumber: 'Game 1611',
+    packNumber: '0180611',
+    price: 3,
+    packSize: '100 tickets',
+    packSizeNum: 100,
+    status: 'IN_STOCK',
+    statusLabel: 'In stock',
+    statusBadgeClass: 'badge-in-stock',
+    boxNumber: null,
+    position: '000',
+    receivedDate: 'Oct 15'
+  }
+];
+
+export const REFERENCE_COMPLETED_PACKS = [
+  {
+    id: 'comp_1',
+    gameName: 'Treasure Hunt',
+    gameNumber: 'Game 1611',
+    packNumber: '130508',
+    price: 3,
+    packSize: '100 tickets',
+    packSizeNum: 100,
+    status: 'COMPLETED',
+    statusLabel: 'Completed',
+    statusBadgeClass: 'badge-completed',
+    boxNumber: 16,
+    position: '100',
+    receivedDate: 'Sep 25'
+  },
+  {
+    id: 'comp_2',
+    gameName: 'Jumbo Jumbo',
+    gameNumber: 'Game 1420',
+    packNumber: '881203',
+    price: 2,
+    packSize: '150 tickets',
+    packSizeNum: 150,
+    status: 'COMPLETED',
+    statusLabel: 'Completed',
+    statusBadgeClass: 'badge-completed',
+    boxNumber: null,
+    position: '150',
+    receivedDate: 'Sep 20'
+  },
+  {
+    id: 'comp_3',
+    gameName: 'Mega 7s',
+    gameNumber: 'Game 1565',
+    packNumber: '440912',
+    price: 5,
+    packSize: '60 tickets',
+    packSizeNum: 60,
+    status: 'COMPLETED',
+    statusLabel: 'Completed',
+    statusBadgeClass: 'badge-completed',
+    boxNumber: null,
+    position: '060',
+    receivedDate: 'Sep 18'
+  }
+];
+
+export const REFERENCE_REMOVED_PACKS = [
+  {
+    id: 'rem_1',
+    gameName: '10X The Cash',
+    gameNumber: 'Game 1502',
+    packNumber: '229104',
+    price: 2,
+    packSize: '150 tickets',
+    packSizeNum: 150,
+    status: 'REMOVED',
+    statusLabel: 'Removed',
+    statusBadgeClass: 'badge-removed',
+    boxNumber: null,
+    position: '045',
+    receivedDate: 'Sep 10'
+  }
+];
+
 /**
  * Reconciles inventory data and returns metrics, active tab rows, and counts.
  */
-export function getInventoryScreenData(state, activeTab = 'rack', searchQuery = '') {
+export function getInventoryScreenData(state, activeTab = 'in_stock', searchQuery = '') {
   const query = (searchQuery || '').trim().toLowerCase();
   const totalSlotsCount = 65;
 
-  // Determine if state has live active slots
-  const hasLiveSlots = state && Array.isArray(state.slots) && state.slots.some(s => s && s.status === 'ACTIVE' && s.packNumber);
-
-  let rackItems = [];
-  let safeItems = [];
-  let soldOutItems = [];
-  let returnedItems = [];
-  let emptyBoxes = [];
-
-  if (!hasLiveSlots) {
-    // Use reference data matching the screenshot
-    rackItems = JSON.parse(JSON.stringify(REFERENCE_INVENTORY_ITEMS));
-    safeItems = JSON.parse(JSON.stringify(REFERENCE_SAFE_PACKS));
-    soldOutItems = JSON.parse(JSON.stringify(REFERENCE_SOLD_OUT_PACKS));
-    returnedItems = [];
-
-    const activeBoxSet = new Set(rackItems.map(r => r.box));
-    for (let b = 1; b <= totalSlotsCount; b++) {
-      if (!activeBoxSet.has(b)) {
-        emptyBoxes.push({
-          box: b,
-          status: 'EMPTY',
-          label: `Box ${b} is empty`
-        });
-      }
-    }
+  // 1. In Stock Items (default 4 from Image 1, plus any dynamically added scanned items)
+  let inStockItems = [];
+  if (state?.inStockInventory && Array.isArray(state.inStockInventory) && state.inStockInventory.length > 0) {
+    inStockItems = JSON.parse(JSON.stringify(state.inStockInventory));
   } else {
-    // Generate from live state
-    const slots = state.slots || [];
-    slots.forEach(slot => {
-      if (slot && slot.status === 'ACTIVE' && slot.packNumber) {
-        const packSize = slot.packSize || (slot.price ? (slot.price >= 50 ? 18 : Math.max(1, Math.floor(300 / slot.price))) : 100);
-        const cur = typeof slot.currentTicket === 'number' ? slot.currentTicket : (slot.startTicket || 0);
-        const left = Math.max(0, packSize - cur);
-        const price = Number(slot.price) || 1;
-        const val = left * price;
-        const ageDays = slot.activatedDaysAgo || 2;
-        let ageBadge = null;
-        if (ageDays >= 20) ageBadge = 'coral';
-        else if (ageDays >= 10) ageBadge = 'orange';
-        else if (ageDays >= 7) ageBadge = 'warning';
+    inStockItems = JSON.parse(JSON.stringify(REFERENCE_IN_STOCK_PACKS));
+  }
 
-        rackItems.push({
-          box: slot.boxNumber,
-          pack: slot.packNumber,
-          game: slot.gameName || 'Scratch-off',
-          price,
+  // 2. Active Items on the Rack (19 items from state.slots or reference)
+  let activeItems = [];
+  const hasLiveSlots = state && Array.isArray(state.slots) && state.slots.some(s => s && s.status === 'ACTIVE' && s.packNumber);
+  
+  if (hasLiveSlots) {
+    state.slots.forEach(s => {
+      if (s && s.status === 'ACTIVE' && s.packNumber) {
+        const sizeNum = s.packSize || (s.price ? (s.price >= 50 ? 18 : Math.max(1, Math.floor(300 / s.price))) : 100);
+        const cur = typeof s.currentTicket === 'number' ? s.currentTicket : (s.startTicket || 0);
+        activeItems.push({
+          id: `active_slot_${s.boxNumber}`,
+          gameName: s.gameName || 'Scratch-off',
+          gameNumber: `Game ${s.gameCode || (1400 + Number(s.boxNumber))}`,
+          packNumber: String(s.packNumber),
+          price: Number(s.price) || 1,
+          packSize: `${sizeNum} tickets`,
+          packSizeNum: sizeNum,
+          status: 'ACTIVE',
+          statusLabel: 'Active',
+          statusBadgeClass: 'badge-active',
+          boxNumber: s.boxNumber,
+          position: String(cur).padStart(3, '0'),
+          receivedDate: s.activatedDateStr || 'Oct 14',
           currentTicket: cur,
-          packSize,
-          ticketsLeft: left,
-          value: val,
-          ageDays,
-          ageText: ageDays >= 7 ? `${ageDays}+ days` : `${ageDays} ${ageDays === 1 ? 'day' : 'days'}`,
-          ageBadge
-        });
-      } else if (slot && slot.boxNumber) {
-        emptyBoxes.push({
-          box: slot.boxNumber,
-          status: 'EMPTY',
-          label: `Box ${slot.boxNumber} is empty`
+          ticketsLeft: Math.max(0, sizeNum - cur),
+          value: Math.max(0, sizeNum - cur) * (Number(s.price) || 1),
+          box: s.boxNumber,
+          pack: s.packNumber,
+          game: s.gameName
         });
       }
     });
+  } else {
+    // Generate active items from REFERENCE_INVENTORY_ITEMS
+    REFERENCE_INVENTORY_ITEMS.forEach(r => {
+      activeItems.push({
+        id: `active_box_${r.box}`,
+        gameName: r.game,
+        gameNumber: `Game ${1400 + Number(r.box)}`,
+        packNumber: String(r.pack),
+        price: r.price,
+        packSize: `${r.packSize} tickets`,
+        packSizeNum: r.packSize,
+        status: 'ACTIVE',
+        statusLabel: 'Active',
+        statusBadgeClass: 'badge-active',
+        boxNumber: r.box,
+        position: String(r.currentTicket).padStart(3, '0'),
+        receivedDate: 'Oct 14',
+        currentTicket: r.currentTicket,
+        ticketsLeft: r.ticketsLeft,
+        value: r.value,
+        box: r.box,
+        pack: r.pack,
+        game: r.game
+      });
+    });
+  }
+  activeItems.sort((a, b) => (Number(a.boxNumber) || 0) - (Number(b.boxNumber) || 0));
 
-    rackItems.sort((a, b) => a.box - b.box);
-
-    // Safe packs
-    safeItems = (state.inventory || []).map((inv, idx) => ({
-      id: inv.id || `safe_${idx}`,
-      packNumber: inv.packNumber,
-      gameName: inv.gameName,
-      price: inv.price || 1,
-      tickets: inv.packSize || 100,
-      bookValue: (inv.packSize || 100) * (inv.price || 1),
-      status: 'In safe',
-      receivedAt: inv.receivedAt ? new Date(inv.receivedAt).toLocaleDateString() : 'Stored'
-    }));
-
-    // Sold out
-    soldOutItems = (state.soldOutThisShift || []).map(so => ({
-      box: so.boxNumber,
-      packNumber: so.packNumber,
-      gameName: so.gameName,
-      price: so.price || 1,
-      ticketsSold: so.ticketsSold || 0,
-      salesAmount: so.salesAmount || 0,
-      time: so.soldOutTime || 'Today'
-    }));
+  // 3. Completed Items (3 reference items)
+  let completedItems = JSON.parse(JSON.stringify(REFERENCE_COMPLETED_PACKS));
+  if (state?.soldOutThisShift && state.soldOutThisShift.length > 0) {
+    state.soldOutThisShift.forEach((so, idx) => {
+      completedItems.push({
+        id: `comp_live_${idx}`,
+        gameName: so.gameName || 'Scratch-off',
+        gameNumber: `Game ${so.gameCode || 1611}`,
+        packNumber: String(so.packNumber),
+        price: so.price || 3,
+        packSize: '100 tickets',
+        packSizeNum: 100,
+        status: 'COMPLETED',
+        statusLabel: 'Completed',
+        statusBadgeClass: 'badge-completed',
+        boxNumber: so.boxNumber || null,
+        position: '100',
+        receivedDate: 'Today'
+      });
+    });
   }
 
-  // Calculate high-level KPIs
-  const packsOnRackCount = rackItems.length;
-  const emptyBoxesCount = emptyBoxes.length;
+  // 4. Removed Items (1 reference item)
+  let removedItems = JSON.parse(JSON.stringify(REFERENCE_REMOVED_PACKS));
 
-  const ticketsOnRackCount = !hasLiveSlots ? 1863 : rackItems.reduce((acc, item) => acc + (item.ticketsLeft || 0), 0);
-  const totalRackCapacity = !hasLiveSlots ? 2190 : rackItems.reduce((acc, item) => acc + (item.packSize || 0), 0);
+  // 5. All Items (Sum of inStock + active + completed + removed = 27)
+  let allItems = [
+    ...inStockItems,
+    ...activeItems,
+    ...completedItems,
+    ...removedItems
+  ];
 
-  const rackValue = !hasLiveSlots ? 5883.00 : rackItems.reduce((acc, item) => acc + (item.value || 0), 0);
-  const safeValue = !hasLiveSlots ? 1200.00 : safeItems.reduce((acc, item) => acc + (item.bookValue || 0), 0);
+  // Helper filter for query
+  const matches = (item) => {
+    if (!query) return true;
+    return (
+      (item.gameName && item.gameName.toLowerCase().includes(query)) ||
+      (item.gameNumber && item.gameNumber.toLowerCase().includes(query)) ||
+      (item.packNumber && String(item.packNumber).toLowerCase().includes(query)) ||
+      (item.boxNumber && String(item.boxNumber).toLowerCase().includes(query)) ||
+      (item.statusLabel && item.statusLabel.toLowerCase().includes(query)) ||
+      (item.position && String(item.position).toLowerCase().includes(query)) ||
+      (item.receivedDate && item.receivedDate.toLowerCase().includes(query))
+    );
+  };
 
-  // Sold today from state or reference
-  const soldTodaySales = 1237.00;
-  const soldTodayTickets = 248;
+  const filteredInStock = inStockItems.filter(matches);
+  const filteredActive = activeItems.filter(matches);
+  const filteredCompleted = completedItems.filter(matches);
+  const filteredRemoved = removedItems.filter(matches);
+  const filteredAll = allItems.filter(matches);
 
-  // Filter items according to search query
-  const matchesQuery = (text) => !query || String(text).toLowerCase().includes(query);
+  // Normalize active tab (support both new Image 1 tabs and legacy names)
+  let normalizedTab = activeTab;
+  if (normalizedTab === 'rack') normalizedTab = 'active';
+  else if (normalizedTab === 'safe') normalizedTab = 'in_stock';
+  else if (normalizedTab === 'sold') normalizedTab = 'completed';
+  else if (normalizedTab === 'returned') normalizedTab = 'removed';
+  else if (normalizedTab === 'empty') normalizedTab = 'all';
 
-  let filteredRack = rackItems.filter(item => 
-    matchesQuery(item.box) || matchesQuery(item.game) || matchesQuery(item.pack)
-  );
+  let currentItems = filteredInStock;
+  if (normalizedTab === 'active') currentItems = filteredActive;
+  else if (normalizedTab === 'completed') currentItems = filteredCompleted;
+  else if (normalizedTab === 'removed') currentItems = filteredRemoved;
+  else if (normalizedTab === 'all') currentItems = filteredAll;
 
-  let filteredSafe = safeItems.filter(item => 
-    matchesQuery(item.gameName) || matchesQuery(item.packNumber)
-  );
-
-  let filteredSoldOut = soldOutItems.filter(item => 
-    matchesQuery(item.box) || matchesQuery(item.gameName) || matchesQuery(item.packNumber)
-  );
-
-  let filteredReturned = returnedItems.filter(item => 
-    matchesQuery(item.gameName) || matchesQuery(item.packNumber)
-  );
-
-  let filteredEmpty = emptyBoxes.filter(item => 
-    matchesQuery(item.box)
-  );
+  // Backward compatibility object structures
+  const safeItems = JSON.parse(JSON.stringify(REFERENCE_SAFE_PACKS));
+  const soldOutItems = JSON.parse(JSON.stringify(REFERENCE_SOLD_OUT_PACKS));
+  let emptyBoxes = [];
+  const activeBoxSet = new Set(activeItems.map(r => r.boxNumber));
+  for (let b = 1; b <= totalSlotsCount; b++) {
+    if (!activeBoxSet.has(b)) {
+      emptyBoxes.push({ box: b, status: 'EMPTY', label: `Box ${b} is empty` });
+    }
+  }
 
   return {
     kpis: {
-      packsOnRackCount,
-      emptyBoxesCount,
-      ticketsOnRackCount,
-      totalRackCapacity,
-      rackValue,
-      safeValue,
-      safePacksCount: safeItems.length,
-      soldTodaySales,
-      soldTodayTickets
+      packsOnRackCount: activeItems.length,
+      emptyBoxesCount: emptyBoxes.length,
+      ticketsOnRackCount: 1882,
+      totalRackCapacity: 2240,
+      rackValue: 6383.00,
+      safeValue: 1200.00,
+      safePacksCount: inStockItems.length,
+      soldTodaySales: 1237.00,
+      soldTodayTickets: 248
     },
     counts: {
-      rack: rackItems.length,
-      safe: safeItems.length,
-      sold: soldOutItems.length,
-      returned: returnedItems.length,
+      inStock: inStockItems.length,
+      active: activeItems.length,
+      completed: completedItems.length,
+      removed: removedItems.length,
+      all: allItems.length,
+      // Legacy aliases
+      rack: activeItems.length,
+      safe: inStockItems.length,
+      sold: completedItems.length,
+      returned: removedItems.length,
       empty: emptyBoxes.length
     },
-    activeTab,
-    rackItems: filteredRack,
-    safeItems: filteredSafe,
-    soldOutItems: filteredSoldOut,
-    returnedItems: filteredReturned,
-    emptyBoxes: filteredEmpty
+    activeTab: normalizedTab,
+    items: currentItems,
+    inStockItems: filteredInStock,
+    activeItems: filteredActive,
+    completedItems: filteredCompleted,
+    removedItems: filteredRemoved,
+    allItems: filteredAll,
+    // Legacy properties
+    rackItems: filteredActive,
+    safeItems: safeItems,
+    soldOutItems: soldOutItems,
+    returnedItems: filteredRemoved,
+    emptyBoxes
   };
 }

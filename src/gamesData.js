@@ -36,3 +36,16 @@ export function getSettingsGamesList(state) {
 
   return games;
 }
+
+export const REFERENCE_MODERN_SETTINGS_GAMES = [
+  { gameId: '1401', name: '5X Money', price: '$1', packValue: '$300', ticketsPack: '300', positionsCount: 'Up' },
+  { gameId: '1403', name: 'Loteria', price: '$2', packValue: '$300', ticketsPack: '150', positionsCount: 'Up' },
+  { gameId: '1406', name: 'Cross Word', price: '$3', packValue: '$300', ticketsPack: '100', positionsCount: 'Up' },
+  { gameId: '1409', name: 'Gold $500,000', price: '$5', packValue: '$300', ticketsPack: '60', positionsCount: 'Up' },
+  { gameId: '1408', name: '50X Money', price: '$10', packValue: '$300', ticketsPack: '30', positionsCount: 'Up' },
+  { gameId: '1415', name: 'Hit 1000', price: '$20', packValue: '$300', ticketsPack: '15', positionsCount: 'Up' },
+  { gameId: '1413', name: 'Jumbo Bucks Ext', price: '$50', packValue: '$900', ticketsPack: '18', positionsCount: 'Up' },
+  { gameId: '1414', name: 'Cash 500,000', price: '$50', packValue: '$900', ticketsPack: '18', positionsCount: 'Up' },
+  { gameId: '1770', name: '500X The Money', price: '$50', packValue: '$900', ticketsPack: '18', positionsCount: 'Up' },
+  { gameId: '1611', name: 'Treasure Hunt', price: '$3', packValue: '$300', ticketsPack: '100', positionsCount: 'Up' },
+];

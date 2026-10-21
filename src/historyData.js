@@ -174,203 +174,182 @@ export const REFERENCE_HISTORY_DAYS = [
 
 export const REFERENCE_CLOSED_SHIFTS = [
   {
-    id: 'shift_14',
-    day: 'Wed, Oct 7',
-    shift: '#2',
-    employee: 'Carlos',
-    openClose: '3:00 PM – 9:40 PM',
-    tickets: 163,
-    sales: 702.00,
-    version: 'Final v1',
-    versionBadge: 'final',
-    email: 'Failed · retry',
-    emailStatus: 'failed'
-  },
-  {
     id: 'shift_13',
-    day: 'Wed, Oct 7',
-    shift: '#1',
-    employee: 'Priya',
-    openClose: '7:00 AM – 3:00 PM',
-    tickets: 124,
-    sales: 535.00,
-    version: 'Final v1',
-    versionBadge: 'final',
+    shift: '#13',
+    shiftNumber: 13,
+    date: 'Sat, Oct 18',
+    day: 'Sat, Oct 18',
+    salesperson: 'Rosa',
+    employee: 'Rosa',
+    started: '7:02 AM',
+    closed: '3:00 PM',
+    openClose: '7:02 AM — 3:00 PM',
+    tickets: 214,
+    sales: 1284.00,
     email: 'Sent',
-    emailStatus: 'sent'
+    emailStatus: 'sent',
+    version: 'Final v1',
+    versionBadge: 'final'
   },
   {
     id: 'shift_12',
-    day: 'Tue, Oct 6',
-    shift: '#2',
-    employee: 'Carlos',
-    openClose: '3:00 PM – 9:40 PM',
-    tickets: 160,
-    sales: 692.00,
-    version: 'Final v1',
-    versionBadge: 'final',
+    shift: '#12',
+    shiftNumber: 12,
+    date: 'Fri, Oct 17',
+    day: 'Fri, Oct 17',
+    salesperson: 'Daniel',
+    employee: 'Daniel',
+    started: '3:04 PM',
+    closed: '10:05 PM',
+    openClose: '3:04 PM — 10:05 PM',
+    tickets: 251,
+    sales: 1512.00,
     email: 'Sent',
-    emailStatus: 'sent'
+    emailStatus: 'sent',
+    version: 'Final v1',
+    versionBadge: 'final'
   },
   {
     id: 'shift_11',
-    day: 'Tue, Oct 6',
-    shift: '#1',
-    employee: 'Priya',
-    openClose: '7:00 AM – 3:00 PM',
-    tickets: 116,
-    sales: 498.00,
-    version: 'Corrected v2',
-    versionBadge: 'corrected',
+    shift: '#11',
+    shiftNumber: 11,
+    date: 'Fri, Oct 17',
+    day: 'Fri, Oct 17',
+    salesperson: 'Rosa',
+    employee: 'Rosa',
+    started: '7:00 AM',
+    closed: '3:01 PM',
+    openClose: '7:00 AM — 3:01 PM',
+    tickets: 198,
+    sales: 1173.00,
     email: 'Sent',
-    emailStatus: 'sent'
+    emailStatus: 'sent',
+    version: 'Final v1',
+    versionBadge: 'final'
   },
   {
     id: 'shift_10',
-    day: 'Mon, Oct 5',
-    shift: '#2',
-    employee: 'Carlos',
-    openClose: '3:00 PM – 9:40 PM',
-    tickets: 191,
-    sales: 820.00,
-    version: 'Final v1',
-    versionBadge: 'final',
+    shift: '#10',
+    shiftNumber: 10,
+    date: 'Thu, Oct 16',
+    day: 'Thu, Oct 16',
+    salesperson: 'Daniel',
+    employee: 'Daniel',
+    started: '3:02 PM',
+    closed: '10:02 PM',
+    openClose: '3:02 PM — 10:02 PM',
+    tickets: 233,
+    sales: 1396.00,
     email: 'Sent',
-    emailStatus: 'sent'
+    emailStatus: 'sent',
+    version: 'Final v1',
+    versionBadge: 'final'
   },
   {
     id: 'shift_9',
-    day: 'Mon, Oct 5',
-    shift: '#1',
-    employee: 'Priya',
-    openClose: '7:00 AM – 3:00 PM',
-    tickets: 192,
-    sales: 822.00,
-    version: 'Final v1',
-    versionBadge: 'final',
+    shift: '#9',
+    shiftNumber: 9,
+    date: 'Thu, Oct 16',
+    day: 'Thu, Oct 16',
+    salesperson: 'Rosa',
+    employee: 'Rosa',
+    started: '7:05 AM',
+    closed: '3:00 PM',
+    openClose: '7:05 AM — 3:00 PM',
+    tickets: 176,
+    sales: 1045.00,
     email: 'Sent',
-    emailStatus: 'sent'
+    emailStatus: 'sent',
+    version: 'Final v1',
+    versionBadge: 'final'
   },
   {
     id: 'shift_8',
-    day: 'Sun, Oct 4',
-    shift: '#2',
-    employee: 'Carlos',
-    openClose: '3:00 PM – 9:40 PM',
-    tickets: 152,
-    sales: 655.00,
-    version: 'Final v1',
-    versionBadge: 'final',
+    shift: '#8',
+    shiftNumber: 8,
+    date: 'Wed, Oct 15',
+    day: 'Wed, Oct 15',
+    salesperson: 'Daniel',
+    employee: 'Daniel',
+    started: '3:00 PM',
+    closed: '10:04 PM',
+    openClose: '3:00 PM — 10:04 PM',
+    tickets: 240,
+    sales: 1420.00,
     email: 'Sent',
-    emailStatus: 'sent'
+    emailStatus: 'sent',
+    version: 'Final v1',
+    versionBadge: 'final'
   },
   {
     id: 'shift_7',
-    day: 'Sun, Oct 4',
-    shift: '#1',
-    employee: 'Priya',
-    openClose: '7:00 AM – 3:00 PM',
-    tickets: 155,
-    sales: 665.00,
-    version: 'Final v1',
-    versionBadge: 'final',
+    shift: '#7',
+    shiftNumber: 7,
+    date: 'Wed, Oct 15',
+    day: 'Wed, Oct 15',
+    salesperson: 'Rosa',
+    employee: 'Rosa',
+    started: '7:01 AM',
+    closed: '3:02 PM',
+    openClose: '7:01 AM — 3:02 PM',
+    tickets: 187,
+    sales: 1098.00,
     email: 'Sent',
-    emailStatus: 'sent'
+    emailStatus: 'sent',
+    version: 'Final v1',
+    versionBadge: 'final'
   },
   {
     id: 'shift_6',
-    day: 'Sat, Oct 3',
-    shift: '#2',
-    employee: 'Carlos',
-    openClose: '3:00 PM – 9:40 PM',
-    tickets: 219,
-    sales: 940.00,
-    version: 'Final v1',
-    versionBadge: 'final',
+    shift: '#6',
+    shiftNumber: 6,
+    date: 'Tue, Oct 14',
+    day: 'Tue, Oct 14',
+    salesperson: 'Daniel',
+    employee: 'Daniel',
+    started: '3:03 PM',
+    closed: '10:00 PM',
+    openClose: '3:03 PM — 10:00 PM',
+    tickets: 228,
+    sales: 1331.00,
     email: 'Sent',
-    emailStatus: 'sent'
+    emailStatus: 'sent',
+    version: 'Final v1',
+    versionBadge: 'final'
   },
   {
     id: 'shift_5',
-    day: 'Sat, Oct 3',
-    shift: '#1',
-    employee: 'Priya',
-    openClose: '7:00 AM – 3:00 PM',
-    tickets: 166,
-    sales: 712.00,
-    version: 'Final v1',
-    versionBadge: 'final',
+    shift: '#5',
+    shiftNumber: 5,
+    date: 'Tue, Oct 14',
+    day: 'Tue, Oct 14',
+    salesperson: 'Rosa',
+    employee: 'Rosa',
+    started: '7:00 AM',
+    closed: '3:01 PM',
+    openClose: '7:00 AM — 3:01 PM',
+    tickets: 185,
+    sales: 1105.00,
     email: 'Sent',
-    emailStatus: 'sent'
-  },
-  {
-    id: 'shift_4',
-    day: 'Fri, Oct 2',
-    shift: '#2',
-    employee: 'Carlos',
-    openClose: '3:00 PM – 9:40 PM',
-    tickets: 137,
-    sales: 588.00,
+    emailStatus: 'sent',
     version: 'Final v1',
-    versionBadge: 'final',
-    email: 'Sent',
-    emailStatus: 'sent'
-  },
-  {
-    id: 'shift_3',
-    day: 'Fri, Oct 2',
-    shift: '#1',
-    employee: 'Priya',
-    openClose: '7:00 AM – 3:00 PM',
-    tickets: 140,
-    sales: 600.00,
-    version: 'Final v1',
-    versionBadge: 'final',
-    email: 'Sent',
-    emailStatus: 'sent'
-  },
-  {
-    id: 'shift_2',
-    day: 'Thu, Oct 1',
-    shift: '#2',
-    employee: 'Carlos',
-    openClose: '3:00 PM – 9:40 PM',
-    tickets: 95,
-    sales: 410.00,
-    version: 'Final v1',
-    versionBadge: 'final',
-    email: 'Sent',
-    emailStatus: 'sent'
-  },
-  {
-    id: 'shift_1',
-    day: 'Thu, Oct 1',
-    shift: '#1',
-    employee: 'Priya',
-    openClose: '7:00 AM – 3:00 PM',
-    tickets: 192,
-    sales: 827.00,
-    version: 'Final v1',
-    versionBadge: 'final',
-    email: 'Sent',
-    emailStatus: 'sent'
+    versionBadge: 'final'
   }
 ];
 
 export function getHistoryScreenData(state) {
-  const hasLiveHistory = state && Array.isArray(state.shiftHistory) && state.shiftHistory.length > 2;
+  const hasLiveHistory = state && Array.isArray(state.shiftHistory) && state.shiftHistory.length > 0;
 
   let days = JSON.parse(JSON.stringify(REFERENCE_HISTORY_DAYS));
 
   if (hasLiveHistory) {
-    // If rich shift history is present in live state, incorporate it
     const liveHistory = (state.shiftHistory || []).map((h, i) => ({
       id: h.id || `live_day_${i}`,
       date: h.date || new Date(h.endedAt || h.startedAt).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }),
       dateShort: h.dateShort || new Date(h.endedAt || h.startedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
       openClose: h.openClose || `${h.startedAt ? new Date(h.startedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '7:00 AM'} — ${h.endedAt ? new Date(h.endedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '9:40 PM'}`,
       closedBy: h.cashier || h.closedBy || 'master',
-      tickets: Number(h.ticketsSold || h.tickets || 250),
+      tickets: Number(h.totalTicketsSold || h.tickets || 250),
       sales: Number(h.totalSales || h.sales || 1200),
       isToday: i === 0,
       soldOutCount: Array.isArray(h.soldOutSnapshot) ? h.soldOutSnapshot.length : 0,
@@ -381,15 +360,43 @@ export function getHistoryScreenData(state) {
     }
   }
 
+  // Live shifts from state prepended
+  const liveShifts = (state?.shiftHistory || []).map((h, i) => {
+    const shiftNum = h.shiftNumber || (14 + i);
+    const d = new Date(h.endedAt || h.startedAt || Date.now());
+    const dateStr = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    const startStr = h.startedAt ? new Date(h.startedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '7:02 AM';
+    const closeStr = h.endedAt ? new Date(h.endedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '1:39 PM';
+    return {
+      id: `live_shift_${shiftNum}`,
+      shift: `#${shiftNum}`,
+      shiftNumber: shiftNum,
+      date: dateStr,
+      day: dateStr,
+      salesperson: h.cashier || 'Maulik',
+      employee: h.cashier || 'Maulik',
+      started: startStr,
+      closed: closeStr,
+      openClose: `${startStr} — ${closeStr}`,
+      tickets: Number(h.totalTicketsSold || h.tickets || 0),
+      sales: Number(h.totalSalesRevenue || h.totalSales || h.sales || 0),
+      email: 'Sent',
+      emailStatus: 'sent',
+      version: 'Final v1',
+      versionBadge: 'final'
+    };
+  });
+
+  const shifts = [...liveShifts, ...REFERENCE_CLOSED_SHIFTS];
+
   // Calculate metrics
   const totalSales = 9474.00;
   const ticketsSold = 2204;
   const daysCount = 7;
-  const dailyAverage = 14; // Used for closed shifts display
-  const bestDayAmount = 1; // Used for corrected reports count
+  const dailyAverage = 14;
+  const bestDayAmount = 1;
   const bestDayDate = 'original kept';
 
-  // Chart data: chronological order (oldest to newest)
   const chartDays = [...days].reverse();
   const maxSales = Math.max(1, ...chartDays.map(d => d.sales || 0));
 
@@ -411,6 +418,33 @@ export function getHistoryScreenData(state) {
       maxSales
     },
     days,
-    shifts: REFERENCE_CLOSED_SHIFTS
+    shifts
   };
 }
+
+export function getDailyReportData(state, selectedDate = 'Oct 17') {
+  const { shifts } = getHistoryScreenData(state);
+  const normDate = (selectedDate || 'Oct 17').trim().toLowerCase();
+
+  const filtered = shifts.filter(s => {
+    const sDate = (s.date || s.day || '').toLowerCase();
+    if (normDate === 'today') {
+      return sDate.includes('today') || sDate.includes('oct 18') || (s.id && s.id.startsWith('live_'));
+    }
+    return sDate.includes(normDate);
+  });
+
+  const totalTickets = filtered.reduce((acc, s) => acc + (Number(s.tickets) || 0), 0);
+  const totalSales = filtered.reduce((acc, s) => acc + (Number(s.sales) || 0), 0);
+  const closedCount = filtered.length;
+
+  return {
+    date: selectedDate,
+    dateLabel: selectedDate === 'Today' ? 'Today' : selectedDate,
+    totalSales,
+    totalTickets,
+    closedCount,
+    shifts: filtered
+  };
+}
+

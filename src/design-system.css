@@ -6413,5 +6413,87 @@ dialog#cashierModal {
   box-shadow: none;
 }
 
+/* ====================================================================
+   DASHBOARD REFERENCE DESIGN OVERRIDES (Matching Target Image 1:1)
+   ==================================================================== */
+
+/* 1. Sidebar in collapsed state: Active Dashboard item gets light-blue pill, hide sync pill */
+.pos-sidebar .sidebar-sync-pill {
+  display: none !important;
+}
+
+.pos-sidebar.collapsed .sidebar-nav-item#navSellCounter.active {
+  background: #e0e7ff !important;
+  color: #2563eb !important;
+  border-radius: 8px !important;
+}
+
+.pos-sidebar.collapsed .sidebar-nav-item#navSellCounter.active svg {
+  stroke: #2563eb !important;
+}
+
+/* 2. Dispenser Box Card Minimalist Anatomy */
+.sell-counter-view .box-card .card-header-actions,
+.sell-counter-view .box-card .game-title-strip,
+.sell-counter-view .box-card .tile-age-tag,
+.sell-counter-view .box-card .new-activation-text,
+.sell-counter-view .box-card .sold-today-badge,
+.sell-counter-view .box-card .quick-sell-btn {
+  display: none !important;
+}
+
+.sell-counter-view .box-card .price-tag {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  color: #15803d !important;
+  font-weight: 700 !important;
+  font-size: 14px !important;
+}
+
+.sell-counter-view .box-card .box-main-number {
+  font-size: 36px !important;
+  font-weight: 800 !important;
+  color: #0f172a !important;
+  line-height: 1 !important;
+  margin: 2px 0 !important;
+}
+
+.sell-counter-view .box-card .card-dashed-line {
+  border-bottom: 1.5px dashed #cbd5e1 !important;
+  width: 75% !important;
+  margin: 4px auto !important;
+}
+
+.sell-counter-view .box-card .ticket-number-display.ticket-sold-count {
+  font-size: 26px !important;
+  font-weight: 800 !important;
+  color: #1d4ed8 !important;
+  line-height: 1 !important;
+}
+
+/* 3. Mini-Map All 65 Boxes: Active books are solid rich green #15803d with white numbers */
+.card-all-boxes-map .slots-ribbon-grid .ribbon-cell.active-slot,
+.card-all-boxes-map .slots-ribbon-grid .ribbon-cell.older-slot,
+.card-all-boxes-map .slots-ribbon-grid .ribbon-cell:not(.empty-slot) {
+  background: #15803d !important;
+  color: #ffffff !important;
+  border: none !important;
+  font-weight: 700 !important;
+}
+
+.card-all-boxes-map .slots-ribbon-grid .ribbon-cell.empty-slot {
+  border: 1px dashed #cbd5e1 !important;
+  background: transparent !important;
+  color: #64748b !important;
+  font-weight: 500 !important;
+}
+
+/* 4. Subtitle mixed case styling */
+.dashboard-subheading {
+  text-transform: none !important;
+}
+
 
 

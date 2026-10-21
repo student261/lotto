@@ -74,11 +74,18 @@ html, body {
 
   .sell-counter-view {
     flex: 1 1 0% !important;
-    display: flex !important;
+    display: flex;
     flex-direction: column !important;
     min-height: 0 !important;
     height: 100% !important;
     overflow: hidden !important;
+  }
+
+  .sell-counter-view[style*="display: none"],
+  .sell-counter-view.hidden-view,
+  #viewSellCounter[style*="display: none"],
+  #viewSellCounter.hidden-view {
+    display: none !important;
   }
 
   .pos-unified-header-bar {
@@ -436,16 +443,16 @@ html, body {
     font-size: 11px !important;
   }
 
-  /* Dispensers Grid: auto-fill on laptop */
+  /* Dispensers Grid: 8 columns */
   .dispensers-grid {
-    grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)) !important;
-    gap: 10px !important;
+    grid-template-columns: repeat(8, minmax(0, 1fr)) !important;
+    gap: 12px !important;
   }
 
   /* Slots Ribbon on laptop */
   .slots-ribbon-grid {
-    grid-template-columns: repeat(22, minmax(0, 1fr)) !important;
-    gap: 3px !important;
+    grid-template-columns: repeat(33, minmax(0, 1fr)) !important;
+    gap: 4px !important;
   }
 
   /* Day Report fix for 1200px */
@@ -576,15 +583,15 @@ html, body {
     margin-top: 0 !important;
   }
 
-  /* Dispensers Grid: auto-fill on tablet */
+  /* Dispensers Grid: 8 columns */
   .dispensers-grid {
-    grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)) !important;
-    gap: 10px !important;
+    grid-template-columns: repeat(8, minmax(0, 1fr)) !important;
+    gap: 12px !important;
   }
 
   .slots-ribbon-grid {
-    grid-template-columns: repeat(17, minmax(0, 1fr)) !important;
-    gap: 3px !important;
+    grid-template-columns: repeat(33, minmax(0, 1fr)) !important;
+    gap: 4px !important;
   }
 
   /* Rack KPI Cluster */
@@ -1707,3 +1714,789 @@ html, body {
     grid-template-columns: 1fr !important;
   }
 }
+
+/* ==========================================================================
+   MASTER DASHBOARD POS SELL COUNTER (Matches User Reference Image 1:1)
+   Loaded last to ensure 100% cascade override across all screen sizes
+   ========================================================================== */
+
+/* 1. Left Sidebar Navigation (Expanded by default, 200px width) */
+.pos-sidebar {
+  width: 200px !important;
+  min-width: 200px !important;
+  max-width: 200px !important;
+  background: #ffffff !important;
+  border-right: 1px solid #e2e8f0 !important;
+  padding: 16px 12px !important;
+  display: flex !important;
+  flex-direction: column !important;
+  box-sizing: border-box !important;
+  transition: width 0.2s ease !important;
+}
+
+.pos-sidebar.collapsed {
+  width: 68px !important;
+  min-width: 68px !important;
+  max-width: 68px !important;
+  padding: 16px 8px !important;
+}
+
+.pos-sidebar .nav-group-title {
+  display: none !important;
+}
+
+.pos-sidebar .sidebar-sync-pill {
+  display: none !important;
+}
+
+.pos-sidebar .sidebar-nav {
+  gap: 6px !important;
+  margin-top: 8px !important;
+}
+
+.pos-sidebar .sidebar-nav-item {
+  height: 42px !important;
+  border-radius: 8px !important;
+  padding: 0 12px !important;
+  font-size: 14px !important;
+  font-weight: 600 !important;
+  color: #334155 !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 12px !important;
+  transition: all 0.15s ease !important;
+  background: transparent !important;
+  border: none !important;
+  cursor: pointer !important;
+}
+
+.pos-sidebar .sidebar-nav-item:hover {
+  background: #f1f5f9 !important;
+  color: #0f172a !important;
+}
+
+.pos-sidebar .sidebar-nav-item.active,
+.pos-sidebar .sidebar-nav-item#navSellCounter.active {
+  background: #e0e7ff !important;
+  color: #2563eb !important;
+  font-weight: 700 !important;
+}
+
+.pos-sidebar .sidebar-nav-item.active svg,
+.pos-sidebar .sidebar-nav-item#navSellCounter.active svg {
+  stroke: #2563eb !important;
+}
+
+.pos-sidebar .sidebar-footer {
+  margin-top: auto !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 8px !important;
+  border-top: 1px solid #f1f5f9 !important;
+  padding-top: 12px !important;
+}
+
+.pos-sidebar .sidebar-action-btn,
+.pos-sidebar .sidebar-signout-btn {
+  height: 38px !important;
+  border-radius: 8px !important;
+  font-size: 13.5px !important;
+  color: #64748b !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+  padding: 0 10px !important;
+  background: transparent !important;
+  border: none !important;
+  cursor: pointer !important;
+}
+
+.pos-sidebar .sidebar-user-pill {
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+  padding: 6px 10px !important;
+  border-radius: 8px !important;
+  background: transparent !important;
+}
+
+.pos-sidebar .user-avatar-initial {
+  width: 32px !important;
+  height: 32px !important;
+  border-radius: 50% !important;
+  background: #f1f5f9 !important;
+  color: #2563eb !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  font-weight: 800 !important;
+  font-size: 13px !important;
+}
+
+.pos-sidebar .user-name {
+  font-size: 13px !important;
+  font-weight: 700 !important;
+  color: #0f172a !important;
+}
+
+.pos-sidebar .user-role-line {
+  font-size: 11px !important;
+  color: #64748b !important;
+}
+
+/* 2. Top Header */
+.dashboard-header-strip {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  padding: 6px 0 10px !important;
+}
+
+.dashboard-heading {
+  font-family: 'Figtree', system-ui, -apple-system, sans-serif !important;
+  font-size: 26px !important;
+  font-weight: 800 !important;
+  color: #0f172a !important;
+  margin: 0 !important;
+  line-height: 1.15 !important;
+  letter-spacing: -0.02em !important;
+}
+
+.dashboard-subheading {
+  font-size: 13.5px !important;
+  font-weight: 500 !important;
+  color: #64748b !important;
+  margin: 3px 0 0 0 !important;
+  text-transform: none !important;
+}
+
+.shift-status-pill-badge {
+  background: #dcfce7 !important;
+  border-radius: 12px !important;
+  padding: 6px 16px !important;
+  text-align: right !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: flex-end !important;
+}
+
+.shift-pill-title {
+  font-size: 13px !important;
+  font-weight: 700 !important;
+  color: #166534 !important;
+  line-height: 1.2 !important;
+}
+
+.shift-pill-sub {
+  font-size: 11.5px !important;
+  font-weight: 500 !important;
+  color: #15803d !important;
+  margin-top: 2px !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 5px !important;
+}
+
+.shift-pill-green-dot {
+  width: 6px !important;
+  height: 6px !important;
+  border-radius: 50% !important;
+  background-color: #15803d !important;
+  display: inline-block !important;
+}
+
+/* 3. Control Panel (Left 2-row buttons & scanner, Right LAST SCAN card) */
+.dashboard-control-panel {
+  display: flex !important;
+  align-items: stretch !important;
+  gap: 16px !important;
+}
+
+.control-left-column {
+  flex: 1 !important;
+  display: grid !important;
+  grid-template-columns: auto 1fr 96px !important;
+  grid-template-rows: 44px 44px !important;
+  gap: 10px !important;
+}
+
+.btn-ctrl-refresh {
+  grid-column: 1 !important;
+  grid-row: 1 !important;
+  background: #ffffff !important;
+  border: 1px solid #e2e8f0 !important;
+  border-radius: 10px !important;
+  height: 44px !important;
+  padding: 0 24px !important;
+  font-weight: 600 !important;
+  font-size: 14px !important;
+  color: #0f172a !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 8px !important;
+  cursor: pointer !important;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.03) !important;
+  transition: all 0.15s ease !important;
+  white-space: nowrap !important;
+}
+
+.btn-ctrl-refresh:hover {
+  background: #f8fafc !important;
+  border-color: #cbd5e1 !important;
+}
+
+.btn-ctrl-end-shift {
+  grid-column: 2 !important;
+  grid-row: 1 !important;
+  background: #0f172a !important;
+  color: #ffffff !important;
+  border: none !important;
+  border-radius: 10px !important;
+  height: 44px !important;
+  padding: 0 20px !important;
+  font-weight: 700 !important;
+  font-size: 14.5px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 8px !important;
+  cursor: pointer !important;
+  width: 100% !important;
+  max-width: none !important;
+  box-shadow: 0 2px 4px rgba(15, 23, 42, 0.2) !important;
+  transition: all 0.15s ease !important;
+  white-space: nowrap !important;
+}
+
+.btn-ctrl-end-shift:hover {
+  background: #1e293b !important;
+}
+
+.btn-ctrl-cancel {
+  grid-column: 3 !important;
+  grid-row: 1 !important;
+  background: #f1f5f9 !important;
+  border: 1px solid #e2e8f0 !important;
+  border-radius: 10px !important;
+  height: 44px !important;
+  width: 100% !important;
+  padding: 0 !important;
+  font-weight: 600 !important;
+  font-size: 13.5px !important;
+  color: #94a3b8 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 6px !important;
+  cursor: pointer !important;
+  transition: all 0.15s ease !important;
+  white-space: nowrap !important;
+}
+
+.btn-ctrl-cancel:hover {
+  background: #e2e8f0 !important;
+  color: #64748b !important;
+}
+
+.btn-ctrl-cancel.active-inventory-cancel {
+  background: #fee2e2 !important;
+  border: 1px solid #fca5a5 !important;
+  color: #991b1b !important;
+}
+
+.btn-ctrl-cancel.active-inventory-cancel:hover {
+  background: #fecdd3 !important;
+  color: #881337 !important;
+}
+
+.dashboard-scanner-input-wrap {
+  grid-column: 1 / 3 !important;
+  grid-row: 2 !important;
+  width: 100% !important;
+  background: #ffffff !important;
+  border: 2px solid #2563eb !important;
+  border-radius: 10px !important;
+  height: 44px !important;
+  display: flex !important;
+  align-items: center !important;
+  padding: 0 8px 0 14px !important;
+  gap: 10px !important;
+  box-sizing: border-box !important;
+  box-shadow: 0 1px 3px rgba(37, 99, 235, 0.1) !important;
+  transition: all 0.2s ease !important;
+}
+
+.dashboard-scanner-input-wrap.green-mode {
+  border-color: #059669 !important;
+  box-shadow: 0 1px 3px rgba(5, 150, 105, 0.15) !important;
+}
+
+.dashboard-scanner-input-wrap.green-mode .scanner-blue-barcode-icon {
+  stroke: #059669 !important;
+}
+
+.dashboard-scanner-field {
+  flex: 1 !important;
+  border: none !important;
+  background: transparent !important;
+  font-size: 14px !important;
+  font-weight: 500 !important;
+  color: #0f172a !important;
+  outline: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+.dashboard-scanner-field::placeholder {
+  color: #94a3b8 !important;
+}
+
+.btn-scanner-enter-pill {
+  background: #ffffff !important;
+  border: 1px solid #cbd5e1 !important;
+  border-radius: 6px !important;
+  padding: 4px 14px !important;
+  font-size: 12.5px !important;
+  font-weight: 700 !important;
+  color: #334155 !important;
+  cursor: pointer !important;
+  transition: all 0.15s ease !important;
+}
+
+.btn-scanner-enter-pill:hover {
+  background: #2563eb !important;
+  color: #ffffff !important;
+  border-color: #2563eb !important;
+}
+
+.btn-ctrl-undo {
+  grid-column: 3 !important;
+  grid-row: 2 !important;
+  background: #f1f5f9 !important;
+  border: 1px solid #e2e8f0 !important;
+  border-radius: 10px !important;
+  height: 44px !important;
+  width: 100% !important;
+  padding: 0 !important;
+  font-weight: 600 !important;
+  font-size: 13.5px !important;
+  color: #94a3b8 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 6px !important;
+  cursor: pointer !important;
+  transition: all 0.15s ease !important;
+  white-space: nowrap !important;
+}
+
+.btn-ctrl-undo:hover {
+  background: #e2e8f0 !important;
+  color: #64748b !important;
+}
+
+.dashboard-last-scan-card {
+  width: 320px !important;
+  background: #ffffff !important;
+  border: 1px solid #e2e8f0 !important;
+  border-radius: 12px !important;
+  padding: 10px 18px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.03) !important;
+  box-sizing: border-box !important;
+}
+
+.last-scan-text-group {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 2px !important;
+}
+
+.last-scan-micro-label {
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  color: #64748b !important;
+  letter-spacing: 0.05em !important;
+  text-transform: uppercase !important;
+}
+
+.last-scan-game-title {
+  font-size: 18px !important;
+  font-weight: 800 !important;
+  color: #0f172a !important;
+  line-height: 1.15 !important;
+}
+
+.last-scan-box-ticket {
+  font-size: 12.5px !important;
+  color: #64748b !important;
+  font-weight: 500 !important;
+}
+
+.last-scan-num-badge {
+  width: 52px !important;
+  height: 52px !important;
+  background: #ffffff !important;
+  border: 1.5px solid #e2e8f0 !important;
+  border-radius: 8px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.03) !important;
+}
+
+.last-scan-big-number {
+  font-size: 32px !important;
+  font-weight: 900 !important;
+  color: #0f172a !important;
+  line-height: 1 !important;
+}
+
+/* 4. Royal Blue KPI Bar (6 Cards in 1 Row) */
+.dashboard-kpi-bar {
+  display: grid !important;
+  grid-template-columns: repeat(6, 1fr) !important;
+  gap: 10px !important;
+  width: 100% !important;
+}
+
+.kpi-royal-card {
+  background: #1d4ed8 !important;
+  border-radius: 10px !important;
+  padding: 8px 12px !important;
+  height: 56px !important;
+  border: none !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  color: #ffffff !important;
+  box-shadow: 0 2px 4px rgba(29, 78, 216, 0.25) !important;
+  cursor: pointer !important;
+  transition: transform 0.12s ease, background-color 0.12s ease !important;
+  box-sizing: border-box !important;
+}
+
+.kpi-royal-card:hover {
+  background: #1e40af !important;
+  transform: translateY(-1px) !important;
+}
+
+.kpi-royal-card.kpi-icon-card {
+  flex-direction: row !important;
+  gap: 8px !important;
+}
+
+.kpi-card-single-label {
+  font-size: 14px !important;
+  font-weight: 700 !important;
+  color: #ffffff !important;
+}
+
+.kpi-royal-label {
+  font-size: 11.5px !important;
+  font-weight: 500 !important;
+  color: #ffffff !important;
+  opacity: 0.9 !important;
+  line-height: 1 !important;
+  margin-bottom: 3px !important;
+}
+
+.kpi-royal-val {
+  font-size: 22px !important;
+  font-weight: 800 !important;
+  color: #ffffff !important;
+  line-height: 1 !important;
+}
+
+.kpi-royal-val.text-amber-orange {
+  color: #fb923c !important;
+}
+
+/* 5. Minimalist Dispenser Rack (12 Columns) */
+.dispensers-grid-wrapper {
+  max-height: 310px !important;
+  overflow-y: scroll !important;
+  overflow-x: hidden !important;
+  padding: 2px 6px 2px 0 !important;
+}
+
+.dispensers-grid {
+  display: grid !important;
+  grid-template-columns: repeat(8, minmax(0, 1fr)) !important;
+  gap: 12px !important;
+}
+
+.box-card {
+  background: #ffffff !important;
+  border: 1px solid #e2e8f0 !important;
+  border-radius: 14px !important;
+  padding: 12px 14px !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  height: 180px !important;
+  min-height: 180px !important;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04) !important;
+  cursor: pointer !important;
+  position: relative !important;
+  box-sizing: border-box !important;
+  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease !important;
+}
+
+.box-card:hover {
+  transform: translateY(-2px) !important;
+  box-shadow: 0 4px 8px rgba(0,0,0,0.08) !important;
+  border-color: #93c5fd !important;
+}
+
+.sell-counter-view .box-card .card-header-actions,
+.sell-counter-view .box-card .game-title-strip,
+.sell-counter-view .box-card .tile-age-tag,
+.sell-counter-view .box-card .new-activation-text,
+.sell-counter-view .box-card .sold-today-badge,
+.sell-counter-view .box-card .quick-sell-btn {
+  display: none !important;
+}
+
+.sell-counter-view .box-card .card-header-row {
+  width: 100% !important;
+  display: flex !important;
+  justify-content: flex-start !important;
+}
+
+.sell-counter-view .box-card .price-tag {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  color: #15803d !important;
+  font-weight: 700 !important;
+  font-size: 15px !important;
+}
+
+.sell-counter-view .box-card .box-main-number {
+  font-size: 42px !important;
+  font-weight: 800 !important;
+  color: #0f172a !important;
+  line-height: 1 !important;
+  margin: 4px 0 !important;
+}
+
+.sell-counter-view .box-card .card-dashed-line {
+  border-bottom: 1.5px dashed #cbd5e1 !important;
+  width: 85% !important;
+  margin: 8px auto !important;
+}
+
+.sell-counter-view .box-card .ticket-number-display.ticket-sold-count {
+  font-size: 32px !important;
+  font-weight: 800 !important;
+  color: #1d4ed8 !important;
+  line-height: 1 !important;
+}
+
+/* 6. All 65 Boxes Mini-Map (33 Columns x 2 Rows) */
+.card-all-boxes-map {
+  background: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+  margin-top: 6px !important;
+  box-shadow: none !important;
+}
+
+.all-boxes-map-header {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  margin-bottom: 6px !important;
+}
+
+.all-boxes-map-title {
+  font-size: 13.5px !important;
+  font-weight: 700 !important;
+  color: #0f172a !important;
+  margin: 0 !important;
+}
+
+.all-boxes-map-legend {
+  display: flex !important;
+  align-items: center !important;
+  gap: 16px !important;
+  font-size: 12px !important;
+  color: #64748b !important;
+}
+
+.legend-swatch.selling {
+  width: 13px !important;
+  height: 13px !important;
+  background-color: #15803d !important;
+  border-radius: 3px !important;
+  display: inline-block !important;
+}
+
+.legend-swatch.empty {
+  width: 13px !important;
+  height: 13px !important;
+  border: 1px dashed #94a3b8 !important;
+  background-color: transparent !important;
+  border-radius: 3px !important;
+  display: inline-block !important;
+}
+
+.slots-ribbon-grid {
+  display: grid !important;
+  grid-template-columns: repeat(33, minmax(0, 1fr)) !important;
+  gap: 4px !important;
+}
+
+.card-all-boxes-map .slots-ribbon-grid .ribbon-cell {
+  height: 26px !important;
+  border-radius: 4px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  font-size: 11px !important;
+  cursor: pointer !important;
+  font-weight: 700 !important;
+}
+
+.card-all-boxes-map .slots-ribbon-grid .ribbon-cell.active-slot,
+.card-all-boxes-map .slots-ribbon-grid .ribbon-cell.older-slot,
+.card-all-boxes-map .slots-ribbon-grid .ribbon-cell:not(.empty-slot) {
+  background: #15803d !important;
+  color: #ffffff !important;
+  border: none !important;
+  font-weight: 700 !important;
+}
+
+.card-all-boxes-map .slots-ribbon-grid .ribbon-cell.empty-slot {
+  border: 1px dashed #cbd5e1 !important;
+  background: transparent !important;
+  color: #64748b !important;
+  font-weight: 500 !important;
+}
+
+/* ====================================================================
+   UPDATING INVENTORY MODE STYLING (Image 2)
+   ==================================================================== */
+
+.kpi-royal-card.active-updating {
+  background: #15803d !important;
+  border-color: #166534 !important;
+}
+
+.kpi-royal-card.active-updating:hover {
+  background: #166534 !important;
+}
+
+.inventory-updating-banner {
+  display: none !important;
+  background: #ecfdf5 !important;
+  border: 1px solid #bbf7d0 !important;
+  border-radius: 10px !important;
+  padding: 8px 16px !important;
+  margin-bottom: 10px !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 12px !important;
+}
+
+.inventory-updating-banner.active-banner {
+  display: flex !important;
+}
+
+.inv-banner-left {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  flex-wrap: wrap !important;
+}
+
+.inv-banner-bold {
+  font-size: 14.5px !important;
+  font-weight: 800 !important;
+  color: #065f46 !important;
+}
+
+.inv-banner-sub {
+  font-size: 13.5px !important;
+  font-weight: 500 !important;
+  color: #047857 !important;
+}
+
+.btn-finish-inventory {
+  background: #15803d !important;
+  color: #ffffff !important;
+  border: none !important;
+  border-radius: 8px !important;
+  padding: 8px 22px !important;
+  font-weight: 700 !important;
+  font-size: 13.5px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 6px !important;
+  cursor: pointer !important;
+  box-shadow: 0 1px 3px rgba(21, 128, 61, 0.25) !important;
+  transition: all 0.15s ease !important;
+}
+
+.btn-finish-inventory:hover {
+  background: #166534 !important;
+}
+
+.inventory-scan-workspace {
+  display: none !important;
+  background: #ffffff !important;
+  border: 1px solid #e2e8f0 !important;
+  border-radius: 14px !important;
+  min-height: 190px !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 24px 20px !important;
+  text-align: center !important;
+  margin-bottom: 14px !important;
+}
+
+.inventory-scan-workspace.active-workspace {
+  display: flex !important;
+}
+
+.inv-empty-state {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+.inv-scan-green-icon {
+  margin-bottom: 12px !important;
+}
+
+.inv-empty-title {
+  margin: 0 0 6px 0 !important;
+  font-size: 18px !important;
+  font-weight: 700 !important;
+  color: #0f172a !important;
+}
+
+.inv-empty-sub {
+  margin: 0 !important;
+  font-size: 14px !important;
+  color: #64748b !important;
+}
+
+.inv-scanned-cards-grid {
+  display: grid !important;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)) !important;
+  gap: 12px !important;
+  width: 100% !important;
+  margin-top: 16px !important;
+}
+

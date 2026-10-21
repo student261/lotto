@@ -3,6 +3,60 @@ import { syncPOSStateToDB } from './dbSync.js';
 
 const STORAGE_KEY = 'lotto_track_pos_data_v3';
 
+export const DEFAULT_STORES = [
+  {
+    id: 'store_amigo',
+    name: 'AMIGO FOOD MART',
+    address: '2300 MOODY RD WARNER ROBINS, GA, 31088',
+    retailerNumber: 'GA-89412',
+    phone: '(478) 923-4567',
+    totalBoxes: 65,
+    status: 'ACTIVE'
+  },
+  {
+    id: 'store_downtown',
+    name: 'DOWNTOWN QUICK MART',
+    address: '104 N COMMERCIAL BLVD, WARNER ROBINS, GA, 31088',
+    retailerNumber: 'GA-94103',
+    phone: '(478) 953-8821',
+    totalBoxes: 60,
+    status: 'ACTIVE'
+  }
+];
+
+export function getStoresList() {
+  try {
+    const raw = localStorage.getItem('lotto_stores_list');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+  } catch (e) {}
+  return JSON.parse(JSON.stringify(DEFAULT_STORES));
+}
+
+export function saveStoresList(stores) {
+  try {
+    localStorage.setItem('lotto_stores_list', JSON.stringify(stores));
+  } catch (e) {}
+}
+
+export function getCurrentStoreId() {
+  return localStorage.getItem('lotto_current_store_id') || 'store_amigo';
+}
+
+export function setCurrentStoreId(storeId) {
+  localStorage.setItem('lotto_current_store_id', storeId);
+}
+
+export function getStoreStorageKey(storeId = null) {
+  const sid = storeId || getCurrentStoreId();
+  if (sid === 'store_amigo') {
+    return STORAGE_KEY;
+  }
+  return `lotto_track_pos_data_v3_${sid}`;
+}
+
 export const SAMPLE_GAMES = [
   { id: 'g101', name: '5X MONEY', price: 1, bookValue: 300, packSize: 300, barcodePrefix: '1417' },
   { id: 'g102', name: 'JR JUMBO', price: 1, bookValue: 300, packSize: 300, barcodePrefix: '1410' },
@@ -175,7 +229,7 @@ export function parseLotteryBarcode(raw, customGames = []) {
       };
     }
 
-    const sec = securityCode || '000';
+    const sec = securityCode || computeLotterySeriesCode(gameNumber, ticketNumber, customGames);
     const packCombined = (packNumber.length === 6 && checkCode) ? `${packNumber}${checkCode}` : packNumber;
     return {
       isValid: true,
@@ -216,7 +270,7 @@ export function parseLotteryBarcode(raw, customGames = []) {
       };
     }
 
-    const sec = securityCode || '000';
+    const sec = securityCode || computeLotterySeriesCode(gameNumber, ticketNumber, customGames);
     const packCombined = (packNumber.length === 6 && checkCode) ? `${packNumber}${checkCode}` : packNumber;
     return {
       isValid: true,
@@ -278,7 +332,7 @@ export function parseLotteryBarcode(raw, customGames = []) {
       };
     }
 
-    const sec = securityCode || '000';
+    const sec = securityCode || computeLotterySeriesCode(gameNumber, ticketNumber, customGames);
     const packCombined = (packNumber.length === 6 && checkCode) ? `${packNumber}${checkCode}` : packNumber;
     return {
       isValid: true,
@@ -316,7 +370,7 @@ export function parseLotteryBarcode(raw, customGames = []) {
       };
     }
 
-    const sec = '000';
+    const sec = computeLotterySeriesCode(gameNumber, ticketNumber, customGames);
     return {
       isValid: true,
       gameNumber,
@@ -413,7 +467,7 @@ export function parseLotteryBarcode(raw, customGames = []) {
       };
     }
 
-    const sec = securityCode || '000';
+    const sec = securityCode || computeLotterySeriesCode(gameNumber, ticketNumber, customGames);
     const packCombined = (packNumber.length === 6 && checkCode) ? `${packNumber}${checkCode}` : packNumber;
     return {
       isValid: true,
@@ -462,7 +516,7 @@ export function parseLotteryBarcode(raw, customGames = []) {
       };
     }
 
-    const sec = securityCode || '000';
+    const sec = securityCode || computeLotterySeriesCode(gameNumber, ticketNumber, customGames);
     return {
       isValid: true,
       gameNumber,
@@ -1010,7 +1064,7 @@ export function getInitialState() {
     { boxNumber: 60, gameName: 'Jumbo Bucks', price: 2, packNumber: '600871', packSize: 150, currentTicket: 8, startTicket: 0, daysActive: 12 },
     { boxNumber: 61, gameName: '10X Money', price: 2, packNumber: '610455', packSize: 150, currentTicket: 10, startTicket: 0, daysActive: 2 },
     { boxNumber: 62, gameName: 'Spicy Hot Cash', price: 2, packNumber: '620913', packSize: 150, currentTicket: 9, startTicket: 0, daysActive: 7 },
-    { boxNumber: 63, gameName: 'Jackpots', price: 2, packNumber: '631482', packSize: 150, currentTicket: 54, startTicket: 40, daysActive: 21 }
+    { boxNumber: 63, gameName: 'Jackpots', price: 2, packNumber: '631482', packSize: 150, currentTicket: 52, startTicket: 40, daysActive: 21 }
   ];
 
   refBoxes.forEach(rb => {
@@ -1031,8 +1085,8 @@ export function getInitialState() {
   return {
     storeName: 'AMIGO FOOD MART',
     storeAddress: '2300 MOODY RD WARNER ROBINS, GA, 31088',
-    shiftNumber: 1,
-    cashierName: 'master',
+    shiftNumber: 13,
+    cashierName: 'Maulik',
     shiftStatus: 'IN_PROGRESS', // 'IN_PROGRESS' | 'SCANNING_END_SHIFT' | 'SHIFT_ENDED'
     shiftStartedAt: new Date().toISOString(),
     totalSlots: TOTAL_SLOTS,
@@ -1069,7 +1123,9 @@ export function getInitialState() {
   };
 }
 
-export function loadState() {
+export function loadState(targetStoreId = null) {
+  const storeId = targetStoreId || getCurrentStoreId();
+  const key = getStoreStorageKey(storeId);
   try {
     // Purge old v1 and v2 mock data if present
     if (localStorage.getItem('lotto_track_pos_data_v1')) {
@@ -1078,7 +1134,7 @@ export function loadState() {
     if (localStorage.getItem('lotto_track_pos_data_v2')) {
       localStorage.removeItem('lotto_track_pos_data_v2');
     }
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(key);
     if (raw) {
       const parsed = JSON.parse(raw);
       if (!parsed.customGames) parsed.customGames = [];
@@ -1121,14 +1177,25 @@ export function loadState() {
   } catch (e) {
     console.error('Failed to parse local storage state:', e);
   }
-  const fresh = getInitialState();
-  saveState(fresh);
+
+  // If this store doesn't have state yet:
+  const stores = getStoresList();
+  const storeMeta = stores.find(st => st.id === storeId) || DEFAULT_STORES[0];
+  const fresh = (storeId === 'store_amigo') ? getInitialState() : getCleanEmptyState({
+    storeName: storeMeta.name,
+    storeAddress: storeMeta.address,
+    retailerNumber: storeMeta.retailerNumber,
+    totalSlots: storeMeta.totalBoxes || 60
+  });
+  saveState(fresh, storeId);
   return fresh;
 }
 
-export function saveState(state) {
+export function saveState(state, targetStoreId = null) {
+  const storeId = targetStoreId || getCurrentStoreId();
+  const key = getStoreStorageKey(storeId);
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    localStorage.setItem(key, JSON.stringify(state));
     // Asynchronously synchronize state backup to MySQL
     syncPOSStateToDB(state);
   } catch (e) {
