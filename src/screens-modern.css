@@ -384,3 +384,43 @@
   border-color: var(--line, #272D36);
   color: var(--ink, #EEF1F5);
 }
+
+/* Clickable Interactive Inventory Rows */
+#viewInventory .inv-clickable-row {
+  cursor: pointer !important;
+  transition: background-color 0.15s ease !important;
+}
+
+#viewInventory .inv-clickable-row:hover td {
+  background-color: var(--surface-2, #F1F3F6) !important;
+}
+
+[data-theme="dark"] #viewInventory .inv-clickable-row:hover td {
+  background-color: var(--surface-2, #20242B) !important;
+}
+
+/* Modern Edit Book Modal Dialog Styles */
+#modalEditInventoryBook::backdrop {
+  background: rgba(15, 23, 42, 0.6);
+  backdrop-filter: blur(4px);
+}
+
+[data-theme="dark"] #modalEditInventoryBook {
+  background: var(--surface, #161A20) !important;
+  border-color: var(--line, #272D36) !important;
+  color: var(--ink, #EEF1F5) !important;
+}
+
+[data-theme="dark"] #modalEditInventoryBook input,
+[data-theme="dark"] #modalEditInventoryBook select {
+  background: var(--surface-2, #20242B) !important;
+  border-color: var(--line-strong, #3E4554) !important;
+  color: var(--ink, #EEF1F5) !important;
+}
+
+[data-theme="dark"] #btnCancelEditBook {
+  background: var(--surface-2, #20242B) !important;
+  border-color: var(--line, #272D36) !important;
+  color: var(--ink, #EEF1F5) !important;
+}
+

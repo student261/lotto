@@ -11597,7 +11597,7 @@ function setupEventListeners() {
       const sizeDisplay = item.packSize || `${item.packSizeNum || 100} tickets`;
 
       return `
-        <tr>
+        <tr class="inv-clickable-row" data-pack-num="${item.packNumber}" title="Click to edit book details">
           <td class="td-inv-game">
             <div class="game-title">${item.gameName}</div>
             <div class="game-num">${item.gameNumber}</div>
@@ -11612,6 +11612,202 @@ function setupEventListeners() {
         </tr>
       `;
     }).join('');
+
+    tbody.querySelectorAll('.inv-clickable-row').forEach(tr => {
+      tr.addEventListener('click', () => {
+        const packNum = tr.getAttribute('data-pack-num');
+        const item = items.find(it => String(it.packNumber) === String(packNum));
+        if (item) {
+          openEditInventoryPackModal(item);
+        }
+      });
+    });
+  }
+
+  function openEditInventoryPackModal(item) {
+    if (!item) return;
+    sfx.keypad?.();
+    const modal = document.getElementById('modalEditInventoryBook');
+    if (!modal) return;
+
+    const elOrigPack = document.getElementById('editBookOriginalPack');
+    const elOrigId = document.getElementById('editBookOriginalId');
+    const elName = document.getElementById('editBookGameName');
+    const elNum = document.getElementById('editBookGameNumber');
+    const elPack = document.getElementById('editBookPackNumber');
+    const elPrice = document.getElementById('editBookPrice');
+    const elSize = document.getElementById('editBookPackSize');
+    const elStatus = document.getElementById('editBookStatus');
+    const elBox = document.getElementById('editBookBoxNumber');
+    const elPos = document.getElementById('editBookPosition');
+    const elDate = document.getElementById('editBookReceivedDate');
+
+    if (elOrigPack) elOrigPack.value = item.packNumber || '';
+    if (elOrigId) elOrigId.value = item.id || '';
+    if (elName) elName.value = item.gameName || '';
+    if (elNum) elNum.value = (item.gameNumber || '').replace('Game ', '');
+    if (elPack) elPack.value = item.packNumber || '';
+    if (elPrice) elPrice.value = item.price || 1;
+    if (elSize) elSize.value = item.packSizeNum || (item.packSize ? parseInt(item.packSize, 10) : 100);
+    if (elStatus) elStatus.value = item.status || 'IN_STOCK';
+    if (elBox) elBox.value = item.boxNumber || '';
+    if (elPos) elPos.value = item.position !== undefined ? item.position : '000';
+    if (elDate) elDate.value = item.receivedDate || 'Oct 17';
+
+    if (typeof modal.showModal === 'function') {
+      modal.showModal();
+    } else {
+      modal.style.display = 'block';
+    }
+  }
+
+  // Setup Edit Inventory Book Modal Listeners Once
+  if (!window._editInventoryBookModalSetup) {
+    window._editInventoryBookModalSetup = true;
+
+    document.getElementById('closeEditBookModalBtn')?.addEventListener('click', () => {
+      const modal = document.getElementById('modalEditInventoryBook');
+      if (modal) {
+        if (typeof modal.close === 'function') modal.close();
+        else modal.style.display = 'none';
+      }
+    });
+
+    document.getElementById('btnCancelEditBook')?.addEventListener('click', () => {
+      const modal = document.getElementById('modalEditInventoryBook');
+      if (modal) {
+        if (typeof modal.close === 'function') modal.close();
+        else modal.style.display = 'none';
+      }
+    });
+
+    document.getElementById('formEditInventoryBook')?.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const modal = document.getElementById('modalEditInventoryBook');
+      const origPack = document.getElementById('editBookOriginalPack')?.value;
+      const newGameName = document.getElementById('editBookGameName')?.value.trim() || 'Scratch-off';
+      const newGameNumber = document.getElementById('editBookGameNumber')?.value.trim() || '1401';
+      const newPackNumber = document.getElementById('editBookPackNumber')?.value.trim();
+      const newPrice = Number(document.getElementById('editBookPrice')?.value) || 1;
+      const newPackSize = Number(document.getElementById('editBookPackSize')?.value) || 100;
+      const newStatus = document.getElementById('editBookStatus')?.value || 'IN_STOCK';
+      const rawBox = document.getElementById('editBookBoxNumber')?.value.trim();
+      const newBoxNumber = rawBox && !isNaN(parseInt(rawBox, 10)) ? parseInt(rawBox, 10) : null;
+      const newPos = document.getElementById('editBookPosition')?.value.trim() || '000';
+      const newRecDate = document.getElementById('editBookReceivedDate')?.value.trim() || 'Today';
+
+      if (!newPackNumber) {
+        alert('Please enter a valid pack number.');
+        return;
+      }
+
+      // Initialize state.inStockInventory if not yet populated
+      if (!state.inStockInventory || !Array.isArray(state.inStockInventory)) {
+        state.inStockInventory = JSON.parse(JSON.stringify(REFERENCE_IN_STOCK_PACKS));
+      }
+
+      // Update inStockInventory if previously in stock
+      const stockIdx = state.inStockInventory.findIndex(p => String(p.packNumber) === String(origPack));
+      if (stockIdx !== -1) {
+        if (newStatus === 'IN_STOCK') {
+          state.inStockInventory[stockIdx].gameName = newGameName;
+          state.inStockInventory[stockIdx].gameNumber = `Game ${newGameNumber}`;
+          state.inStockInventory[stockIdx].packNumber = newPackNumber;
+          state.inStockInventory[stockIdx].price = newPrice;
+          state.inStockInventory[stockIdx].packSize = `${newPackSize} tickets`;
+          state.inStockInventory[stockIdx].packSizeNum = newPackSize;
+          state.inStockInventory[stockIdx].position = newPos;
+          state.inStockInventory[stockIdx].receivedDate = newRecDate;
+        } else {
+          state.inStockInventory.splice(stockIdx, 1);
+        }
+      } else if (newStatus === 'IN_STOCK') {
+        state.inStockInventory.push({
+          id: `stock_${Date.now()}`,
+          gameName: newGameName,
+          gameNumber: `Game ${newGameNumber}`,
+          packNumber: newPackNumber,
+          price: newPrice,
+          packSize: `${newPackSize} tickets`,
+          packSizeNum: newPackSize,
+          status: 'IN_STOCK',
+          statusLabel: 'In stock',
+          statusBadgeClass: 'badge-in-stock',
+          boxNumber: null,
+          position: newPos,
+          receivedDate: newRecDate
+        });
+      }
+
+      // Sync rack slots if ACTIVE or if removed from slot
+      if (Array.isArray(state.slots)) {
+        state.slots.forEach(slot => {
+          if (slot && String(slot.packNumber) === String(origPack)) {
+            if (newStatus !== 'ACTIVE' || (newBoxNumber && Number(slot.boxNumber) !== Number(newBoxNumber))) {
+              slot.packNumber = '';
+              slot.gameName = '';
+              slot.status = 'EMPTY';
+            }
+          }
+        });
+
+        if (newStatus === 'ACTIVE' && newBoxNumber && newBoxNumber >= 1 && newBoxNumber <= state.slots.length) {
+          const targetSlot = state.slots[newBoxNumber - 1];
+          if (targetSlot) {
+            targetSlot.gameName = newGameName;
+            targetSlot.gameCode = newGameNumber;
+            targetSlot.packNumber = newPackNumber;
+            targetSlot.price = newPrice;
+            targetSlot.packSize = newPackSize;
+            targetSlot.status = 'ACTIVE';
+            targetSlot.currentTicket = parseInt(newPos, 10) || 0;
+            targetSlot.startTicket = parseInt(newPos, 10) || 0;
+          }
+        }
+      }
+
+      saveState(state);
+      sfx.success?.();
+      if (modal) {
+        if (typeof modal.close === 'function') modal.close();
+        else modal.style.display = 'none';
+      }
+      renderInventoryView();
+      if (typeof renderDispenser === 'function') renderDispenser();
+      showToast(`✓ Book ${newPackNumber} updated successfully.`, 'success');
+    });
+
+    document.getElementById('btnDeleteInventoryBook')?.addEventListener('click', () => {
+      const origPack = document.getElementById('editBookOriginalPack')?.value;
+      if (!origPack) return;
+      if (!confirm(`Are you sure you want to remove pack ${origPack} from inventory?`)) return;
+
+      if (!state.inStockInventory || !Array.isArray(state.inStockInventory)) {
+        state.inStockInventory = JSON.parse(JSON.stringify(REFERENCE_IN_STOCK_PACKS));
+      }
+      state.inStockInventory = state.inStockInventory.filter(p => String(p.packNumber) !== String(origPack));
+
+      if (Array.isArray(state.slots)) {
+        state.slots.forEach(slot => {
+          if (slot && String(slot.packNumber) === String(origPack)) {
+            slot.packNumber = '';
+            slot.gameName = '';
+            slot.status = 'EMPTY';
+          }
+        });
+      }
+
+      saveState(state);
+      sfx.keypad?.();
+      const modal = document.getElementById('modalEditInventoryBook');
+      if (modal) {
+        if (typeof modal.close === 'function') modal.close();
+        else modal.style.display = 'none';
+      }
+      renderInventoryView();
+      if (typeof renderDispenser === 'function') renderDispenser();
+      showToast(`Pack ${origPack} removed.`, 'info');
+    });
   }
 
   function renderDayReportView() {
