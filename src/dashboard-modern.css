@@ -1,0 +1,331 @@
+/* ==========================================================================
+   LottoTrack Pro — Modern Dashboard & Sidebar Stylesheet (Phase 4 Redesign)
+   Scoped strictly to #viewSellCounter and .pos-sidebar
+   Loaded last in cascade to cleanly apply design tokens
+   ========================================================================== */
+
+/* -------------------------------------------------------------
+   1. Design Token Variables (Figtree, JetBrains Mono, Palette)
+   ------------------------------------------------------------- */
+:root {
+  --font: "Figtree", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+
+#viewSellCounter,
+.pos-sidebar {
+  font-family: var(--font);
+  color: var(--ink);
+  box-sizing: border-box;
+}
+
+#viewSellCounter *,
+.pos-sidebar * {
+  box-sizing: border-box;
+  font-family: inherit;
+}
+
+/* -------------------------------------------------------------
+   2. Modern Sidebar Styling (.pos-sidebar)
+   ------------------------------------------------------------- */
+.pos-sidebar {
+  background: var(--surface, #ffffff);
+  border-right: 1px solid var(--line, #e2e8f0);
+  transition: width 0.22s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.pos-sidebar .brand-badge-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--brand, #1D4ED8);
+  color: var(--on-brand, #ffffff);
+  display: grid;
+  place-items: center;
+}
+
+.pos-sidebar .brand-app-name {
+  font-weight: 800;
+  font-size: 1.1rem;
+  letter-spacing: -0.01em;
+  color: var(--ink, #14171C);
+}
+
+.pos-sidebar .brand-store-name {
+  font-size: 0.8rem;
+  color: var(--ink-3, #66707D);
+}
+
+.pos-sidebar .sidebar-nav-item {
+  min-height: 44px;
+  border-radius: var(--r-sm, 8px);
+  padding: 0 12px;
+  gap: 12px;
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--ink-2, #47505C);
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.pos-sidebar .sidebar-nav-item:hover {
+  background: var(--surface-2, #F1F3F6);
+  color: var(--ink, #14171C);
+}
+
+.pos-sidebar .sidebar-nav-item.active {
+  background: var(--brand-soft, #E9EFFD);
+  color: var(--brand-ink, #1E3A8A);
+}
+
+.pos-sidebar .sidebar-nav-item.active svg {
+  color: var(--brand, #1D4ED8);
+}
+
+/* -------------------------------------------------------------
+   3. Top Action Controls & 60px Primary Buttons
+   ------------------------------------------------------------- */
+#viewSellCounter #mainShiftActionBtn.btn-ctrl-end-shift,
+#viewSellCounter #mainShiftActionBtn {
+  height: 60px;
+  min-height: 60px;
+  border-radius: var(--r-md, 12px);
+  padding: 0 20px;
+  background: var(--ink, #14171C);
+  border: 2px solid var(--ink, #14171C);
+  color: var(--surface, #FFFFFF);
+  font-family: var(--font);
+  font-size: 1.15rem;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  cursor: pointer;
+  transition: transform 0.08s ease, filter 0.15s ease, background 0.15s ease;
+  white-space: nowrap;
+}
+
+#viewSellCounter #mainShiftActionBtn:hover {
+  filter: brightness(1.1);
+  background: var(--ink, #14171C);
+}
+
+#viewSellCounter #mainShiftActionBtn:active {
+  transform: scale(0.98);
+}
+
+#viewSellCounter #btnHeaderRefresh {
+  height: 60px;
+  min-height: 60px;
+  border-radius: var(--r-md, 12px);
+  padding: 0 18px;
+  background: var(--surface, #FFFFFF);
+  border: 2px solid var(--line-strong, #C9CFD8);
+  color: var(--ink, #14171C);
+  font-family: var(--font);
+  font-size: 1.1rem;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+  white-space: nowrap;
+}
+
+#viewSellCounter #btnHeaderRefresh:hover {
+  background: var(--surface-2, #F1F3F6);
+  border-color: var(--ink-3, #66707D);
+}
+
+#viewSellCounter #btnHeaderCancel {
+  height: 60px;
+  min-height: 60px;
+  border-radius: var(--r-md, 12px);
+  padding: 0 16px;
+  background: var(--danger-soft, #FCEBE9);
+  border: none;
+  color: var(--danger, #C0261B);
+  font-family: var(--font);
+  font-size: 1.05rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+#viewSellCounter #btnHeaderCancel:hover:not(:disabled) {
+  filter: brightness(0.96);
+}
+
+/* -------------------------------------------------------------
+   4. Stat Chips & KPI Cluster (Rounded Rectangles --r-md)
+   ------------------------------------------------------------- */
+#viewSellCounter .dashboard-kpi-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 6px 0 10px;
+  width: 100%;
+}
+
+#viewSellCounter .dashboard-kpi-bar .kpi-metric-card,
+#viewSellCounter .dashboard-kpi-bar .kpi-royal-item,
+#viewSellCounter .dashboard-kpi-bar .kpi-chip-modern,
+#viewSellCounter .dashboard-kpi-bar > div {
+  border-radius: var(--r-md, 12px);
+  background: var(--surface, #FFFFFF);
+  border: 1px solid var(--line, #E1E5EB);
+  box-shadow: var(--sh-sm, 0 1px 3px rgba(22,32,52,.08));
+  padding: 8px 14px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+#viewSellCounter .kpi-label,
+#viewSellCounter .kpi-royal-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-3, #66707D);
+}
+
+#viewSellCounter .kpi-value,
+#viewSellCounter .kpi-royal-val {
+  font-size: 1.35rem;
+  font-weight: 800;
+  color: var(--ink, #14171C);
+  line-height: 1.2;
+}
+
+/* -------------------------------------------------------------
+   5. Modern Last-Scan Readout Card
+   ------------------------------------------------------------- */
+#viewSellCounter #lastScannedBoxCard,
+#viewSellCounter .last-scan-card,
+#viewSellCounter .last-scan-card-modern {
+  border-radius: var(--r-md, 12px);
+  background: var(--surface-2, #F1F3F6);
+  border: 1px solid var(--line, #E1E5EB);
+  padding: 10px 16px;
+  box-shadow: var(--sh-sm, 0 1px 3px rgba(22,32,52,.08));
+}
+
+#viewSellCounter .last-scan-game-title {
+  font-family: var(--font);
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: var(--ink, #14171C);
+}
+
+#viewSellCounter .last-scan-box-num,
+#viewSellCounter #largeStatReadout {
+  font-family: var(--mono);
+  font-weight: 800;
+  color: var(--brand, #1D4ED8);
+}
+
+/* -------------------------------------------------------------
+   6. Dispenser Rack Tiles & Acrylic Cards
+   ------------------------------------------------------------- */
+#viewSellCounter .dispenser-rack-container {
+  border-radius: 14px;
+  background: var(--surface, #FFFFFF);
+  border: 1px solid var(--line, #E1E5EB);
+  box-shadow: var(--sh-sm, 0 1px 3px rgba(22,32,52,.08));
+  padding: 12px;
+}
+
+#viewSellCounter .box-card {
+  border-radius: 12px;
+  background: var(--surface, #FFFFFF);
+  border: 1px solid var(--line, #E1E5EB);
+  box-shadow: var(--sh-sm, 0 1px 3px rgba(22,32,52,.08));
+  transition: transform 0.18s cubic-bezier(0.2, 0.7, 0.2, 1), box-shadow 0.18s ease;
+  position: relative;
+  cursor: pointer;
+}
+
+#viewSellCounter .box-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--sh-md, 0 4px 10px rgba(22,32,52,.08));
+}
+
+#viewSellCounter .box-card.active-slot {
+  border-top: 3px solid var(--money, #0A7A42);
+}
+
+#viewSellCounter .box-card.new-activated-slot {
+  border-top: 3px solid var(--brand, #1D4ED8);
+}
+
+#viewSellCounter .box-card .box-main-number {
+  font-family: var(--mono) !important;
+  font-size: 2.4rem;
+  font-weight: 800;
+  color: var(--ink, #14171C);
+  line-height: 1;
+}
+
+#viewSellCounter .box-card .ticket-sold-count {
+  font-family: var(--mono) !important;
+  font-size: 1.8rem;
+  font-weight: 800;
+  color: var(--brand, #1D4ED8);
+}
+
+/* -------------------------------------------------------------
+   7. Dark Mode Token Overrides ([data-theme="dark"])
+   ------------------------------------------------------------- */
+[data-theme="dark"] #viewSellCounter {
+  color: var(--ink);
+}
+
+[data-theme="dark"] #viewSellCounter #mainShiftActionBtn {
+  background: var(--surface-3, #252B34);
+  border-color: var(--line-strong, #38404B);
+  color: var(--ink, #EEF1F5);
+}
+
+[data-theme="dark"] #viewSellCounter #btnHeaderRefresh {
+  background: var(--surface, #161A20);
+  border-color: var(--line, #272D36);
+  color: var(--ink, #EEF1F5);
+}
+
+[data-theme="dark"] #viewSellCounter #btnHeaderCancel {
+  background: var(--danger-soft, #371614);
+  color: var(--danger, #FF6F63);
+}
+
+[data-theme="dark"] #viewSellCounter .dashboard-kpi-bar .kpi-metric-card,
+[data-theme="dark"] #viewSellCounter .dashboard-kpi-bar .kpi-royal-item,
+[data-theme="dark"] #viewSellCounter .dashboard-kpi-bar > div {
+  background: var(--surface, #161A20);
+  border-color: var(--line, #272D36);
+}
+
+[data-theme="dark"] #viewSellCounter .kpi-value,
+[data-theme="dark"] #viewSellCounter .kpi-royal-val {
+  color: var(--ink, #EEF1F5);
+}
+
+[data-theme="dark"] #viewSellCounter .dispenser-rack-container,
+[data-theme="dark"] #viewSellCounter .box-card {
+  background: var(--surface, #161A20);
+  border-color: var(--line, #272D36);
+}
+
+[data-theme="dark"] #viewSellCounter .box-card .box-main-number {
+  color: var(--ink, #EEF1F5);
+}
+
+[data-theme="dark"] #viewSellCounter .box-card .ticket-sold-count {
+  color: var(--brand, #6B97FF);
+}
