@@ -55,6 +55,12 @@
 - [.stylelintrc.json](file:///c:/Users/Admin/OneDrive/Documents/lotto/.stylelintrc.json): Stylelint configuration enforcing zero unit and naming constraints.
 - [tests/phase6-enforcement.test.mjs](file:///c:/Users/Admin/OneDrive/Documents/lotto/tests/phase6-enforcement.test.mjs): Matrix automated tests across 9 viewport dimensions, tap target sizing, scan input preservation, and extreme data strings.
 
+### Post-Phase 7 UI Fixes (Dashboard Overlap & Inventory Editing)
+- [src/dashboard-modern.css:87-175](file:///c:/Users/Admin/OneDrive/Documents/lotto/src/dashboard-modern.css#L87-L175): Fixed top control bar layout grid. Row 1 aligns `[Refresh]` (60px) + `[End Shift]` (60px) + `[Cancel]` (60px, 140px wide). Row 2 aligns `[Scan a ticket]` (60px) spanning under Refresh + End Shift, with `[Undo]` (60px, 140px wide) directly under Cancel. `[LAST SCAN]` card height set to 130px cleanly matching both rows with zero overlap.
+- [index.html:4793-4870](file:///c:/Users/Admin/OneDrive/Documents/lotto/index.html#L4793-L4870): Added `<dialog id="modalEditInventoryBook">` providing prefilled fields for Game Name, Game #, Pack #, Price, Pack Size, Status (`IN_STOCK`, `ACTIVE`, `COMPLETED`, `REMOVED`), Box # (1-65), Position (current ticket), and Received Date.
+- [src/main.js:11598-11805](file:///c:/Users/Admin/OneDrive/Documents/lotto/src/main.js#L11598-L11805): Made all inventory table rows clickable (`.inv-clickable-row`). Wired up modal save, delete, and real-time synchronization with `state.inStockInventory`, rack slots `state.slots`, and `saveState(state)`.
+- [src/screens-modern.css:385-425](file:///c:/Users/Admin/OneDrive/Documents/lotto/src/screens-modern.css#L385-L425): Added hover highlighting for clickable inventory rows and dark mode modal theme styling.
+
 ---
 
 ## 2. Tests Run With Counts
