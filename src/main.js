@@ -13,6 +13,12 @@ import { getSettingsPeopleList, getSettingsRolesPeopleList, REFERENCE_MODERN_SET
 import { initDatabaseSync, checkMySQLStatus, saveShiftReportToDB, syncHistoricalShiftsToDB, logTicketScanToDB } from './dbSync.js';
 import { openDaySettlementModal, openPastDaysModal } from './settlementHistoryModals.js';
 
+const BUILD_ID = '2026-10-22-phase0';
+if (typeof document !== 'undefined' && document.documentElement) {
+  document.documentElement.dataset.build = BUILD_ID;
+}
+console.info(`[LottoTrack Pro] Build ID: ${BUILD_ID}`);
+
 let state = loadState();
 if (state && (state.cashierName !== 'Maulik' || state.shiftNumber !== 13 || state.shiftStatus !== 'IN_PROGRESS')) {
   state.cashierName = 'Maulik';
