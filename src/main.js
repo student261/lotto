@@ -755,29 +755,174 @@ function sanitizeAndMigrateSlots() {
   }
 }
 
+let _setupEventListenersDone = false;
+let _setupKeypadDone = false;
+let _setupHardwareScannerListenerDone = false;
+let _setupModernMockupDialogsDone = false;
 let _eventListenersInitialized = false;
+
+function showSystemLoadErrorBanner(failedStepName, error) {
+  try {
+    let banner = document.getElementById('systemLoadErrorBanner');
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'systemLoadErrorBanner';
+      banner.style.cssText = 'position:fixed; top:0; left:0; right:0; z-index:999999; background:#dc2626; color:#ffffff; padding:12px 20px; display:flex; align-items:center; justify-content:space-between; font-family:sans-serif; font-size:14px; font-weight:600; box-shadow:0 4px 12px rgba(0,0,0,0.3);';
+
+      const msgSpan = document.createElement('span');
+      msgSpan.id = 'systemLoadErrorMessage';
+      msgSpan.textContent = 'The system did not load correctly. Do not scan. Refresh the page or contact the owner.';
+      banner.appendChild(msgSpan);
+
+      const reloadBtn = document.createElement('button');
+      reloadBtn.id = 'btnReloadSystemError';
+      reloadBtn.textContent = 'Reload';
+      reloadBtn.style.cssText = 'background:#ffffff; color:#dc2626; border:none; border-radius:6px; padding:6px 16px; font-size:13px; font-weight:700; cursor:pointer; margin-left:16px;';
+      reloadBtn.addEventListener('click', () => {
+        window.location.reload();
+      });
+      banner.appendChild(reloadBtn);
+
+      document.body.prepend(banner);
+    }
+  } catch (bannerErr) {
+    console.error('Failed to render error banner:', bannerErr);
+  }
+}
+
+function runStep(name, fn) {
+  try {
+    fn();
+    return true;
+  } catch (err) {
+    console.error(`[initPOS] Step failed: ${name}`, err);
+    showSystemLoadErrorBanner(name, err);
+    return false;
+  }
+}
+
+function setupModernMockupDialogs() {
+  if (_setupModernMockupDialogsDone) return;
+  _setupModernMockupDialogsDone = true;
+}
+
+let _sidebarAutoCollapseInitialized = false;
+let _sidebarCollapseTimer = null;
+
+function setupSidebarAutoCollapse() {
+  if (_sidebarAutoCollapseInitialized) return;
+  _sidebarAutoCollapseInitialized = true;
+
+  const autoCloseSeconds = 5;
+  if (autoCloseSeconds <= 0) return;
+
+  const sidebar = document.querySelector('.pos-sidebar');
+  if (!sidebar) return;
+
+  let isPointerOver = false;
+
+  function isAnyModalOpen() {
+    const dialogs = document.querySelectorAll('dialog[open]');
+    if (dialogs.length > 0) return true;
+    const modals = document.querySelectorAll('.modal, .modal-overlay, [id$="Modal"], [id$="Dialog"]');
+    for (const m of modals) {
+      if (m.classList.contains('active') || (m.style && m.style.display !== 'none' && m.style.display !== '')) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  let isKeyboardNavigating = false;
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Tab' || e.key.startsWith('Arrow')) {
+      isKeyboardNavigating = true;
+    }
+  }, true);
+
+  window.addEventListener('pointerdown', () => {
+    isKeyboardNavigating = false;
+  }, true);
+
+  function hasKeyboardFocus() {
+    if (!isKeyboardNavigating) return false;
+    try {
+      return Boolean(sidebar.querySelector(':focus-visible') || (sidebar.contains(document.activeElement) && isKeyboardNavigating));
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function scheduleCollapse() {
+    clearTimeout(_sidebarCollapseTimer);
+    _sidebarCollapseTimer = setTimeout(() => {
+      if (isPointerOver) return;
+      if (hasKeyboardFocus()) return;
+      if (isAnyModalOpen()) return;
+      if (window.innerWidth <= 768) return;
+      if (sidebar.classList.contains('collapsed')) return;
+
+      sidebar.classList.add('collapsed');
+      const collapseBtn = document.getElementById('sidebarCollapseBtn');
+      if (collapseBtn) collapseBtn.setAttribute('title', 'Expand Sidebar');
+    }, autoCloseSeconds * 1000);
+  }
+
+  sidebar.addEventListener('pointerenter', () => {
+    isPointerOver = true;
+    clearTimeout(_sidebarCollapseTimer);
+  });
+
+  sidebar.addEventListener('pointerleave', () => {
+    isPointerOver = false;
+    scheduleCollapse();
+  });
+
+  sidebar.addEventListener('pointerdown', () => {
+    scheduleCollapse();
+  });
+
+  const brandCluster = sidebar.querySelector('.brand-left-cluster');
+  if (brandCluster) {
+    brandCluster.style.cursor = 'pointer';
+    brandCluster.addEventListener('click', () => {
+      sidebar.classList.remove('collapsed');
+      const collapseBtn = document.getElementById('sidebarCollapseBtn');
+      if (collapseBtn) collapseBtn.setAttribute('title', 'Collapse Sidebar');
+      scheduleCollapse();
+    });
+  }
+
+  scheduleCollapse();
+}
 
 // Initialize System
 function initPOS() {
-  initTheme();
-  if (localStorage.getItem('lottotrack_sidebar_collapsed') === 'true') {
-    document.querySelector('.pos-sidebar')?.classList.add('collapsed');
-    document.getElementById('sidebarCollapseBtn')?.setAttribute('title', 'Expand Sidebar');
-  }
-  sanitizeAndMigrateSlots();
-  populateActivationGameDropdown();
-  if (state.settings && state.settings.soundEnabled === false) {
-    sfx.muted = true;
-  }
-  renderHeaderAndMetrics();
-  renderDispenserRack();
-  renderSlotsRibbon();
-  if (!_eventListenersInitialized) {
-    setupEventListeners();
-    setupKeypad();
-    setupHardwareScannerListener();
-    _eventListenersInitialized = true;
-  }
+  runStep('initTheme', initTheme);
+  runStep('checkSidebarCollapsed', () => {
+    if (localStorage.getItem('lottotrack_sidebar_collapsed') === 'true') {
+      document.querySelector('.pos-sidebar')?.classList.add('collapsed');
+      document.getElementById('sidebarCollapseBtn')?.setAttribute('title', 'Expand Sidebar');
+    }
+  });
+  runStep('sanitizeAndMigrateSlots', sanitizeAndMigrateSlots);
+  runStep('populateActivationGameDropdown', populateActivationGameDropdown);
+  runStep('initSound', () => {
+    if (state.settings && state.settings.soundEnabled === false) {
+      sfx.muted = true;
+    }
+  });
+  runStep('renderHeaderAndMetrics', renderHeaderAndMetrics);
+  runStep('renderDispenserRack', renderDispenserRack);
+  runStep('renderSlotsRibbon', renderSlotsRibbon);
+
+  // Hardened listener setup with per-step flags so nothing is attached twice
+  runStep('setupEventListeners', setupEventListeners);
+  runStep('setupKeypad', setupKeypad);
+  runStep('setupHardwareScannerListener', setupHardwareScannerListener);
+  runStep('setupModernMockupDialogs', setupModernMockupDialogs);
+  runStep('setupSidebarAutoCollapse', setupSidebarAutoCollapse);
+  _eventListenersInitialized = true;
 }
 
 // -------------------------------------------------------------
@@ -3594,6 +3739,9 @@ function findFirstEmptyBox() {
 }
 
 function setupKeypad() {
+  if (_setupKeypadDone) return;
+  _setupKeypadDone = true;
+
   // Connect scanner mode label to open activation
   const scannerModeLabel = document.getElementById('scannerModeLabel');
   if (scannerModeLabel) {
@@ -6930,6 +7078,9 @@ function printInventoryStatusReport() {
 // -------------------------------------------------------------
 
 function setupHardwareScannerListener() {
+  if (_setupHardwareScannerListenerDone) return;
+  _setupHardwareScannerListenerDone = true;
+
   let scanBuffer = '';
   let lastKeystrokeTime = 0;
   let keystrokeIntervals = [];
@@ -8158,6 +8309,9 @@ export function refreshSystem() {
 // -------------------------------------------------------------
 
 function setupEventListeners() {
+  if (_setupEventListenersDone) return;
+  _setupEventListenersDone = true;
+
   // MySQL Database Status & Diagnostics Wiring
   const mysqlStatusBadge = document.getElementById('mysqlStatusBadge');
   const mysqlStatusText = document.getElementById('mysqlStatusText');
@@ -14207,3 +14361,34 @@ window.openManagerApprovalModal = openManagerApprovalModal;
 
 // Launch application
 initPOS();
+
+// Test hooks on window in DEV mode only (Phase 2 stability verification)
+if (import.meta.env?.DEV) {
+  window.__INIT_POS_TEST_HOOKS__ = {
+    runStep,
+    initPOS,
+    showSystemLoadErrorBanner,
+    getStepFlags: () => ({
+      setupEventListeners: _setupEventListenersDone,
+      setupKeypad: _setupKeypadDone,
+      setupHardwareScannerListener: _setupHardwareScannerListenerDone,
+      setupModernMockupDialogs: _setupModernMockupDialogsDone
+    }),
+    resetStepFlags: () => {
+      _setupEventListenersDone = false;
+      _setupKeypadDone = false;
+      _setupHardwareScannerListenerDone = false;
+      _setupModernMockupDialogsDone = false;
+    }
+  };
+  window.__SIDEBAR_TEST_HOOKS__ = {
+    setupSidebarAutoCollapse,
+    getTimer: () => _sidebarCollapseTimer,
+    triggerAutoCollapseNow: () => {
+      const sidebar = document.querySelector('.pos-sidebar');
+      if (sidebar && !sidebar.querySelector(':focus-visible')) {
+        sidebar.classList.add('collapsed');
+      }
+    }
+  };
+}
