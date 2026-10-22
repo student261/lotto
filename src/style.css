@@ -20247,7 +20247,7 @@ dialog#shiftReportModal::backdrop {
   align-items: center !important;
   justify-content: space-between !important;
   gap: 28px !important;
-  min-width: 380px !important;
+  min-width: 0;
   box-shadow: 0 1px 3px rgba(0,0,0,0.03) !important;
 }
 

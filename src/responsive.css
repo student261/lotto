@@ -1720,25 +1720,27 @@ html, body {
    Loaded last to ensure 100% cascade override across all screen sizes
    ========================================================================== */
 
-/* 1. Left Sidebar Navigation (Expanded by default, 200px width) */
-.pos-sidebar {
-  width: 200px !important;
-  min-width: 200px !important;
-  max-width: 200px !important;
-  background: #ffffff !important;
-  border-right: 1px solid #e2e8f0 !important;
-  padding: 16px 12px !important;
-  display: flex !important;
-  flex-direction: column !important;
-  box-sizing: border-box !important;
-  transition: width 0.2s ease !important;
-}
+/* 1. Left Sidebar Navigation (Expanded by default on desktop, 200px width) */
+@media (min-width: 769px) {
+  .pos-sidebar {
+    width: 200px !important;
+    min-width: 200px !important;
+    max-width: 200px !important;
+    background: #ffffff !important;
+    border-right: 1px solid #e2e8f0 !important;
+    padding: 16px 12px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    box-sizing: border-box !important;
+    transition: width 0.2s ease !important;
+  }
 
-.pos-sidebar.collapsed {
-  width: 68px !important;
-  min-width: 68px !important;
-  max-width: 68px !important;
-  padding: 16px 8px !important;
+  .pos-sidebar.collapsed {
+    width: 68px !important;
+    min-width: 68px !important;
+    max-width: 68px !important;
+    padding: 16px 8px !important;
+  }
 }
 
 .pos-sidebar .nav-group-title {
@@ -2499,4 +2501,371 @@ html, body {
   width: 100% !important;
   margin-top: 16px !important;
 }
+
+/* ==========================================================================
+   8. MODERN DASHBOARD COMPONENT RESPONSIVE BREAKPOINTS
+   Ensures seamless, non-breaking layout across laptops, tablets, and phones.
+   ========================================================================== */
+
+/* --- 1025px - 1399px: Standard Laptops --- */
+@media (max-width: 1399px) and (min-width: 1025px) {
+  .dashboard-control-panel {
+    gap: 12px !important;
+  }
+
+  .control-left-column {
+    grid-template-columns: auto 1fr 88px !important;
+    gap: 8px !important;
+  }
+
+  .btn-ctrl-refresh {
+    padding: 0 16px !important;
+  }
+
+  .dashboard-last-scan-card {
+    width: 270px !important;
+    min-width: 250px !important;
+    padding: 10px 14px !important;
+  }
+
+  .last-scan-game-title {
+    font-size: 16px !important;
+  }
+
+  .last-scan-big-number {
+    font-size: 28px !important;
+  }
+
+  .dashboard-kpi-bar {
+    gap: 8px !important;
+  }
+
+  .kpi-royal-card {
+    padding: 6px 8px !important;
+  }
+
+  .kpi-royal-val {
+    font-size: 20px !important;
+  }
+
+  .dispensers-grid {
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)) !important;
+    gap: 10px !important;
+  }
+}
+
+/* --- 769px - 1024px: Tablets (Landscape & Portrait) --- */
+@media (max-width: 1024px) and (min-width: 769px) {
+  .pos-main-container {
+    padding: 0 1rem 1rem !important;
+  }
+
+  .dashboard-control-panel {
+    flex-wrap: wrap !important;
+    gap: 12px !important;
+  }
+
+  .control-left-column {
+    flex: 1 1 380px !important;
+    min-width: 0 !important;
+    grid-template-columns: auto 1fr 88px !important;
+    gap: 8px !important;
+  }
+
+  .dashboard-last-scan-card {
+    flex: 1 1 240px !important;
+    width: auto !important;
+    min-width: 220px !important;
+    padding: 10px 14px !important;
+  }
+
+  .dashboard-kpi-bar {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 10px !important;
+  }
+
+  .dispensers-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+    gap: 10px !important;
+  }
+
+  .slots-ribbon-grid {
+    grid-template-columns: repeat(17, minmax(0, 1fr)) !important;
+    gap: 3px !important;
+  }
+
+  .card-all-boxes-map .slots-ribbon-grid .ribbon-cell {
+    height: 26px !important;
+    font-size: 10px !important;
+  }
+}
+
+/* --- <= 768px: Mobile Phones & Compact Viewports --- */
+@media (max-width: 768px) {
+  .pos-main-container {
+    padding: 0 12px 24px !important;
+    width: 100% !important;
+    max-width: 100vw !important;
+    box-sizing: border-box !important;
+    overflow-x: hidden !important;
+  }
+
+  .dashboard-header-strip {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 8px !important;
+    padding: 6px 0 8px 52px !important;
+  }
+
+  .dashboard-heading {
+    font-size: 22px !important;
+  }
+
+  .shift-status-pill-badge {
+    width: 100% !important;
+    align-items: flex-start !important;
+    text-align: left !important;
+    box-sizing: border-box !important;
+    padding: 8px 12px !important;
+  }
+
+  .shift-pill-sub {
+    justify-content: flex-start !important;
+  }
+
+  .dashboard-control-panel {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 10px !important;
+    width: 100% !important;
+  }
+
+  .control-left-column {
+    display: grid !important;
+    grid-template-columns: 1fr 1.5fr !important;
+    grid-template-rows: auto auto auto !important;
+    gap: 8px !important;
+    width: 100% !important;
+  }
+
+  .btn-ctrl-refresh {
+    grid-column: 1 !important;
+    grid-row: 1 !important;
+    height: 44px !important;
+    width: 100% !important;
+    padding: 0 10px !important;
+    font-size: 13.5px !important;
+  }
+
+  .btn-ctrl-end-shift {
+    grid-column: 2 !important;
+    grid-row: 1 !important;
+    height: 44px !important;
+    width: 100% !important;
+    padding: 0 12px !important;
+    font-size: 14px !important;
+  }
+
+  .dashboard-scanner-input-wrap {
+    grid-column: 1 / 3 !important;
+    grid-row: 2 !important;
+    height: 46px !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+  }
+
+  .btn-ctrl-cancel {
+    grid-column: 1 !important;
+    grid-row: 3 !important;
+    height: 42px !important;
+    width: 100% !important;
+  }
+
+  .btn-ctrl-undo {
+    grid-column: 2 !important;
+    grid-row: 3 !important;
+    height: 42px !important;
+    width: 100% !important;
+  }
+
+  .dashboard-last-scan-card {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    box-sizing: border-box !important;
+    padding: 10px 14px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    gap: 12px !important;
+  }
+
+  .last-scan-text-group {
+    flex: 1 1 auto !important;
+    min-width: 0 !important;
+  }
+
+  .last-scan-game-title {
+    font-size: 16px !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+  }
+
+  .last-scan-box-ticket {
+    font-size: 12px !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+  }
+
+  .last-scan-big-number {
+    font-size: 26px !important;
+    line-height: 1 !important;
+  }
+
+  .last-scan-num-badge {
+    width: 44px !important;
+    height: 44px !important;
+    flex-shrink: 0 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+  }
+
+  .end-shift-floating-toast {
+    border-radius: 14px !important;
+    max-width: calc(100vw - 32px) !important;
+    width: auto !important;
+    padding: 10px 14px !important;
+    font-size: 12.5px !important;
+    bottom: 16px !important;
+    text-align: left !important;
+  }
+
+  .dashboard-kpi-bar {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 8px !important;
+  }
+
+  .kpi-royal-card {
+    height: 52px !important;
+    padding: 6px 8px !important;
+  }
+
+  .kpi-royal-val {
+    font-size: 18px !important;
+  }
+
+  .kpi-card-single-label {
+    font-size: 12.5px !important;
+  }
+
+  .dispensers-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 8px !important;
+  }
+
+  .box-card {
+    height: 160px !important;
+    min-height: 160px !important;
+    padding: 10px 8px !important;
+  }
+
+  .sell-counter-view .box-card .box-main-number {
+    font-size: 32px !important;
+  }
+
+  .sell-counter-view .box-card .ticket-number-display.ticket-sold-count {
+    font-size: 24px !important;
+  }
+
+  .dispensers-grid-wrapper {
+    max-height: 460px !important;
+    overflow-y: auto !important;
+  }
+
+  .slots-ribbon-grid {
+    grid-template-columns: repeat(13, minmax(0, 1fr)) !important;
+    gap: 2.5px !important;
+  }
+
+  .card-all-boxes-map .slots-ribbon-grid .ribbon-cell {
+    height: 22px !important;
+    font-size: 9px !important;
+    border-radius: 4px !important;
+  }
+
+  .all-boxes-map-legend {
+    flex-wrap: wrap !important;
+    gap: 8px !important;
+    font-size: 11px !important;
+  }
+
+  .all-boxes-map-header {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 4px !important;
+  }
+
+  .inv-scanned-cards-grid {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)) !important;
+  }
+
+  .toast-bubble {
+    position: fixed !important;
+    bottom: 16px !important;
+    left: 50% !important;
+    transform: translateX(-50%) !important;
+    width: auto !important;
+    max-width: calc(100vw - 32px) !important;
+    padding: 10px 14px !important;
+    font-size: 12.5px !important;
+    z-index: 9999 !important;
+    box-sizing: border-box !important;
+  }
+}
+
+/* --- <= 540px: Compact Phones --- */
+@media (max-width: 540px) {
+  .dashboard-kpi-bar {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 8px !important;
+  }
+
+  .dispensers-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 8px !important;
+  }
+
+  .slots-ribbon-grid {
+    grid-template-columns: repeat(13, minmax(0, 1fr)) !important;
+    gap: 2px !important;
+  }
+
+  .card-all-boxes-map .slots-ribbon-grid .ribbon-cell {
+    height: 20px !important;
+    font-size: 8.5px !important;
+  }
+}
+
+/* --- <= 375px: Ultra Compact Mobile --- */
+@media (max-width: 375px) {
+  .dashboard-heading {
+    font-size: 20px !important;
+  }
+
+  .btn-ctrl-refresh,
+  .btn-ctrl-end-shift,
+  .btn-ctrl-cancel,
+  .btn-ctrl-undo {
+    font-size: 12px !important;
+  }
+
+  .card-all-boxes-map .slots-ribbon-grid .ribbon-cell {
+    height: 19px !important;
+    font-size: 8px !important;
+  }
+}
+
 
