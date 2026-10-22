@@ -73,12 +73,12 @@ html, body {
   }
 
   .sell-counter-view {
-    flex: 1 1 0% !important;
+    flex: 1 1 auto !important;
     display: flex;
     flex-direction: column !important;
     min-height: 0 !important;
-    height: 100% !important;
-    overflow: hidden !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
   }
 
   .sell-counter-view[style*="display: none"],
@@ -93,11 +93,11 @@ html, body {
   }
 
   .dispenser-rack-container {
-    flex: 1 1 0% !important;
-    min-height: 0 !important;
+    flex: 1 1 auto !important;
+    min-height: 220px !important;
     display: flex !important;
     flex-direction: column !important;
-    overflow: hidden !important;
+    overflow: visible !important;
     margin-top: 0 !important;
     margin-bottom: 0 !important;
     padding: 0.75rem 1.25rem 0.5rem !important;
@@ -1725,13 +1725,26 @@ html, body {
   width: 200px !important;
   min-width: 200px !important;
   max-width: 200px !important;
-  background: #ffffff !important;
-  border-right: 1px solid #e2e8f0 !important;
+  background: var(--surface, #ffffff) !important;
+  border-right: 1px solid var(--line, #e2e8f0) !important;
   padding: 16px 12px !important;
   display: flex !important;
   flex-direction: column !important;
   box-sizing: border-box !important;
   transition: width 0.2s ease !important;
+}
+
+[data-theme="dark"] .pos-sidebar {
+  background: #161A20 !important;
+  border-right-color: #272D36 !important;
+}
+
+[data-theme="dark"] .pos-sidebar .brand-app-name {
+  color: #EEF1F5 !important;
+}
+
+[data-theme="dark"] .pos-sidebar .brand-store-name {
+  color: #8F98A5 !important;
 }
 
 .pos-sidebar.collapsed {
@@ -2218,8 +2231,10 @@ html, body {
 
 /* 5. Minimalist Dispenser Rack (12 Columns) */
 .dispensers-grid-wrapper {
-  max-height: 310px !important;
-  overflow-y: scroll !important;
+  max-height: none !important;
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  overflow-y: auto !important;
   overflow-x: hidden !important;
   padding: 2px 6px 2px 0 !important;
 }
@@ -2282,9 +2297,13 @@ html, body {
 .sell-counter-view .box-card .box-main-number {
   font-size: 42px !important;
   font-weight: 800 !important;
-  color: #0f172a !important;
+  color: var(--ink, #0f172a) !important;
   line-height: 1 !important;
   margin: 4px 0 !important;
+}
+
+[data-theme="dark"] .sell-counter-view .box-card .box-main-number {
+  color: #EEF1F5 !important;
 }
 
 .sell-counter-view .box-card .card-dashed-line {
@@ -2293,11 +2312,24 @@ html, body {
   margin: 8px auto !important;
 }
 
+[data-theme="dark"] .sell-counter-view .box-card .card-dashed-line {
+  border-bottom-color: #38404B !important;
+}
+
 .sell-counter-view .box-card .ticket-number-display.ticket-sold-count {
   font-size: 32px !important;
   font-weight: 800 !important;
   color: #1d4ed8 !important;
   line-height: 1 !important;
+}
+
+[data-theme="dark"] .sell-counter-view .box-card .ticket-number-display.ticket-sold-count {
+  color: #6B97FF !important;
+}
+
+[data-theme="dark"] .sell-counter-view .box-card {
+  background: #161A20 !important;
+  border-color: #272D36 !important;
 }
 
 /* 6. All 65 Boxes Mini-Map (33 Columns x 2 Rows) */
