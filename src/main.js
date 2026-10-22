@@ -749,6 +749,617 @@ function sanitizeAndMigrateSlots() {
   }
 }
 
+// =============================================================
+// Modern Mockup (02) Interactive Dialogs Handler
+// =============================================================
+let currentModernBoxSlot = null;
+let currentModernChosenEmptyBox = null;
+let currentModernActivationPack = null;
+
+export function openModernKpiListModal(filterType = 'today') {
+  const modal = document.getElementById('kpiListModal');
+  const countEl = document.getElementById('kpiListModalCount');
+  const titleEl = document.getElementById('kpiListModalTitle');
+  const subEl = document.getElementById('kpiListModalSub');
+  const colHeaderEl = document.getElementById('kpiListModalColHeader');
+  const tbodyEl = document.getElementById('kpiListModalTableBody');
+  const emptyWrap = document.getElementById('kpiListModalEmpty');
+  const emptyTitle = document.getElementById('kpiListModalEmptyTitle');
+  const emptyText = document.getElementById('kpiListModalEmptyText');
+  const tableWrap = document.getElementById('kpiListModalTableWrap');
+  if (!modal || !tbodyEl) return;
+
+  tbodyEl.innerHTML = '';
+  let title = 'Today';
+  let sub = 'Today · live tickets';
+  let colHeader = 'Sold';
+  let count = 0;
+  let rows = [];
+
+  const activeSlots = (state.slots || []).filter(s => s && s.status === 'ACTIVE' && s.packNumber);
+
+  if (filterType === 'inactive') {
+    title = 'Inactive boxes';
+    sub = 'Inactive boxes · Empty or waiting book';
+    colHeader = 'Status';
+    const emptySlots = (state.slots || []).filter(s => !s || s.status !== 'ACTIVE' || !s.packNumber);
+    count = emptySlots.length;
+    rows = emptySlots.map(s => ({
+      boxNumber: s.boxNumber,
+      gameName: 'Empty slot',
+      packNumber: '---',
+      price: '-',
+      pos: '00',
+      tagText: 'EMPTY',
+      tagCls: 'tag-subtle'
+    }));
+  } else if (filterType === 'week') {
+    title = 'This Week';
+    sub = 'This Week · Monday to now';
+    colHeader = 'Sold';
+    count = document.getElementById('metricThisWeek')?.textContent || 0;
+    rows = activeSlots.map(s => {
+      const sold = Math.max(0, (s.currentTicket || 0) - (s.startTicket || 0));
+      return {
+        boxNumber: s.boxNumber,
+        gameName: cleanGameTitle(s.gameName),
+        packNumber: s.packNumber,
+        price: `$${Number(s.price || 1).toFixed(0)}`,
+        pos: `#${String(s.currentTicket || 0).padStart(2, '0')}`,
+        tagText: sold > 0 ? `${sold} sold` : 'Active',
+        tagCls: sold > 0 ? 'tag-money' : 'tag-brand'
+      };
+    });
+  } else if (filterType === 'month') {
+    title = 'This Month';
+    sub = 'This Month · 31 days';
+    colHeader = 'Sold';
+    count = document.getElementById('metricThisMonth')?.textContent || 0;
+    rows = activeSlots.map(s => {
+      const sold = Math.max(0, (s.currentTicket || 0) - (s.startTicket || 0));
+      return {
+        boxNumber: s.boxNumber,
+        gameName: cleanGameTitle(s.gameName),
+        packNumber: s.packNumber,
+        price: `$${Number(s.price || 1).toFixed(0)}`,
+        pos: `#${String(s.currentTicket || 0).padStart(2, '0')}`,
+        tagText: sold > 0 ? `${sold} sold` : 'Active',
+        tagCls: sold > 0 ? 'tag-money' : 'tag-brand'
+      };
+    });
+  } else {
+    // Today
+    title = 'Today';
+    sub = 'Today · live tickets';
+    colHeader = 'Sold';
+    count = document.getElementById('metricToday')?.textContent || 0;
+    rows = activeSlots.map(s => {
+      const sold = Math.max(0, (s.currentTicket || 0) - (s.startTicket || 0));
+      return {
+        boxNumber: s.boxNumber,
+        gameName: cleanGameTitle(s.gameName),
+        packNumber: s.packNumber,
+        price: `$${Number(s.price || 1).toFixed(0)}`,
+        pos: `#${String(s.currentTicket || 0).padStart(2, '0')}`,
+        tagText: sold > 0 ? `${sold} sold` : 'Active',
+        tagCls: sold > 0 ? 'tag-money' : 'tag-brand'
+      };
+    });
+  }
+
+  if (countEl) countEl.textContent = count;
+  if (titleEl) titleEl.textContent = title;
+  if (subEl) subEl.textContent = sub;
+  if (colHeaderEl) colHeaderEl.textContent = colHeader;
+
+  if (rows.length === 0) {
+    if (emptyWrap) emptyWrap.style.display = 'flex';
+    if (tableWrap) tableWrap.style.display = 'none';
+    if (emptyTitle) emptyTitle.textContent = `No ${title} items`;
+    if (emptyText) emptyText.textContent = `There are currently no items matching ${title}.`;
+  } else {
+    if (emptyWrap) emptyWrap.style.display = 'none';
+    if (tableWrap) tableWrap.style.display = 'block';
+    tbodyEl.innerHTML = rows.map(r => `
+      <tr>
+        <td><span class="boxn">${r.boxNumber}</span></td>
+        <td class="g"><b>${r.gameName}</b><span>Pack ${r.packNumber}</span></td>
+        <td class="r money" style="font-weight: 700">${r.price}</td>
+        <td class="r big">${r.pos}</td>
+        <td class="r"><span class="tag ${r.tagCls}">${r.tagText}</span></td>
+      </tr>
+    `).join('');
+  }
+
+  sfx.keypad();
+  modal.showModal();
+}
+
+export function openModernSettlementModal() {
+  const modal = document.getElementById('settlementModernModal');
+  if (!modal) return;
+
+  const activeSlots = (state.slots || []).filter(s => s && s.status === 'ACTIVE' && s.packNumber);
+  const scannedInEndShift = activeSlots.filter(s => s.scannedInEndShift).length;
+  const totalSold = state.salesSummary?.totalTickets || 0;
+  const totalRev = Number(state.salesSummary?.totalRevenue || 0).toFixed(2);
+
+  const subEl = document.getElementById('settleModernSub');
+  if (subEl) subEl.textContent = `Shift #${state.shiftNumber || 1} in progress`;
+
+  const thisBoxesEl = document.getElementById('settleThisBoxes');
+  if (thisBoxesEl) thisBoxesEl.textContent = scannedInEndShift;
+  const thisScanNoteEl = document.getElementById('settleThisScanNote');
+  if (thisScanNoteEl) thisScanNoteEl.textContent = `of ${activeSlots.length} active`;
+
+  const thisTicketsEl = document.getElementById('settleThisTickets');
+  if (thisTicketsEl) thisTicketsEl.textContent = totalSold;
+
+  const thisSalesEl = document.getElementById('settleThisSales');
+  if (thisSalesEl) thisSalesEl.textContent = `$${totalRev}`;
+
+  // Last shift
+  const lastShift = (state.shiftHistory && state.shiftHistory.length > 0)
+    ? state.shiftHistory[state.shiftHistory.length - 1]
+    : null;
+
+  const lastShiftNo = document.getElementById('settleLastShiftNo');
+  if (lastShiftNo) lastShiftNo.textContent = lastShift ? `#${lastShift.shiftNumber}` : '#12';
+
+  const lastShiftMeta = document.getElementById('settleLastShiftMeta');
+  if (lastShiftMeta) {
+    const cashier = lastShift?.cashier || 'Daniel';
+    const time = lastShift?.closedAt || '10:05 PM';
+    lastShiftMeta.textContent = `${cashier} · closed ${time}`;
+  }
+
+  const lastTickets = document.getElementById('settleLastTickets');
+  if (lastTickets) lastTickets.textContent = lastShift?.totalTickets || 251;
+
+  const lastBoxes = document.getElementById('settleLastBoxes');
+  if (lastBoxes) lastBoxes.textContent = `${lastShift?.boxesScanned || 19} boxes`;
+
+  const lastSales = document.getElementById('settleLastSales');
+  if (lastSales) lastSales.textContent = lastShift ? `$${Number(lastShift.totalRevenue || 0).toFixed(2)}` : '$1,512.00';
+
+  sfx.keypad();
+  modal.showModal();
+}
+
+export function openModernBoxDetails(slot) {
+  if (!slot) return;
+  currentModernBoxSlot = slot;
+  currentModernChosenEmptyBox = null;
+  const modal = document.getElementById('boxModernDetailsModal');
+  if (!modal) return;
+
+  const cleanName = cleanGameTitle(slot.gameName);
+  const std = getStandardPackDetails(slot.price || 1);
+  const packSize = slot.initialTickets || slot.packSize || std.packSize || 100;
+  const currentTicketNum = slot.currentTicket !== undefined && slot.currentTicket !== null ? Number(slot.currentTicket) : 0;
+  const priceFormatted = `$${Number(slot.price || 1).toFixed(2)}`;
+
+  const iconWrap = document.getElementById('boxModernIconWrap');
+  if (iconWrap) iconWrap.textContent = slot.boxNumber;
+  const heading = document.getElementById('boxModernHeading');
+  if (heading) heading.textContent = `Box ${slot.boxNumber} · ${cleanName}`;
+  const sub = document.getElementById('boxModernSub');
+  if (sub) sub.textContent = `Pack ${slot.packNumber || '---'} · ${priceFormatted} a ticket`;
+
+  const openPos = document.getElementById('boxModernOpeningPos');
+  if (openPos) openPos.textContent = `#${String(slot.startTicket || 0).padStart(2, '0')}`;
+  const posNote = document.getElementById('boxModernPosNote');
+  if (posNote) posNote.textContent = 'opening position';
+  const packSizeEl = document.getElementById('boxModernPackSize');
+  if (packSizeEl) packSizeEl.textContent = packSize;
+  const lastTicket = document.getElementById('boxModernLastTicket');
+  if (lastTicket) lastTicket.textContent = `last ticket #${String(packSize - 1).padStart(2, '0')}`;
+  const gidEl = document.getElementById('boxModernGameId');
+  if (gidEl) gidEl.textContent = slot.gameId || '1401';
+  const actTime = document.getElementById('boxModernActivatedTime');
+  if (actTime) actTime.textContent = `activated ${slot.activatedTime || 'Oct 19'}`;
+
+  // Default to Tab 1 (Change box)
+  showModernBoxTab('move');
+
+  // Populate empty boxes chips
+  const emptyBoxesList = document.getElementById('boxModernEmptyBoxesList');
+  const confirmMoveBtn = document.getElementById('btnBoxModernConfirmMove');
+  if (confirmMoveBtn) {
+    confirmMoveBtn.disabled = true;
+    confirmMoveBtn.textContent = 'Move to box ...';
+  }
+  if (emptyBoxesList) {
+    emptyBoxesList.innerHTML = '';
+    const emptySlots = (state.slots || []).filter(s => s && (s.status !== 'ACTIVE' || !s.packNumber) && Number(s.boxNumber) !== Number(slot.boxNumber));
+    if (emptySlots.length === 0) {
+      emptyBoxesList.innerHTML = '<span class="muted" style="font-size:13px;">No empty boxes available in rack.</span>';
+    } else {
+      emptySlots.forEach(es => {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'chip';
+        chip.textContent = es.boxNumber;
+        chip.addEventListener('click', () => {
+          emptyBoxesList.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+          chip.classList.add('active');
+          currentModernChosenEmptyBox = Number(es.boxNumber);
+          if (confirmMoveBtn) {
+            confirmMoveBtn.disabled = false;
+            confirmMoveBtn.textContent = `Move to box ${currentModernChosenEmptyBox}`;
+          }
+        });
+        emptyBoxesList.appendChild(chip);
+      });
+    }
+  }
+
+  // Setup Remove Tab defaults
+  const rmPosInput = document.getElementById('boxModernRmPos');
+  if (rmPosInput) rmPosInput.value = currentTicketNum;
+
+  sfx.keypad();
+  modal.showModal();
+}
+
+export function showModernBoxTab(tabName) {
+  const tabMove = document.getElementById('tabBoxModernMove');
+  const tabRemove = document.getElementById('tabBoxModernRemove');
+  const panelMove = document.getElementById('panelBoxModernMove');
+  const panelRemove = document.getElementById('panelBoxModernRemove');
+  const btnMove = document.getElementById('btnBoxModernConfirmMove');
+  const btnRemove = document.getElementById('btnBoxModernConfirmRemove');
+
+  if (tabName === 'move') {
+    tabMove?.classList.add('active');
+    tabRemove?.classList.remove('active');
+    if (panelMove) panelMove.style.display = 'block';
+    if (panelRemove) panelRemove.style.display = 'none';
+    if (btnMove) btnMove.style.display = 'inline-flex';
+    if (btnRemove) btnRemove.style.display = 'none';
+  } else {
+    tabMove?.classList.remove('active');
+    tabRemove?.classList.add('active');
+    if (panelMove) panelMove.style.display = 'none';
+    if (panelRemove) panelRemove.style.display = 'block';
+    if (btnMove) btnMove.style.display = 'none';
+    if (btnRemove) btnRemove.style.display = 'inline-flex';
+  }
+}
+
+export function openModernActivationKeypad(targetBoxNumber, packData = null) {
+  const modal = document.getElementById('bookActivationKeypadModal');
+  if (!modal) return;
+
+  const defaultGame = SAMPLE_GAMES[0];
+  const pack = packData || {
+    packNumber: String(Math.floor(100000 + Math.random() * 900000)),
+    gameId: defaultGame.id,
+    gameName: defaultGame.name,
+    price: defaultGame.price,
+    packSize: defaultGame.packSize
+  };
+  currentModernActivationPack = pack;
+
+  const priceEl = document.getElementById('actKeypadPrice');
+  if (priceEl) priceEl.textContent = `$${pack.price || 1}`;
+  const nameEl = document.getElementById('actKeypadGameName');
+  if (nameEl) nameEl.textContent = cleanGameTitle(pack.gameName);
+  const packMetaEl = document.getElementById('actKeypadPackMeta');
+  if (packMetaEl) packMetaEl.textContent = `Game ${pack.gameId || '1401'} · Pack ${pack.packNumber}`;
+  const stockMetaEl = document.getElementById('actKeypadStockMeta');
+  if (stockMetaEl) stockMetaEl.textContent = `${pack.packSize || 100} tickets · in stock`;
+
+  const boxInput = document.getElementById('actKeypadBoxInput');
+  const chosenBox = targetBoxNumber || findFirstEmptyBox();
+  if (boxInput) {
+    boxInput.value = chosenBox;
+    boxInput.focus();
+  }
+
+  const showTarget = document.getElementById('actKeypadTargetBoxShow');
+  if (showTarget) showTarget.textContent = chosenBox;
+
+  updateModernKeypadEmptyStatus(chosenBox);
+  populateModernKeypadNearChips(chosenBox);
+
+  sfx.keypad();
+  modal.showModal();
+}
+
+export function updateModernKeypadEmptyStatus(boxNum) {
+  const msgEl = document.getElementById('actKeypadMsg');
+  const showTarget = document.getElementById('actKeypadTargetBoxShow');
+  if (showTarget) showTarget.textContent = boxNum || '...';
+  if (!msgEl) return;
+
+  const targetSlot = (state.slots || []).find(s => Number(s.boxNumber) === Number(boxNum));
+  if (!boxNum || isNaN(Number(boxNum))) {
+    msgEl.className = 'kmsg';
+    msgEl.textContent = '';
+  } else if (!targetSlot || targetSlot.status !== 'ACTIVE' || !targetSlot.packNumber) {
+    msgEl.className = 'kmsg ok';
+    msgEl.textContent = `✓ Box #${boxNum} is empty and ready`;
+  } else {
+    msgEl.className = 'kmsg err';
+    msgEl.textContent = `⚠ Box #${boxNum} currently holds ${cleanGameTitle(targetSlot.gameName)}`;
+  }
+}
+
+export function populateModernKeypadNearChips(currentBox) {
+  const chipsWrap = document.getElementById('actKeypadNearChips');
+  if (!chipsWrap) return;
+  chipsWrap.innerHTML = '';
+
+  const emptySlots = (state.slots || []).filter(s => s && (s.status !== 'ACTIVE' || !s.packNumber));
+  emptySlots.slice(0, 8).forEach(s => {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = `chip ${Number(s.boxNumber) === Number(currentBox) ? 'active' : ''}`;
+    chip.textContent = s.boxNumber;
+    chip.addEventListener('click', () => {
+      const boxInput = document.getElementById('actKeypadBoxInput');
+      if (boxInput) boxInput.value = s.boxNumber;
+      updateModernKeypadEmptyStatus(s.boxNumber);
+      populateModernKeypadNearChips(s.boxNumber);
+    });
+    chipsWrap.appendChild(chip);
+  });
+}
+
+export function openModernCloseShiftCheckModal(activeCount, activations, emptySlots, soldOutItems) {
+  const modal = document.getElementById('closeShiftCheckModal');
+  if (!modal) return;
+
+  const actsEl = document.getElementById('checkModalActs');
+  if (actsEl) actsEl.textContent = activations;
+  const emptyEl = document.getElementById('checkModalEmpty');
+  if (emptyEl) emptyEl.textContent = emptySlots;
+  const totalEl = document.getElementById('checkModalTotalSlots');
+  if (totalEl) totalEl.textContent = state.totalSlots || 65;
+  const soldOutCountEl = document.getElementById('checkModalSoldOutCount');
+  if (soldOutCountEl) soldOutCountEl.textContent = soldOutItems.length;
+
+  const listContainer = document.getElementById('checkModalSoldOutList');
+  if (listContainer) {
+    if (soldOutItems.length > 0) {
+      listContainer.innerHTML = soldOutItems.map(item => `
+        <div class="row">
+          <span class="boxn">${item.boxNumber}</span>
+          <span class="grow"><b>$${item.price || 1}</b> ${item.gameName}</span>
+          <span class="muted mono" style="font-size: 12px">SOLD OUT</span>
+        </div>
+      `).join('');
+    } else {
+      listContainer.innerHTML = '<div class="empty">Every active box was scanned — nothing sold out.</div>';
+    }
+  }
+
+  const warnBanner = document.getElementById('checkModalWarnBanner');
+  if (warnBanner) {
+    const unverifiedBoxes = (state.slots || []).filter(s => s && s.status === 'ACTIVE' && s.packNumber && !s.scannedInEndShift);
+    warnBanner.style.display = unverifiedBoxes.length > 0 ? 'flex' : 'none';
+  }
+
+  modal.showModal();
+}
+
+export function setupModernMockupDialogs() {
+  // 1. KPI List Modal Close Handlers
+  const kpiModal = document.getElementById('kpiListModal');
+  document.getElementById('closeKpiListModalBtn')?.addEventListener('click', () => kpiModal?.close());
+  document.getElementById('kpiListModalCloseBottomBtn')?.addEventListener('click', () => kpiModal?.close());
+  document.getElementById('kpiListModalScrim')?.addEventListener('click', (e) => {
+    if (e.target.id === 'kpiListModalScrim') kpiModal?.close();
+  });
+
+  // 2. Settlement Modern Modal Handlers
+  const settleModal = document.getElementById('settlementModernModal');
+  document.getElementById('closeSettleModernBtn')?.addEventListener('click', () => settleModal?.close());
+  document.getElementById('settlementModalScrim')?.addEventListener('click', (e) => {
+    if (e.target.id === 'settlementModalScrim') settleModal?.close();
+  });
+  document.getElementById('settleAllReportsBtn')?.addEventListener('click', () => {
+    settleModal?.close();
+    openHistoryModal('all');
+  });
+  document.getElementById('settleEndShiftActionBtn')?.addEventListener('click', () => {
+    settleModal?.close();
+    openEndShiftConfirmation();
+  });
+
+  // 3. Box Modern Details Handlers
+  const boxModal = document.getElementById('boxModernDetailsModal');
+  document.getElementById('closeBoxModernDetailsBtn')?.addEventListener('click', () => boxModal?.close());
+  document.getElementById('closeBoxModernDetailsBottomBtn')?.addEventListener('click', () => boxModal?.close());
+  document.getElementById('boxModernDetailsScrim')?.addEventListener('click', (e) => {
+    if (e.target.id === 'boxModernDetailsScrim') boxModal?.close();
+  });
+  document.getElementById('tabBoxModernMove')?.addEventListener('click', () => showModernBoxTab('move'));
+  document.getElementById('tabBoxModernRemove')?.addEventListener('click', () => showModernBoxTab('remove'));
+
+  document.getElementById('btnBoxModernConfirmMove')?.addEventListener('click', () => {
+    if (!currentModernBoxSlot || !currentModernChosenEmptyBox) return;
+    const sourceSlot = currentModernBoxSlot;
+    const targetBoxNum = currentModernChosenEmptyBox;
+    const targetSlot = state.slots.find(s => Number(s.boxNumber) === Number(targetBoxNum));
+    if (!targetSlot) return;
+
+    recordUndoAction({
+      type: 'SWITCH_BOX',
+      sourceBoxNumber: sourceSlot.boxNumber,
+      targetBoxNumber: targetBoxNum,
+      sourceSnapshot: { ...sourceSlot },
+      targetSnapshot: { ...targetSlot }
+    });
+
+    targetSlot.status = sourceSlot.status;
+    targetSlot.packNumber = sourceSlot.packNumber;
+    targetSlot.gameId = sourceSlot.gameId;
+    targetSlot.gameName = sourceSlot.gameName;
+    targetSlot.price = sourceSlot.price;
+    targetSlot.packSize = sourceSlot.packSize;
+    targetSlot.startTicket = sourceSlot.startTicket;
+    targetSlot.currentTicket = sourceSlot.currentTicket;
+    targetSlot.activatedThisShift = sourceSlot.activatedThisShift;
+    targetSlot.daysActive = sourceSlot.daysActive;
+    targetSlot.scannedInEndShift = sourceSlot.scannedInEndShift;
+
+    sourceSlot.status = 'EMPTY';
+    sourceSlot.packNumber = '';
+    sourceSlot.gameId = '';
+    sourceSlot.gameName = '';
+    sourceSlot.price = 0;
+    sourceSlot.packSize = 0;
+    sourceSlot.startTicket = 0;
+    sourceSlot.currentTicket = 0;
+    sourceSlot.activatedThisShift = false;
+    sourceSlot.daysActive = 0;
+    sourceSlot.scannedInEndShift = false;
+
+    saveState(state);
+    sfx.chime();
+    boxModal?.close();
+    renderHeaderAndMetrics();
+    renderDispenserRack();
+    renderSlotsRibbon();
+    showToast(`🔄 Moved Pack from Box #${sourceSlot.boxNumber} to Box #${targetBoxNum}`, 'success');
+  });
+
+  document.getElementById('btnBoxModernConfirmRemove')?.addEventListener('click', () => {
+    if (!currentModernBoxSlot) return;
+    const slotToClear = currentModernBoxSlot;
+    boxModal?.close();
+
+    recordUndoAction({
+      type: 'ADJUST_COUNT',
+      boxNumber: slotToClear.boxNumber,
+      prevTicket: slotToClear.currentTicket,
+      prevStatus: slotToClear.status
+    });
+
+    const finalPos = parseInt(document.getElementById('boxModernRmPos')?.value, 10);
+    if (!isNaN(finalPos) && finalPos > 0) {
+      slotToClear.currentTicket = finalPos;
+      recordSoldOutPack(slotToClear, finalPos);
+    }
+
+    slotToClear.currentTicket = 0;
+    slotToClear.status = 'EMPTY';
+    slotToClear.packNumber = '';
+    slotToClear.gameName = '';
+    slotToClear.activatedThisShift = false;
+
+    saveState(state);
+    sfx.alert();
+    renderHeaderAndMetrics();
+    renderDispenserRack();
+    renderSlotsRibbon();
+    showToast(`🗑️ Book removed from Box #${slotToClear.boxNumber}. Slot is now empty.`, 'warning');
+  });
+
+  // 4. Book Activation Keypad Modal Handlers
+  const actKeypadModal = document.getElementById('bookActivationKeypadModal');
+  const actKeypadBoxInput = document.getElementById('actKeypadBoxInput');
+  document.getElementById('closeActivationKeypadBtn')?.addEventListener('click', () => actKeypadModal?.close());
+  document.getElementById('activationKeypadScrim')?.addEventListener('click', (e) => {
+    if (e.target.id === 'activationKeypadScrim') actKeypadModal?.close();
+  });
+
+  document.getElementById('btnActKeypadArrowUp')?.addEventListener('click', () => {
+    sfx.keypad();
+    const curr = parseInt(actKeypadBoxInput?.value, 10) || 1;
+    const emptySlots = (state.slots || []).filter(s => s && (s.status !== 'ACTIVE' || !s.packNumber) && Number(s.boxNumber) > curr);
+    const nextBox = emptySlots.length > 0 ? emptySlots[0].boxNumber : curr + 1;
+    if (actKeypadBoxInput) actKeypadBoxInput.value = nextBox;
+    updateModernKeypadEmptyStatus(nextBox);
+    populateModernKeypadNearChips(nextBox);
+  });
+
+  document.getElementById('btnActKeypadArrowDown')?.addEventListener('click', () => {
+    sfx.keypad();
+    const curr = parseInt(actKeypadBoxInput?.value, 10) || 1;
+    const emptySlots = (state.slots || []).filter(s => s && (s.status !== 'ACTIVE' || !s.packNumber) && Number(s.boxNumber) < curr);
+    const prevBox = emptySlots.length > 0 ? emptySlots[emptySlots.length - 1].boxNumber : Math.max(1, curr - 1);
+    if (actKeypadBoxInput) actKeypadBoxInput.value = prevBox;
+    updateModernKeypadEmptyStatus(prevBox);
+    populateModernKeypadNearChips(prevBox);
+  });
+
+  actKeypadBoxInput?.addEventListener('input', () => {
+    const val = parseInt(actKeypadBoxInput.value, 10);
+    updateModernKeypadEmptyStatus(val);
+    populateModernKeypadNearChips(val);
+  });
+
+  document.querySelectorAll('.btn-kp-num').forEach(btn => {
+    btn.addEventListener('click', () => {
+      sfx.keypad();
+      const num = btn.getAttribute('data-key');
+      if (!actKeypadBoxInput) return;
+      const curr = String(actKeypadBoxInput.value || '');
+      actKeypadBoxInput.value = (curr === '0' || curr === '') ? num : curr + num;
+      updateModernKeypadEmptyStatus(actKeypadBoxInput.value);
+      populateModernKeypadNearChips(actKeypadBoxInput.value);
+    });
+  });
+
+  document.getElementById('btnKpClear')?.addEventListener('click', () => {
+    sfx.keypad();
+    if (actKeypadBoxInput) actKeypadBoxInput.value = '';
+    updateModernKeypadEmptyStatus('');
+  });
+
+  document.getElementById('btnKpBack')?.addEventListener('click', () => {
+    sfx.keypad();
+    if (actKeypadBoxInput && actKeypadBoxInput.value.length > 0) {
+      actKeypadBoxInput.value = actKeypadBoxInput.value.slice(0, -1);
+      updateModernKeypadEmptyStatus(actKeypadBoxInput.value);
+    }
+  });
+
+  function executeModernKeypadActivation() {
+    if (!actKeypadBoxInput) return;
+    const boxNum = parseInt(actKeypadBoxInput.value, 10);
+    if (!boxNum || boxNum < 1 || boxNum > 100) {
+      showToast('Please enter a valid box number (1-100)', 'error');
+      return;
+    }
+    const pack = currentModernActivationPack || SAMPLE_GAMES[0];
+    keypadBoxInput.value = boxNum;
+    pendingActivationPack = pack;
+    commitBoxActivation();
+    actKeypadModal?.close();
+  }
+
+  document.getElementById('btnKpEnter')?.addEventListener('click', executeModernKeypadActivation);
+  document.getElementById('btnActKeypadConfirmAdd')?.addEventListener('click', executeModernKeypadActivation);
+  document.getElementById('btnActKeypadNotInBox')?.addEventListener('click', () => {
+    sfx.chime();
+    actKeypadModal?.close();
+    showToast(`Pack #${currentModernActivationPack?.packNumber || '0000'} stored in back-office inventory.`, 'info');
+  });
+
+  // 5. Close Shift Check Modal Handlers
+  const checkModal = document.getElementById('closeShiftCheckModal');
+  document.getElementById('closeCheckModalBtn')?.addEventListener('click', () => checkModal?.close());
+  document.getElementById('btnCancelCheckClose')?.addEventListener('click', () => checkModal?.close());
+  document.getElementById('closeShiftCheckScrim')?.addEventListener('click', (e) => {
+    if (e.target.id === 'closeShiftCheckScrim') checkModal?.close();
+  });
+
+  document.getElementById('btnConfirmCheckClose')?.addEventListener('click', () => {
+    const cashes = parseFloat(document.getElementById('terminalInputCashes')?.value) || 0;
+    const online = parseFloat(document.getElementById('terminalInputOnline')?.value) || 0;
+    const oc = parseFloat(document.getElementById('terminalInputOc')?.value) || 0;
+    if (cashes) state.cashes = cashes;
+    if (online) state.onlineSales = online;
+    if (oc) state.onlineCashes = oc;
+    checkModal?.close();
+    confirmEndShift();
+  });
+}
+
 let _eventListenersInitialized = false;
 
 // Initialize System
@@ -770,6 +1381,7 @@ function initPOS() {
     setupEventListeners();
     setupKeypad();
     setupHardwareScannerListener();
+    setupModernMockupDialogs();
     _eventListenersInitialized = true;
   }
 }
@@ -1505,10 +2117,9 @@ function handleBoxCardClick(slot) {
     }
   } else {
     if (isBoxActive) {
-      // Open Box Adjust Modal so user can view details or adjust count or set to 0 (make empty)
-      openBoxAdjustModal(slot);
+      openModernBoxDetails(slot);
     } else {
-      openActivationForBox(slot.boxNumber);
+      openModernActivationKeypad(slot.boxNumber);
     }
   }
 }
@@ -3579,7 +4190,12 @@ function openActivationForBox(boxNumber, preselectedPack = null) {
 
 
   sfx.keypad();
-  activationModal.showModal();
+  const modernKeypad = document.getElementById('bookActivationKeypadModal');
+  if (modernKeypad) {
+    openModernActivationKeypad(boxNumber || findFirstEmptyBox(), pack);
+  } else {
+    activationModal.showModal();
+  }
 }
 
 function findFirstEmptyBox() {
@@ -4244,8 +4860,13 @@ function openEndShiftConfirmation() {
   sfx.keypad();
   const toastEndShift = document.getElementById('endShiftScanningToast');
   if (toastEndShift) toastEndShift.style.setProperty('display', 'none', 'important');
-  const modal = document.getElementById('endShiftConfirmModal');
-  if (modal) modal.showModal();
+  const checkModal = document.getElementById('closeShiftCheckModal');
+  if (checkModal) {
+    openModernCloseShiftCheckModal(activeCount, activations, emptySlots, soldOutItems);
+  } else {
+    const modal = document.getElementById('endShiftConfirmModal');
+    if (modal) modal.showModal();
+  }
 }
 
 function confirmEndShift() {
@@ -8818,41 +9439,30 @@ function setupEventListeners() {
   inventoryDoneBtn?.addEventListener('click', () => inventoryModal.close());
   setupInventoryModalLogic();
 
-  // Summary Metric Tabs Click Handlers
+  // Summary Metric Tabs Click Handlers (02 Mockup Spec)
   document.getElementById('tabSettlement')?.addEventListener('click', () => {
     sfx.keypad();
-    openShiftReportModal();
+    openModernSettlementModal();
   });
 
   document.getElementById('tabToday')?.addEventListener('click', () => {
     sfx.keypad();
-    openHistoryModal('today');
-    showToast(`📅 Today's Sales: ${metricToday?.textContent || 0} tickets sold`, 'info');
+    openModernKpiListModal('today');
   });
 
   document.getElementById('tabThisWeek')?.addEventListener('click', () => {
     sfx.keypad();
-    openHistoryModal('week');
-    showToast(`📅 This Week's Sales: ${metricThisWeek?.textContent || 0} tickets sold`, 'info');
+    openModernKpiListModal('week');
   });
 
   document.getElementById('tabThisMonth')?.addEventListener('click', () => {
     sfx.keypad();
-    openHistoryModal('month');
-    showToast(`📅 This Month's Sales: ${metricThisMonth?.textContent || 0} tickets sold`, 'info');
+    openModernKpiListModal('month');
   });
 
   document.getElementById('tabInactive')?.addEventListener('click', () => {
     sfx.keypad();
-    const firstEmpty = document.querySelector('.ribbon-cell.empty-slot');
-    if (firstEmpty) {
-      firstEmpty.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-      firstEmpty.classList.add('pulse-highlight');
-      setTimeout(() => firstEmpty.classList.remove('pulse-highlight'), 1800);
-      showToast(`📦 ${metricInactive?.textContent || 0} Inactive / Empty dispenser slots in rack. Scan a pack barcode to activate a ticket.`, 'info');
-    } else {
-      showToast('All dispenser boxes are currently active!', 'success');
-    }
+    openModernKpiListModal('inactive');
   });
 
 
