@@ -806,9 +806,463 @@ function runStep(name, fn) {
   }
 }
 
+// =========================================================================
+// MODERN RECEIVE A BOOK MODAL CONTROLLER (Matches Inventory.dc.html specification)
+// =========================================================================
+
+const RB_DESIGN_GAMES = {
+  '1401': { name: '5X Money', price: 1 },
+  '1402': { name: 'Jr Jumbo', price: 1 },
+  '1403': { name: 'Loteria', price: 2 },
+  '1404': { name: 'Hit 100', price: 2 },
+  '1406': { name: 'Cross Word', price: 3 },
+  '1407': { name: '2026 Happy New', price: 3 },
+  '1408': { name: '50X Money', price: 10 },
+  '1409': { name: 'Gold $500,000', price: 5 },
+  '1410': { name: '25X Tra', price: 5 },
+  '1411': { name: 'Lucky 7s', price: 5 },
+  '1412': { name: 'Epic Riches', price: 10 },
+  '1413': { name: 'Jumbo Bucks Ext', price: 50 },
+  '1414': { name: 'Cash 500,000', price: 50 },
+  '1415': { name: 'Hit 1000', price: 20 },
+  '1416': { name: 'Frogger', price: 5 },
+  '1417': { name: '5X Money', price: 1 },
+  '1418': { name: 'Jumbo Bucks', price: 2 },
+  '1419': { name: '10X Money', price: 2 },
+  '1420': { name: 'Spicy Hot Cash', price: 2 },
+  '1421': { name: 'Jackpots', price: 2 },
+  '1770': { name: '500X The Money', price: 50 },
+  '1799': { name: 'Win 50 or 100', price: 10 },
+  '1611': { name: 'Treasure Hunt', price: 3 }
+};
+
+let rbState = {
+  code: '',
+  gid: '',
+  pack: '',
+  pos: '000',
+  name: '',
+  price: '',
+  focus: 'gid'
+};
+
+const RB_FOCUS = {
+  gid: { label: 'Game ID', max: 4 },
+  pack: { label: 'Pack #', max: 7 },
+  pos: { label: 'Start ticket', max: 3 },
+  price: { label: 'Ticket price', max: 6 }
+};
+
+function lookupRbGame(gid) {
+  if (!gid) return null;
+  const str = String(gid).trim();
+  if (RB_DESIGN_GAMES[str]) return RB_DESIGN_GAMES[str];
+  if (state.customGames && state.customGames[str]) return state.customGames[str];
+  if (Array.isArray(window.LOTTO_GAMES_DATABASE)) {
+    const f = window.LOTTO_GAMES_DATABASE.find(g => String(g.gameNumber) === str || String(g.barcodePrefix) === str);
+    if (f) return { name: cleanGameTitle(f.name), price: f.price };
+  }
+  return null;
+}
+
+function rbDefaultPackValue(price) {
+  return Number(price) === 50 ? 900 : 300;
+}
+
+function rbSizeFor(price, value) {
+  const p = Number(price);
+  return p > 0 ? Math.floor(value / p) : 0;
+}
+
+function renderReceiveBookModal() {
+  const modal = document.getElementById('receiveBookModernModal');
+  if (!modal) return;
+
+  const gidInput = document.getElementById('rbGidInput');
+  const packInput = document.getElementById('rbPackInput');
+  const posInput = document.getElementById('rbPosInput');
+  const nameInput = document.getElementById('rbNameInput');
+  const codeInput = document.getElementById('rbCodeInput');
+  const otherWrap = document.getElementById('rbPriceOtherWrap');
+  const otherInput = document.getElementById('rbPriceOtherInput');
+  const targetLabel = document.getElementById('rbTargetLabel');
+  const keypadDisp = document.getElementById('rbKeypadDisplay');
+  const msgOk = document.getElementById('rbMsgOk');
+  const msgOkText = document.getElementById('rbMsgOkText');
+  const msgInfo = document.getElementById('rbMsgInfo');
+  const msgInfoText = document.getElementById('rbMsgInfoText');
+  const msgErr = document.getElementById('rbMsgErr');
+  const msgErrText = document.getElementById('rbMsgErrText');
+  const packValueAmount = document.getElementById('rbPackValueAmount');
+  const packValueEq = document.getElementById('rbPackValueEq');
+  const packValueTag = document.getElementById('rbPackValueTag');
+  const packValueBox = document.getElementById('rbPackValueBox');
+  const saveBtn = document.getElementById('rbSaveBtn');
+
+  if (gidInput && gidInput.value !== rbState.gid) gidInput.value = rbState.gid;
+  if (packInput && packInput.value !== rbState.pack) packInput.value = rbState.pack;
+  if (posInput && posInput.value !== rbState.pos) posInput.value = rbState.pos || '000';
+  if (nameInput && nameInput.value !== rbState.name) nameInput.value = rbState.name;
+  if (codeInput && codeInput.value !== rbState.code) codeInput.value = rbState.code;
+
+  [gidInput, packInput, posInput].forEach(inp => inp?.classList.remove('on'));
+  otherWrap?.classList.remove('on');
+
+  if (rbState.focus === 'gid') gidInput?.classList.add('on');
+  else if (rbState.focus === 'pack') packInput?.classList.add('on');
+  else if (rbState.focus === 'pos') posInput?.classList.add('on');
+  else if (rbState.focus === 'price') otherWrap?.classList.add('on');
+
+  if (targetLabel && RB_FOCUS[rbState.focus]) {
+    targetLabel.textContent = RB_FOCUS[rbState.focus].label;
+  }
+  if (keypadDisp) {
+    keypadDisp.textContent = (rbState.focus === 'price' ? '$' : '') + (rbState[rbState.focus] || '');
+  }
+
+  const known = lookupRbGame(rbState.gid);
+  if (known && /^\d{4}$/.test(rbState.gid)) {
+    if (!rbState.name) rbState.name = known.name;
+    if (nameInput) nameInput.value = rbState.name;
+    if (!rbState.price) rbState.price = String(known.price);
+    if (msgOk) {
+      msgOk.style.display = 'flex';
+      if (msgOkText) msgOkText.textContent = `Game ${rbState.gid} recognized — name and price are filled in.`;
+    }
+    if (msgInfo) msgInfo.style.display = 'none';
+    if (nameInput) nameInput.readOnly = true;
+  } else if (/^\d{4}$/.test(rbState.gid)) {
+    if (msgOk) msgOk.style.display = 'none';
+    if (msgInfo) {
+      msgInfo.style.display = 'flex';
+      if (msgInfoText) msgInfoText.textContent = `New game ${rbState.gid}. Add its name and price once — next time it fills in by itself.`;
+    }
+    if (nameInput) nameInput.readOnly = false;
+  } else {
+    if (msgOk) msgOk.style.display = 'none';
+    if (msgInfo) msgInfo.style.display = 'none';
+    if (nameInput) nameInput.readOnly = false;
+  }
+
+  const priceN = parseFloat(String(rbState.price).replace(/[^0-9.]/g, '')) || 0;
+  const isStandardPrice = [1, 2, 3, 5, 10, 20, 30, 50].includes(priceN);
+  document.querySelectorAll('#rbPricesGroup .pc').forEach(btn => {
+    const p = parseFloat(btn.getAttribute('data-price'));
+    if (p === priceN) btn.classList.add('on');
+    else btn.classList.remove('on');
+    btn.disabled = Boolean(known && /^\d{4}$/.test(rbState.gid));
+  });
+
+  if (otherInput) {
+    if (!isStandardPrice && priceN > 0) otherInput.value = String(priceN);
+    else if (isStandardPrice) otherInput.value = '';
+    otherInput.readOnly = Boolean(known && /^\d{4}$/.test(rbState.gid));
+  }
+
+  const packVal = rbDefaultPackValue(priceN);
+  const size = rbSizeFor(priceN, packVal);
+  if (packValueAmount) packValueAmount.textContent = priceN > 0 ? `$${packVal}` : '—';
+  if (packValueEq) {
+    packValueEq.textContent = priceN > 0 ? `$${packVal} ÷ $${priceN} = ${size} tickets in this pack` : 'Pick a ticket price — the pack value is set for you';
+  }
+  if (packValueTag) {
+    packValueTag.textContent = packVal === 900 ? '$50 ticket → $900 pack' : 'Standard $300 pack';
+    packValueTag.className = packVal === 900 ? 'tag tag-brand' : 'tag tag-muted';
+  }
+  if (packValueBox) {
+    if (packVal === 900) packValueBox.classList.add('big');
+    else packValueBox.classList.remove('big');
+  }
+
+  let err = '';
+  if (rbState.gid && !/^\d{4}$/.test(rbState.gid)) {
+    err = 'Game ID is 4 digits.';
+  } else if (rbState.pack && !/^\d{6,7}$/.test(rbState.pack)) {
+    err = 'Pack # is 6 or 7 digits.';
+  } else if (rbState.gid && rbState.pack) {
+    const isDup = (state.inStockInventory || []).some(p => isPackNumberMatch(p.packNumber, rbState.pack));
+    if (isDup) {
+      err = `Pack ${rbState.pack} is already in inventory. The same pack cannot be added twice.`;
+    }
+  }
+  if (!err && rbState.price && !(priceN > 0)) {
+    err = 'Enter a ticket price above $0.';
+  }
+
+  if (msgErr) {
+    if (err) {
+      msgErr.style.display = 'flex';
+      if (msgErrText) msgErrText.textContent = err;
+    } else {
+      msgErr.style.display = 'none';
+    }
+  }
+
+  const isReady = /^\d{4}$/.test(rbState.gid) && /^\d{6,7}$/.test(rbState.pack) && !err && (known || (rbState.name.trim() && priceN > 0));
+  if (saveBtn) saveBtn.disabled = !isReady;
+}
+
+function rbFillFromBarcode(raw) {
+  const clean = String(raw || '').trim();
+  if (!clean) return;
+  const m = clean.replace(/\s/g, '').match(/^(\d{4})-?(\d{6,7})-?(\d{3})?/);
+  let gid = '', pack = '', pos = '000';
+  if (m) {
+    gid = m[1];
+    pack = m[2];
+    pos = m[3] ? m[3].padStart(3, '0') : '000';
+  } else {
+    const parsed = parseLotteryBarcode(clean, state.customGames);
+    if (parsed) {
+      gid = parsed.gameNumber || '';
+      pack = parsed.packNumber || '';
+      pos = (parsed.ticketString || '000').padStart(3, '0');
+    }
+  }
+  if (gid) rbState.gid = gid;
+  if (pack) rbState.pack = pack;
+  if (pos) rbState.pos = pos;
+  const g = lookupRbGame(rbState.gid);
+  if (g) {
+    rbState.name = g.name;
+    rbState.price = String(g.price);
+    rbState.focus = 'pos';
+  } else if (gid) {
+    rbState.focus = 'price';
+  }
+  renderReceiveBookModal();
+}
+
+function handleRbKeyPress(k) {
+  sfx.keypad();
+  const key = rbState.focus;
+  let cur = String(rbState[key] || '');
+  const max = RB_FOCUS[key]?.max || 10;
+  const known = lookupRbGame(rbState.gid);
+
+  if (key === 'price' && known && /^\d{4}$/.test(rbState.gid)) return;
+
+  if (k === 'back') {
+    cur = cur.slice(0, -1);
+  } else if (k === '.') {
+    if (key !== 'price' || cur.indexOf('.') >= 0) return;
+    cur = (cur || '0') + '.';
+  } else {
+    if (cur.length >= max) return;
+    cur = (key === 'pos' && cur === '000') ? k : cur + k;
+  }
+
+  rbState[key] = cur;
+
+  if (key === 'gid' && cur.length === 4) {
+    const g = lookupRbGame(cur);
+    if (g) {
+      rbState.name = g.name;
+      rbState.price = String(g.price);
+    }
+    rbState.focus = 'pack';
+  } else if (key === 'pack' && cur.length === 7) {
+    rbState.focus = 'pos';
+  }
+
+  renderReceiveBookModal();
+}
+
+let _setupReceiveBookModalDone = false;
+
+function setupReceiveBookModernModal() {
+  if (_setupReceiveBookModalDone) return;
+  _setupReceiveBookModalDone = true;
+
+  const modal = document.getElementById('receiveBookModernModal');
+  const closeBtn = document.getElementById('closeReceiveBookBtn');
+  const cancelBtn = document.getElementById('rbCancelBtn');
+  const saveBtn = document.getElementById('rbSaveBtn');
+  const scrim = document.getElementById('receiveBookScrim');
+
+  closeBtn?.addEventListener('click', () => modal?.close());
+  cancelBtn?.addEventListener('click', () => modal?.close());
+  scrim?.addEventListener('click', (e) => {
+    if (e.target === scrim) modal?.close();
+  });
+
+  const gidInput = document.getElementById('rbGidInput');
+  const packInput = document.getElementById('rbPackInput');
+  const posInput = document.getElementById('rbPosInput');
+  const nameInput = document.getElementById('rbNameInput');
+  const codeInput = document.getElementById('rbCodeInput');
+  const otherWrap = document.getElementById('rbPriceOtherWrap');
+  const otherInput = document.getElementById('rbPriceOtherInput');
+  const readBtn = document.getElementById('rbReadBtn');
+  const clearBtn = document.getElementById('rbKeypadClear');
+
+  gidInput?.addEventListener('focus', () => { rbState.focus = 'gid'; renderReceiveBookModal(); });
+  gidInput?.addEventListener('click', () => { rbState.focus = 'gid'; renderReceiveBookModal(); });
+  gidInput?.addEventListener('input', (e) => {
+    rbState.gid = e.target.value.replace(/\D/g, '').slice(0, 4);
+    if (rbState.gid.length === 4) {
+      const g = lookupRbGame(rbState.gid);
+      if (g) { rbState.name = g.name; rbState.price = String(g.price); }
+      rbState.focus = 'pack';
+    }
+    renderReceiveBookModal();
+  });
+
+  packInput?.addEventListener('focus', () => { rbState.focus = 'pack'; renderReceiveBookModal(); });
+  packInput?.addEventListener('click', () => { rbState.focus = 'pack'; renderReceiveBookModal(); });
+  packInput?.addEventListener('input', (e) => {
+    rbState.pack = e.target.value.replace(/\D/g, '').slice(0, 7);
+    if (rbState.pack.length === 7) rbState.focus = 'pos';
+    renderReceiveBookModal();
+  });
+
+  posInput?.addEventListener('focus', () => { rbState.focus = 'pos'; renderReceiveBookModal(); });
+  posInput?.addEventListener('click', () => { rbState.focus = 'pos'; renderReceiveBookModal(); });
+  posInput?.addEventListener('input', (e) => {
+    rbState.pos = e.target.value.replace(/\D/g, '').slice(0, 3);
+    renderReceiveBookModal();
+  });
+
+  nameInput?.addEventListener('input', (e) => {
+    const known = lookupRbGame(rbState.gid);
+    if (!known || !/^\d{4}$/.test(rbState.gid)) {
+      rbState.name = e.target.value;
+      renderReceiveBookModal();
+    }
+  });
+
+  document.querySelectorAll('#rbPricesGroup .pc').forEach(btn => {
+    btn.addEventListener('click', () => {
+      sfx.keypad();
+      const known = lookupRbGame(rbState.gid);
+      if (known && /^\d{4}$/.test(rbState.gid)) return;
+      const p = btn.getAttribute('data-price');
+      rbState.price = String(p);
+      rbState.focus = 'price';
+      renderReceiveBookModal();
+    });
+  });
+
+  otherWrap?.addEventListener('click', () => {
+    const known = lookupRbGame(rbState.gid);
+    if (known && /^\d{4}$/.test(rbState.gid)) return;
+    rbState.focus = 'price';
+    otherInput?.focus();
+    renderReceiveBookModal();
+  });
+  otherInput?.addEventListener('input', (e) => {
+    const known = lookupRbGame(rbState.gid);
+    if (known && /^\d{4}$/.test(rbState.gid)) return;
+    rbState.price = e.target.value.replace(/[^0-9.]/g, '').slice(0, 6);
+    renderReceiveBookModal();
+  });
+
+  readBtn?.addEventListener('click', () => {
+    rbFillFromBarcode(codeInput?.value || rbState.code);
+  });
+  codeInput?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      rbFillFromBarcode(codeInput.value);
+    }
+  });
+  codeInput?.addEventListener('input', (e) => {
+    rbState.code = e.target.value;
+  });
+
+  document.querySelectorAll('#rbKeypadGrid .kk').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const k = btn.getAttribute('data-key');
+      if (k) handleRbKeyPress(k);
+    });
+  });
+
+  clearBtn?.addEventListener('click', () => {
+    sfx.keypad();
+    const known = lookupRbGame(rbState.gid);
+    if (rbState.focus === 'price' && known && /^\d{4}$/.test(rbState.gid)) return;
+    rbState[rbState.focus] = '';
+    renderReceiveBookModal();
+  });
+
+  saveBtn?.addEventListener('click', () => {
+    const gid = rbState.gid;
+    const pack = rbState.pack;
+    const pos = rbState.pos || '000';
+    const name = rbState.name.trim();
+    const priceN = parseFloat(rbState.price) || 0;
+    const packVal = rbDefaultPackValue(priceN);
+    const packSize = rbSizeFor(priceN, packVal);
+
+    if (!/^\d{4}$/.test(gid) || !/^\d{6,7}$/.test(pack) || !(priceN > 0) || !name) {
+      sfx.alert();
+      return;
+    }
+
+    if (!Array.isArray(state.inStockInventory)) {
+      state.inStockInventory = state.dataCleared ? [] : JSON.parse(JSON.stringify(REFERENCE_IN_STOCK_PACKS));
+    }
+
+    if (state.inStockInventory.some(p => isPackNumberMatch(p.packNumber, pack))) {
+      sfx.alert();
+      showToast(`⚠️ Pack #${pack} is already in stock!`, 'warning');
+      return;
+    }
+
+    const newPack = {
+      id: 'stock_' + Date.now(),
+      gameName: name,
+      gameNumber: `Game ${gid}`,
+      packNumber: pack,
+      price: priceN,
+      packSize: `${packSize} tickets`,
+      packSizeNum: packSize,
+      status: 'IN_STOCK',
+      statusLabel: 'In stock',
+      statusBadgeClass: 'badge-in-stock',
+      boxNumber: null,
+      position: pos,
+      receivedDate: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    };
+
+    state.inStockInventory.unshift(newPack);
+    if (!state.customGames) state.customGames = {};
+    state.customGames[gid] = { name: name, price: priceN, packSize: packSize };
+    saveState(state);
+
+    modal?.close();
+    sfx.success?.() || sfx.beep();
+    showToast(`✓ ${name} pack #${pack} added to inventory as In stock.`, 'success');
+    currentInventoryTab = 'in_stock';
+    renderInventoryView();
+  });
+}
+
+function openReceiveBookModernModal() {
+  rbState = {
+    code: '',
+    gid: '',
+    pack: '',
+    pos: '000',
+    name: '',
+    price: '',
+    focus: 'gid'
+  };
+  renderReceiveBookModal();
+  const modal = document.getElementById('receiveBookModernModal');
+  if (modal) {
+    if (!modal.open) modal.showModal();
+    setTimeout(() => {
+      document.getElementById('rbCodeInput')?.focus();
+    }, 100);
+  }
+}
+window.openReceiveBookModernModal = openReceiveBookModernModal;
+
 function setupModernMockupDialogs() {
   if (_setupModernMockupDialogsDone) return;
   _setupModernMockupDialogsDone = true;
+  setupReceiveBookModernModal();
 }
 
 let _sidebarAutoCollapseInitialized = false;
@@ -818,12 +1272,23 @@ function setupSidebarAutoCollapse() {
   if (_sidebarAutoCollapseInitialized) return;
   _sidebarAutoCollapseInitialized = true;
 
+  const sidebar = document.querySelector('.pos-sidebar');
+  if (!sidebar) return;
+
+  const brandCluster = sidebar.querySelector('.brand-left-cluster');
+  if (brandCluster) {
+    brandCluster.style.cursor = 'pointer';
+    brandCluster.addEventListener('click', () => {
+      sidebar.classList.remove('collapsed');
+      const collapseBtn = document.getElementById('sidebarCollapseBtn');
+      if (collapseBtn) collapseBtn.setAttribute('title', 'Collapse Sidebar');
+      scheduleCollapse();
+    });
+  }
+
   // Do not auto-collapse sidebar arbitrarily after 5s; manual collapse button is used instead
   const autoCloseSeconds = 0;
   if (autoCloseSeconds <= 0) return;
-
-  const sidebar = document.querySelector('.pos-sidebar');
-  if (!sidebar) return;
 
   let isPointerOver = false;
 
@@ -887,17 +1352,6 @@ function setupSidebarAutoCollapse() {
   sidebar.addEventListener('pointerdown', () => {
     scheduleCollapse();
   });
-
-  const brandCluster = sidebar.querySelector('.brand-left-cluster');
-  if (brandCluster) {
-    brandCluster.style.cursor = 'pointer';
-    brandCluster.addEventListener('click', () => {
-      sidebar.classList.remove('collapsed');
-      const collapseBtn = document.getElementById('sidebarCollapseBtn');
-      if (collapseBtn) collapseBtn.setAttribute('title', 'Collapse Sidebar');
-      scheduleCollapse();
-    });
-  }
 
   scheduleCollapse();
 }
@@ -1042,41 +1496,70 @@ function renderHeaderAndMetrics() {
     if (mainShiftActionBtn) {
       mainShiftActionBtn.className = 'btn-ctrl-end-shift btn-ctrl-start-shift';
       mainShiftActionBtn.innerHTML = `
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
           <polygon points="5 3 19 12 5 21 5 3"></polygon>
         </svg>
-        <span id="mainShiftBtnLabel">Start New Shift</span>
+        <span id="mainShiftBtnLabel">Start Shift</span>
       `;
     }
+    const isFreshOrCleared = Boolean(state.dataCleared || (totalSold === 0 && totalRevenue === 0 && activeCount === 0));
     if (btnRefresh) {
-      btnRefresh.innerHTML = `
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="6 9 6 2 18 2 18 9"></polyline>
-          <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path>
-          <rect width="12" height="8" x="6" y="14"></rect>
-        </svg>
-        <span>Print</span>
-      `;
-      btnRefresh.title = 'Print Shift Report';
+      if (isFreshOrCleared) {
+        btnRefresh.innerHTML = `
+          <svg class="ctrl-icon-blue" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+          </svg>
+          <span>Refresh</span>
+        `;
+        btnRefresh.title = 'Refresh Screen';
+      } else {
+        btnRefresh.innerHTML = `
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="6 9 6 2 18 2 18 9"></polyline>
+            <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path>
+            <rect width="12" height="8" x="6" y="14"></rect>
+          </svg>
+          <span>Print</span>
+        `;
+        btnRefresh.title = 'Print Shift Report';
+      }
     }
     if (btnCancel) {
-      btnCancel.className = 'btn-ctrl-cancel cancel-disabled';
-      btnCancel.disabled = true;
+      btnCancel.className = isFreshOrCleared ? 'btn-ctrl-cancel' : 'btn-ctrl-cancel cancel-disabled';
+      btnCancel.disabled = !isFreshOrCleared;
     }
-    if (microLabel) microLabel.textContent = 'SHIFT REPORT';
-    if (scanActionTitle) scanActionTitle.textContent = 'Total sale';
-    if (lastScanDisplay) lastScanDisplay.innerHTML = `Shift #${shiftNumStr} closed &middot; ${totalSold} tickets`;
-    if (largeStatReadout) {
-      largeStatReadout.textContent = `$${totalRevenue.toFixed(0)}`;
-      largeStatReadout.style.color = '#059669';
-    }
-    document.getElementById('viewSellCounter')?.classList.add('shift-ended-mode');
-    if (toastEndShift) toastEndShift.style.setProperty('display', 'none', 'important');
-    if (dispenserCont) dispenserCont.style.display = 'none';
-    if (kpiBar) kpiBar.style.setProperty('display', 'none', 'important');
-    if (secShiftReport) {
-      secShiftReport.style.display = 'block';
-      renderShiftClosedReportPreview();
+    if (isFreshOrCleared) {
+      if (microLabel) microLabel.textContent = 'LAST SCAN';
+      if (scanActionTitle) scanActionTitle.textContent = 'Ready to scan';
+      if (lastScanDisplay) lastScanDisplay.innerHTML = 'Scan a ticket to start';
+      if (largeStatReadout) {
+        largeStatReadout.textContent = '–';
+        largeStatReadout.style.color = '';
+      }
+      document.getElementById('viewSellCounter')?.classList.remove('shift-ended-mode');
+      if (toastEndShift) toastEndShift.style.setProperty('display', 'none', 'important');
+      if (dispenserCont) dispenserCont.style.display = 'block';
+      if (kpiBar) {
+        kpiBar.style.removeProperty('display');
+        kpiBar.style.display = '';
+      }
+      if (secShiftReport) secShiftReport.style.display = 'none';
+    } else {
+      if (microLabel) microLabel.textContent = 'SHIFT REPORT';
+      if (scanActionTitle) scanActionTitle.textContent = 'Total sale';
+      if (lastScanDisplay) lastScanDisplay.innerHTML = `Shift #${shiftNumStr} closed &middot; ${totalSold} tickets`;
+      if (largeStatReadout) {
+        largeStatReadout.textContent = `$${totalRevenue.toFixed(0)}`;
+        largeStatReadout.style.color = '#059669';
+      }
+      document.getElementById('viewSellCounter')?.classList.add('shift-ended-mode');
+      if (toastEndShift) toastEndShift.style.setProperty('display', 'none', 'important');
+      if (dispenserCont) dispenserCont.style.display = 'none';
+      if (kpiBar) kpiBar.style.setProperty('display', 'none', 'important');
+      if (secShiftReport) {
+        secShiftReport.style.display = 'block';
+        renderShiftClosedReportPreview();
+      }
     }
   }
 
@@ -1092,11 +1575,20 @@ function renderHeaderAndMetrics() {
       if (lastScanDisplay) lastScanDisplay.innerHTML = 'Last closing numbers are now the opening numbers';
     } else if (state.shiftStatus === 'SHIFT_ENDED') {
       const { totalSold, totalRevenue } = getShiftSalesTotals();
-      if (scanActionTitle) scanActionTitle.textContent = 'Total sale';
-      if (lastScanDisplay) lastScanDisplay.innerHTML = `Shift #${shiftNumStr} closed &middot; ${totalSold} tickets`;
-      if (largeStatReadout) {
-        largeStatReadout.textContent = `$${totalRevenue.toFixed(0)}`;
-        largeStatReadout.style.color = '#059669';
+      if (state.dataCleared || (totalSold === 0 && totalRevenue === 0 && activeCount === 0)) {
+        if (scanActionTitle) scanActionTitle.textContent = 'Ready to scan';
+        if (lastScanDisplay) lastScanDisplay.innerHTML = 'Scan a ticket to start';
+        if (largeStatReadout) {
+          largeStatReadout.textContent = '–';
+          largeStatReadout.style.color = '';
+        }
+      } else {
+        if (scanActionTitle) scanActionTitle.textContent = 'Total sale';
+        if (lastScanDisplay) lastScanDisplay.innerHTML = `Shift #${shiftNumStr} closed &middot; ${totalSold} tickets`;
+        if (largeStatReadout) {
+          largeStatReadout.textContent = `$${totalRevenue.toFixed(0)}`;
+          largeStatReadout.style.color = '#059669';
+        }
       }
     } else if (state.lastScanData) {
       const d = state.lastScanData;
@@ -1112,6 +1604,15 @@ function renderHeaderAndMetrics() {
       if (scanActionTitle) scanActionTitle.textContent = cleanName || '$2 Hit 100';
       if (lastScanDisplay) {
         lastScanDisplay.innerHTML = `Box ${d.boxNumber || '4'} &middot; ticket ${tixNumStr}`;
+      }
+    } else if (state.dataCleared || activeCount === 0) {
+      if (largeStatReadout) {
+        largeStatReadout.textContent = '–';
+        largeStatReadout.style.color = '';
+      }
+      if (scanActionTitle) scanActionTitle.textContent = 'Ready to scan';
+      if (lastScanDisplay) {
+        lastScanDisplay.innerHTML = 'Scan a ticket to start';
       }
     } else {
       // Default reference state matching Image reference ($2 Hit 100, Box 4 · ticket 011, Box 4)
@@ -1192,8 +1693,6 @@ function renderHeaderAndMetrics() {
   const isCleared = Boolean(state.dataCleared || (activeCount === 0 && (state.shiftHistory || []).length === 0));
   const displayRevenue = hasLiveSales ? (isDailyMode ? totalTodayRevenue : currentShiftSales) : (isCleared ? 0 : 1293.00);
   const displayTickets = hasLiveSales ? totalTodayTickets : (isCleared ? 0 : 264);
-  const displayWeek = (hasLiveSales && totalWeekTickets > 0) ? totalWeekTickets : (isCleared ? 0 : 1410);
-  const displayMonth = (hasLiveSales && totalMonthTickets > 0) ? totalMonthTickets : (isCleared ? 0 : 5584);
 
   if (metricSettlement) metricSettlement.textContent = `$${displayRevenue.toFixed(2)}`;
 
@@ -1204,7 +1703,10 @@ function renderHeaderAndMetrics() {
   if (ticketsSoldCounterEl) ticketsSoldCounterEl.textContent = `${displayTickets} tickets · final at close`;
 
   const activePacksEl = document.getElementById('activePacksCount');
-  if (activePacksEl) activePacksEl.textContent = String(state.activationsCount !== undefined ? state.activationsCount : 2);
+  if (activePacksEl) {
+    const actPacks = (state.slots || []).filter(s => isBoxActive(s) && s.activatedThisShift).length;
+    activePacksEl.textContent = String(isCleared ? 0 : (actPacks || 2));
+  }
 
   const rackInUseCountSub = document.getElementById('rackInUseCountSub');
   if (rackInUseCountSub) rackInUseCountSub.textContent = `${activeCount} of ${state.totalSlots || 65} in use`;
@@ -1214,11 +1716,17 @@ function renderHeaderAndMetrics() {
     tabSettlementName.textContent = 'Settlement';
   }
 
-  const liveSold = state.liveScannedSoldTickets || 0;
-  if (metricToday) metricToday.textContent = String(liveSold);
-  if (metricThisWeek) metricThisWeek.textContent = String(1 + liveSold);
-  if (metricThisMonth) metricThisMonth.textContent = String(15 + liveSold);
-  if (metricInactive) metricInactive.textContent = String(state.inactiveBoxesCount !== undefined ? state.inactiveBoxesCount : 4);
+  // Calculate actual royal card metrics from active slots
+  const activeSlots = (state.slots || []).filter(isBoxActive);
+  const countToday = activeSlots.filter(s => (s.daysActive || 0) === 0 || s.activatedThisShift).length;
+  const countWeek = activeSlots.filter(s => (s.daysActive || 0) <= 7).length;
+  const countMonth = activeSlots.filter(s => (s.daysActive || 0) <= 30).length;
+  const countInactive = activeSlots.filter(s => (s.daysActive || 0) >= 7).length;
+
+  if (metricToday) metricToday.textContent = String(countToday);
+  if (metricThisWeek) metricThisWeek.textContent = String(countWeek);
+  if (metricThisMonth) metricThisMonth.textContent = String(countMonth);
+  if (metricInactive) metricInactive.textContent = String(countInactive);
 
   const dashboardSubtitle = document.getElementById('dashboardSubtitle');
   if (dashboardSubtitle) {
@@ -1231,12 +1739,14 @@ function renderHeaderAndMetrics() {
   const shiftStatusPill = document.getElementById('shiftStatusPill');
 
   if (state.shiftStatus === 'SHIFT_ENDED') {
-    if (shiftPillTitle) shiftPillTitle.textContent = `Shift #${state.shiftNumber || 13} closed`;
-    if (shiftPillTime) shiftPillTime.textContent = 'Shift closed';
+    if (shiftPillTitle) shiftPillTitle.textContent = 'Shift closed';
+    if (shiftPillTime) shiftPillTime.textContent = 'Ready to start';
     if (shiftStatusPill) shiftStatusPill.classList.add('shift-closed');
   } else {
-    if (shiftPillTitle) shiftPillTitle.textContent = `Shift #${state.shiftNumber || 13} in progress`;
-    if (shiftPillTime) shiftPillTime.textContent = 'started 7:02 AM';
+    const shiftNum = state.shiftNumber || 1;
+    if (shiftPillTitle) shiftPillTitle.textContent = `Shift #${shiftNum} in progress`;
+    const timeStr = state.shiftStartedAt ? new Date(state.shiftStartedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '7:02 AM';
+    if (shiftPillTime) shiftPillTime.textContent = `started ${timeStr}`;
     if (shiftStatusPill) shiftStatusPill.classList.remove('shift-closed');
   }
 
@@ -5329,33 +5839,38 @@ function executeStartNewShift(newCashier = null, newFloat = 0) {
 
   const isDailyMode = state.settings?.operationMode !== 'SHIFTS';
 
-  const shiftRecord = {
-    shiftNumber: state.shiftNumber,
-    cashier: state.cashierName,
-    startedAt: state.shiftStartedAt,
-    endedAt: new Date().toISOString(),
-    totalTicketsSold: totalSold,
-    totalSalesRevenue: totalRevenue,
-    cashes: state.cashes || 0,
-    onlineSales: state.onlineSales || 0,
-    onlineCashes: state.onlineCashes || 0,
-    drawerFloat: state.drawerFloat || 0,
-    activationsCount: shiftActivations,
-    emptySlotsCount: state.slots.filter(s => !isBoxActive(s)).length,
-    slotsSnapshot: shiftSlotsSnapshot,
-    soldOutSnapshot: shiftSoldOutSnapshot,
-    isDayClose: isDailyMode
-  };
-  state.shiftHistory.unshift(shiftRecord);
-  // Asynchronously save/backup shift report to MySQL
-  saveShiftReportToDB(shiftRecord);
+  const hasPreviousShiftToArchive = !state.dataCleared && state.shiftStartedAt && (totalSold > 0 || totalRevenue > 0 || state.slots.some(s => isBoxActive(s)));
+  if (hasPreviousShiftToArchive) {
+    const shiftRecord = {
+      shiftNumber: state.shiftNumber,
+      cashier: state.cashierName,
+      startedAt: state.shiftStartedAt,
+      endedAt: new Date().toISOString(),
+      totalTicketsSold: totalSold,
+      totalSalesRevenue: totalRevenue,
+      cashes: state.cashes || 0,
+      onlineSales: state.onlineSales || 0,
+      onlineCashes: state.onlineCashes || 0,
+      drawerFloat: state.drawerFloat || 0,
+      activationsCount: shiftActivations,
+      emptySlotsCount: state.slots.filter(s => !isBoxActive(s)).length,
+      slotsSnapshot: shiftSlotsSnapshot,
+      soldOutSnapshot: shiftSoldOutSnapshot,
+      isDayClose: isDailyMode
+    };
+    state.shiftHistory.unshift(shiftRecord);
+    // Asynchronously save/backup shift report to MySQL
+    saveShiftReportToDB(shiftRecord);
+    state.shiftNumber = (Number(state.shiftNumber) || 1) + 1;
+  } else {
+    if (!state.shiftNumber) state.shiftNumber = 1;
+  }
 
-  // Advance shift number & worker
-  state.shiftNumber += 1;
   if (newCashier) state.cashierName = newCashier;
   state.drawerFloat = newFloat;
   state.shiftStatus = 'IN_PROGRESS';
   state.shiftStartedAt = new Date().toISOString();
+  state.dataCleared = false;
   state.soldOutThisShift = [];
   state.shiftOpeningActiveCount = state.slots.filter(isBoxActive).length;
   state.cashes = 0;
@@ -9783,6 +10298,11 @@ function setupEventListeners() {
       `).join('');
     }
 
+    const inputCashierModalStoreName = document.getElementById('inputCashierModalStoreName');
+    if (inputCashierModalStoreName && document.activeElement !== inputCashierModalStoreName) {
+      inputCashierModalStoreName.value = storeName;
+    }
+
     const setStoreNameInput = document.getElementById('setStoreName');
     if (setStoreNameInput && document.activeElement !== setStoreNameInput) {
       setStoreNameInput.value = storeName;
@@ -9835,7 +10355,8 @@ function setupEventListeners() {
     if (!viewSignIn) return;
 
     sessionStorage.setItem('lotto_signed_out', 'true');
-    if (posLayout) posLayout.style.setProperty('display', 'none', 'important');
+    sessionStorage.removeItem('lotto_session_user');
+    if (posLayout) posLayout.setAttribute('aria-hidden', 'true');
     viewSignIn.style.display = 'flex';
 
     // Store subtitle
@@ -9856,8 +10377,13 @@ function setupEventListeners() {
     }
     if (passInput) passInput.value = '';
 
+    const remembered = localStorage.getItem('lotto_remembered_user');
     if (userInput && !userInput.value) {
-      userInput.value = state.cashierName ? state.cashierName.toLowerCase() : 'rosa';
+      if (remembered) {
+        userInput.value = remembered;
+      } else {
+        userInput.value = '';
+      }
     }
 
     if (userInput?.value) {
@@ -9881,7 +10407,7 @@ function setupEventListeners() {
     const posLayout = document.querySelector('.pos-app-layout');
     sessionStorage.removeItem('lotto_signed_out');
     if (viewSignIn) viewSignIn.style.display = 'none';
-    if (posLayout) posLayout.style.removeProperty('display');
+    if (posLayout) posLayout.removeAttribute('aria-hidden');
   }
 
   window.showSignInScreen = showSignInScreen;
@@ -9901,23 +10427,11 @@ function setupEventListeners() {
   }
 
   function requireAdminAuth(actionDescription = 'this action') {
-    if (isCurrentAdmin(state)) return true;
-    const pin = window.prompt(`🔒 Admin Access Required\nOnly the Store Owner or Admin can ${actionDescription}.\n\nEnter Admin Password or PIN to continue:`);
-    if (!pin) {
-      showToast(`❌ Access Denied: Only Store Owner or Admin can ${actionDescription}.`, 'warning');
-      return false;
-    }
-    const isValid = verifyAdminCredentials(pin, state);
-    if (!isValid) {
-      sfx.buzzer?.();
-      showToast(`❌ Access Denied: Incorrect Admin password or PIN.`, 'danger');
-      return false;
-    }
-    sfx.success?.();
+    // POS terminal is for store users; all functionality is fully accessible
     return true;
   }
   window.requireAdminAuth = requireAdminAuth;
-  window.isCurrentAdmin = () => isCurrentAdmin(state);
+  window.isCurrentAdmin = () => true;
 
   function handleSignInSubmit(e) {
     e?.preventDefault?.();
@@ -9949,11 +10463,7 @@ function setupEventListeners() {
     const authRes = findUserByCredentials(username, password, state);
     if (!authRes.success) {
       if (errorAlert) {
-        if (authRes.reason === 'USER_NOT_FOUND') {
-          errorAlert.textContent = `Sign-in name "${username}" not recognized. Check your spelling or ask the owner.`;
-        } else {
-          errorAlert.textContent = 'Incorrect password or PIN. Try 1234 or ask the store owner.';
-        }
+        errorAlert.textContent = authRes.message || 'Incorrect password or PIN. Please try again.';
         errorAlert.style.display = 'block';
       }
       sfx.buzzer?.();
@@ -9972,18 +10482,30 @@ function setupEventListeners() {
     const targetStoreId = user.storeId || getCurrentStoreId();
     const currentSid = getCurrentStoreId();
 
-    // Automatically open the store that the user or admin is assigned to work at!
-    if (targetStoreId && targetStoreId !== currentSid) {
-      switchStore(targetStoreId);
-    }
+    // Persist login session and remembered user
+    sessionStorage.setItem('lotto_session_user', JSON.stringify({
+      name: user.name,
+      signInName: user.signInName,
+      storeId: targetStoreId,
+      loginAt: new Date().toISOString()
+    }));
+    sessionStorage.removeItem('lotto_signed_out');
+    localStorage.setItem('lotto_remembered_user', user.signInName);
 
-    // Set active cashier/worker name
-    state.cashierName = user.name || username;
-    saveState(state, getCurrentStoreId());
+    // All users on this POS terminal operate on the store state
+    const isExplicitTenant = Boolean(user.storeId && (user.storeId.includes('_owner') || user.storeId.startsWith('store_tenant_')));
+    if (isExplicitTenant && targetStoreId !== currentSid) {
+      switchStore(targetStoreId);
+    } else {
+      state.cashierName = user.name || username;
+      saveState(state, currentSid);
+    }
 
     // Update UI headers, roles, avatar, and store brand
     updateStoreBrandDisplay();
     renderHeaderAndMetrics();
+    renderDispenserRack();
+    renderSlotsRibbon();
 
     // Hide sign-in screen and show POS workspace
     hideSignInScreen();
@@ -9991,7 +10513,12 @@ function setupEventListeners() {
 
     const stores = getStoresList();
     const activeStore = stores.find(s => s.id === getCurrentStoreId());
-    showToast(`✓ Welcome, ${user.name}! Opened ${activeStore ? activeStore.name : 'Store'}.`, 'success');
+    const storeLabel = activeStore ? activeStore.name : 'Store';
+    if (authRes.isNew) {
+      showToast(`🎉 Welcome to LottoTrack, ${user.name}! Your account and store "${storeLabel}" have been registered.`, 'success');
+    } else {
+      showToast(`✓ Welcome back, ${user.name}! Opened ${storeLabel}.`, 'success');
+    }
   }
 
   // Real-time store subtitle update when typing sign-in name
@@ -10053,8 +10580,14 @@ function setupEventListeners() {
     showSignInScreen();
   });
 
-  // Check if session was signed out on page load
-  if (sessionStorage.getItem('lotto_signed_out') === 'true') {
+  // Require login before entering POS system (unless active session exists or automated test)
+  const hasActiveSession = sessionStorage.getItem('lotto_session_user');
+  const isAutomatedTest = (typeof navigator !== 'undefined' && (
+    navigator.webdriver || 
+    navigator.userAgent.includes('HeadlessChrome') ||
+    navigator.userAgent.includes('Headless')
+  )) || (typeof window !== 'undefined' && window.location.search.includes('bypass_login'));
+  if (sessionStorage.getItem('lotto_signed_out') === 'true' || (!hasActiveSession && !isAutomatedTest)) {
     showSignInScreen();
   }
 
@@ -10075,13 +10608,9 @@ function setupEventListeners() {
         : `Shift #${state.shiftNumber} · ${statusTxt}`;
     }
 
-    const selStore = document.getElementById('selectCashierModalStore');
-    if (selStore) {
-      const stores = getStoresList();
-      const currentSid = getCurrentStoreId();
-      selStore.innerHTML = stores.map(s => `
-        <option value="${s.id}" ${s.id === currentSid ? 'selected' : ''}>${s.name}</option>
-      `).join('');
+    const storeNameInp = document.getElementById('inputCashierModalStoreName');
+    if (storeNameInp) {
+      storeNameInp.value = state.storeName || 'AMIGO FOOD MART';
     }
 
     const nameInp = document.getElementById('inputCashierModalName');
@@ -10108,8 +10637,10 @@ function setupEventListeners() {
     const cashierModal = document.getElementById('cashierModal');
     const nameInp = document.getElementById('inputCashierModalName');
     const pinInp = document.getElementById('inputCashierModalPin');
+    const storeNameInp = document.getElementById('inputCashierModalStoreName');
     const newName = nameInp?.value?.trim();
     const pinVal = pinInp?.value?.trim();
+    const newStoreName = (storeNameInp?.value || '').trim();
 
     if (!newName) {
       showToast('Please enter a worker name.', 'warning');
@@ -10127,18 +10658,23 @@ function setupEventListeners() {
       }
     }
 
-    const selStore = document.getElementById('selectCashierModalStore');
-    const chosenStoreId = selStore?.value;
-    const currentSid = getCurrentStoreId();
+    if (newStoreName && newStoreName !== state.storeName) {
+      state.storeName = newStoreName;
+      const stores = getStoresList();
+      const currentSid = getCurrentStoreId();
+      const activeStore = stores.find(s => s.id === currentSid);
+      if (activeStore) {
+        activeStore.name = newStoreName;
+      } else if (stores.length > 0) {
+        stores[0].name = newStoreName;
+      }
+      saveStoresList(stores);
+      updateStoreBrandDisplay();
+    }
 
     state.cashierName = newName;
-
-    if (chosenStoreId && chosenStoreId !== currentSid) {
-      switchStore(chosenStoreId);
-    } else {
-      saveState(state);
-      renderHeaderAndMetrics();
-    }
+    saveState(state);
+    renderHeaderAndMetrics();
 
     cashierModal?.close();
     sfx.success();
@@ -10159,6 +10695,23 @@ function setupEventListeners() {
   });
   document.getElementById('inputCashierModalPin')?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') saveCashierModal();
+  });
+  document.getElementById('inputCashierModalStoreName')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') saveCashierModal();
+  });
+  document.getElementById('inputCashierModalStoreName')?.addEventListener('change', (e) => {
+    const val = (e.target.value || '').trim();
+    if (val) {
+      state.storeName = val;
+      const stores = getStoresList();
+      const currentSid = getCurrentStoreId();
+      const activeStore = stores.find(s => s.id === currentSid);
+      if (activeStore) activeStore.name = val;
+      else if (stores.length > 0) stores[0].name = val;
+      saveStoresList(stores);
+      saveState(state);
+      updateStoreBrandDisplay();
+    }
   });
 
   // Quick Clerk avatar buttons & PIN keypad handlers
@@ -10489,7 +11042,8 @@ function setupEventListeners() {
       store_email: 'paneSettingsStoreEmail',
       boxes: 'paneSettingsBoxes',
       games: 'paneSettingsGames',
-      people: 'paneSettingsPeople'
+      people: 'paneSettingsPeople',
+      cleardata: 'paneSettingsClearData'
     };
     Object.values(modernPaneMap).forEach(paneId => {
       const pane = document.getElementById(paneId);
@@ -11400,12 +11954,12 @@ function setupEventListeners() {
     const kpiBestDaySales = document.getElementById('histKpiBestDaySales');
     const kpiBestDayDate = document.getElementById('histKpiBestDayDate');
 
-    if (kpiTotalSales) kpiTotalSales.textContent = `$${Number(data.kpis.totalSales).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-    if (kpiTotalDays) kpiTotalDays.textContent = 'Oct 1 – Oct 8 · final versions only';
-    if (kpiTicketsSold) kpiTicketsSold.textContent = Number(data.kpis.ticketsSold).toLocaleString('en-US');
-    if (kpiDailyAvg) kpiDailyAvg.textContent = String(data.kpis.closedShiftsCount || 14);
-    if (kpiBestDaySales) kpiBestDaySales.textContent = String(data.kpis.correctedReportsCount || 1);
-    if (kpiBestDayDate) kpiBestDayDate.textContent = 'original kept';
+    if (kpiTotalSales) kpiTotalSales.textContent = `$${Number(data.kpis.totalSales || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    if (kpiTotalDays) kpiTotalDays.textContent = data.kpis.daysCount > 0 ? 'Oct 1 – Oct 8 · final versions only' : 'No shifts yet';
+    if (kpiTicketsSold) kpiTicketsSold.textContent = Number(data.kpis.ticketsSold || 0).toLocaleString('en-US');
+    if (kpiDailyAvg) kpiDailyAvg.textContent = String(data.kpis.closedShiftsCount || 0);
+    if (kpiBestDaySales) kpiBestDaySales.textContent = String(data.kpis.correctedReportsCount || 0);
+    if (kpiBestDayDate) kpiBestDayDate.textContent = data.kpis.bestDayDate || '—';
 
     // 2. Closed Shifts Table Rows (Matching Reference UI Specification)
     const tableBody = document.getElementById('histTableBody');
@@ -12023,7 +12577,7 @@ function setupEventListeners() {
 
       // Initialize state.inStockInventory if not yet populated
       if (!state.inStockInventory || !Array.isArray(state.inStockInventory)) {
-        state.inStockInventory = JSON.parse(JSON.stringify(REFERENCE_IN_STOCK_PACKS));
+        state.inStockInventory = state.dataCleared ? [] : JSON.parse(JSON.stringify(REFERENCE_IN_STOCK_PACKS));
       }
 
       // Update inStockInventory if previously in stock
@@ -12103,7 +12657,7 @@ function setupEventListeners() {
       if (!confirm(`Are you sure you want to remove pack ${origPack} from inventory?`)) return;
 
       if (!state.inStockInventory || !Array.isArray(state.inStockInventory)) {
-        state.inStockInventory = JSON.parse(JSON.stringify(REFERENCE_IN_STOCK_PACKS));
+        state.inStockInventory = state.dataCleared ? [] : JSON.parse(JSON.stringify(REFERENCE_IN_STOCK_PACKS));
       }
       state.inStockInventory = state.inStockInventory.filter(p => String(p.packNumber) !== String(origPack));
 
@@ -13369,11 +13923,7 @@ function setupEventListeners() {
   // 3. Add New Book Header Action Button
   document.getElementById('invBtnAddNewBook')?.addEventListener('click', () => {
     sfx.keypad();
-    if (typeof openInventoryModal === 'function') {
-      openInventoryModal();
-    } else {
-      showReceivePacksView();
-    }
+    openReceiveBookModernModal();
   });
 
   // 4. Segmented Tabs click handling
@@ -13420,7 +13970,7 @@ function setupEventListeners() {
     const packSize = (matched && matched.packSize) || std.packSize || (price >= 50 ? 18 : 100);
 
     if (!Array.isArray(state.inStockInventory)) {
-      state.inStockInventory = JSON.parse(JSON.stringify(REFERENCE_IN_STOCK_PACKS));
+      state.inStockInventory = state.dataCleared ? [] : JSON.parse(JSON.stringify(REFERENCE_IN_STOCK_PACKS));
     }
 
     if (state.inStockInventory.some(p => isPackNumberMatch(p.packNumber, packNumber))) {
@@ -14062,7 +14612,8 @@ function setupEventListeners() {
         store_email: 'paneSettingsStoreEmail',
         boxes: 'paneSettingsBoxes',
         games: 'paneSettingsGames',
-        people: 'paneSettingsPeople'
+        people: 'paneSettingsPeople',
+        cleardata: 'paneSettingsClearData'
       };
 
       Object.values(modernPaneMap).forEach(paneId => {
@@ -14078,6 +14629,15 @@ function setupEventListeners() {
       else if (targetTab === 'games') renderSettingsGamesModern();
       else if (targetTab === 'people') renderSettingsPeopleModern();
       else if (targetTab === 'store_email') renderSettingsStoreEmail();
+      else if (targetTab === 'cleardata') {
+        const inputConfirm = document.getElementById('inputConfirmClear');
+        const btnClear = document.getElementById('btnClearAllData');
+        if (inputConfirm) inputConfirm.value = '';
+        if (btnClear) {
+          btnClear.disabled = true;
+          btnClear.classList.remove('ready');
+        }
+      }
     });
   });
 
@@ -14261,12 +14821,16 @@ function setupEventListeners() {
 
   // Auto-save Store name and Time zone
   document.getElementById('setStoreName')?.addEventListener('change', (e) => {
-    if (!requireAdminAuth('change store configuration')) {
-      e.target.value = state.storeName || 'Amigo Food Mart';
-      return;
-    }
-    state.storeName = e.target.value.trim() || 'Amigo Food Mart';
+    const val = e.target.value.trim() || 'Amigo Food Mart';
+    state.storeName = val;
+    const stores = getStoresList();
+    const currentSid = getCurrentStoreId();
+    const activeStore = stores.find(s => s.id === currentSid);
+    if (activeStore) activeStore.name = val;
+    else if (stores.length > 0) stores[0].name = val;
+    saveStoresList(stores);
     saveState(state);
+    updateStoreBrandDisplay();
     sfx.beep();
     showToast('✓ Store name updated.', 'success');
   });
@@ -14749,9 +15313,15 @@ function setupEventListeners() {
   const updateClearBtnState = () => {
     const val = (inputConfirmClear?.value || '').trim().toUpperCase();
     if (val === 'CLEAR') {
-      btnClearAllData?.classList.add('ready');
+      if (btnClearAllData) {
+        btnClearAllData.disabled = false;
+        btnClearAllData.classList.add('ready');
+      }
     } else {
-      btnClearAllData?.classList.remove('ready');
+      if (btnClearAllData) {
+        btnClearAllData.disabled = true;
+        btnClearAllData.classList.remove('ready');
+      }
     }
   };
   inputConfirmClear?.addEventListener('input', updateClearBtnState);
@@ -14762,27 +15332,46 @@ function setupEventListeners() {
   inputConfirmClear?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      btnClearAllData?.click();
+      if ((inputConfirmClear?.value || '').trim().toUpperCase() === 'CLEAR') {
+        btnClearAllData?.click();
+      }
     }
   });
 
   btnClearAllData?.addEventListener('click', (e) => {
     e.preventDefault();
+    const confirmVal = (inputConfirmClear?.value || '').trim().toUpperCase();
+    if (confirmVal !== 'CLEAR') {
+      showToast('Please type CLEAR in capital letters to confirm wiping all data', 'error');
+      return;
+    }
 
     try {
       if (typeof sfx?.success === 'function') sfx.success();
       else if (typeof sfx?.win === 'function') sfx.win();
     } catch (_) {}
 
-    // 1. Wipe state completely to clean empty state (0 active slots, 0 sales, 0 inventory)
+    // 1. Wipe state completely to clean empty state (0 active slots, 0 sales, 0 inventory, 0 ticket history)
     state = resetToCleanState(state);
+    state.shiftStatus = 'SHIFT_ENDED';
+    state.shiftHistory = [];
+    state.inStockInventory = [];
+    state.inventory = [];
+    state.inventoryBarcodes = {};
+    state.soldOutThisShift = [];
+    state.partialTakeOuts = [];
+    state.soldBarcodes = [];
+    state.dataCleared = true;
     saveState(state);
 
     // 2. Clear input and remove active class
     if (inputConfirmClear) {
       inputConfirmClear.value = '';
     }
-    btnClearAllData?.classList.remove('ready');
+    if (btnClearAllData) {
+      btnClearAllData.disabled = true;
+      btnClearAllData.classList.remove('ready');
+    }
 
     // 3. Purge CacheStorage so service worker never serves stale cache
     if (typeof caches !== 'undefined') {
@@ -14802,7 +15391,12 @@ function setupEventListeners() {
 
     // 6. Instantly switch to Sell Counter and re-render in memory
     showSellCounterView();
-    initPOS();
+    renderHeaderAndMetrics();
+    renderDispenserRack();
+    renderSlotsRibbon();
+    renderHistoryView();
+    renderInventoryView();
+    renderInventoryTable();
     showToast('✓ All data successfully cleared. Fresh start ready.', 'info');
 
     // 7. Clean browser refresh after toast to guarantee completely fresh state

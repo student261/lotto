@@ -338,9 +338,33 @@ export const REFERENCE_CLOSED_SHIFTS = [
 ];
 
 export function getHistoryScreenData(state) {
+  const isDataCleared = Boolean(state?.dataCleared);
   const hasLiveHistory = state && Array.isArray(state.shiftHistory) && state.shiftHistory.length > 0;
 
-  let days = JSON.parse(JSON.stringify(REFERENCE_HISTORY_DAYS));
+  if (isDataCleared && !hasLiveHistory) {
+    return {
+      kpis: {
+        totalSales: 0,
+        daysCount: 0,
+        ticketsSold: 0,
+        dailyAverage: 0,
+        bestDayAmount: 0,
+        bestDayDate: '—',
+        closedShiftsCount: 0,
+        closedShiftsDays: '0 days',
+        correctedReportsCount: 0,
+        correctedReportsSub: 'none'
+      },
+      chart: {
+        days: [],
+        maxSales: 0
+      },
+      days: [],
+      shifts: []
+    };
+  }
+
+  let days = hasLiveHistory ? [] : JSON.parse(JSON.stringify(REFERENCE_HISTORY_DAYS));
 
   if (hasLiveHistory) {
     const liveHistory = (state.shiftHistory || []).map((h, i) => ({
@@ -349,8 +373,8 @@ export function getHistoryScreenData(state) {
       dateShort: h.dateShort || new Date(h.endedAt || h.startedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
       openClose: h.openClose || `${h.startedAt ? new Date(h.startedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '7:00 AM'} — ${h.endedAt ? new Date(h.endedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '9:40 PM'}`,
       closedBy: h.cashier || h.closedBy || 'master',
-      tickets: Number(h.totalTicketsSold || h.tickets || 250),
-      sales: Number(h.totalSales || h.sales || 1200),
+      tickets: Number(h.totalTicketsSold || h.tickets || 0),
+      sales: Number(h.totalSalesRevenue || h.totalSales || h.sales || 0),
       isToday: i === 0,
       soldOutCount: Array.isArray(h.soldOutSnapshot) ? h.soldOutSnapshot.length : 0,
       newPacksCount: 0
@@ -387,7 +411,7 @@ export function getHistoryScreenData(state) {
     };
   });
 
-  const shifts = [...liveShifts, ...REFERENCE_CLOSED_SHIFTS];
+  const shifts = hasLiveHistory ? liveShifts : [...liveShifts, ...REFERENCE_CLOSED_SHIFTS];
 
   // Calculate metrics
   const totalSales = 9474.00;

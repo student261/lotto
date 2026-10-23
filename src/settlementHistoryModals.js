@@ -74,6 +74,10 @@ export function openDaySettlementModal(state, onFullReport = null, onCloseDay = 
         amount: amt
       });
     });
+  } else if (state?.dataCleared) {
+    gamesToRender = [];
+    totalTickets = 0;
+    totalSales = 0.00;
   } else {
     // Populate reference figures matching Image 1
     gamesToRender = REFERENCE_DAY_SETTLEMENT_GAMES;
@@ -218,11 +222,11 @@ export function openPastDaysModal(state, onViewDayReport = null) {
         cashier: s.cashierName || 'master',
         initial: (s.cashierName || 'M').charAt(0).toUpperCase(),
         openClose: `${s.openedTime || '7:00 AM'} — ${s.closedTime || '9:30 PM'}`,
-        tickets: s.totalTickets || 300,
-        sales: s.totalSales || 1350.00,
-        activated: s.activatedPacksCount || 2
+        tickets: s.totalTickets || 0,
+        sales: s.totalSales || 0.00,
+        activated: s.activatedPacksCount || 0
       }))
-    : REFERENCE_PAST_DAYS;
+    : (state?.dataCleared ? [] : REFERENCE_PAST_DAYS);
 
   // Header Badge
   const badge = document.getElementById('pdDaysCountBadge');
@@ -241,6 +245,10 @@ export function openPastDaysModal(state, onViewDayReport = null) {
   const tbody = document.getElementById('pdHistoryTableBody');
   if (tbody) {
     tbody.innerHTML = '';
+    if (pastDaysData.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:32px; color:#64748b; font-style:italic;">No past day settlements found</td></tr>`;
+      return;
+    }
     pastDaysData.forEach((row, i) => {
       const tr = document.createElement('tr');
       tr.innerHTML = `

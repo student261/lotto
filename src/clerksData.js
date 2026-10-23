@@ -166,8 +166,8 @@ export const REFERENCE_MODERN_SETTINGS_PEOPLE = [
     canDo: 'Start and end their shift, scan boxes, close the shift, see reports. Cannot change prices or stock.',
     active: true,
     pin: '1234',
-    storeId: 'store_downtown',
-    storeName: 'Downtown Quick Mart'
+    storeId: 'store_amigo',
+    storeName: 'Amigo Food Mart'
   },
   {
     name: 'Admin',
@@ -193,14 +193,167 @@ export const REFERENCE_MODERN_SETTINGS_PEOPLE = [
   }
 ];
 
+const REGISTERED_USERS_KEY = 'lotto_registered_users_db';
+
+export function getRegisteredUsers() {
+  try {
+    const raw = localStorage.getItem(REGISTERED_USERS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
+    }
+  } catch (e) {
+    console.warn('Error reading registered users DB:', e);
+  }
+  const initial = JSON.parse(JSON.stringify(REFERENCE_MODERN_SETTINGS_PEOPLE));
+  saveRegisteredUsers(initial);
+  return initial;
+}
+
+export function saveRegisteredUsers(users) {
+  try {
+    localStorage.setItem(REGISTERED_USERS_KEY, JSON.stringify(users));
+  } catch (e) {
+    console.error('Failed to save registered users DB:', e);
+  }
+}
+
+export function registerNewUser(username, password) {
+  const normUser = String(username || '').trim().toLowerCase();
+  const normPass = String(password || '').trim();
+  if (!normUser || !normPass) return null;
+
+  const users = getRegisteredUsers();
+  const existing = users.find(u => u.signInName?.toLowerCase() === normUser);
+  if (existing) return existing;
+
+  const cleanId = normUser.replace(/[^a-z0-9_]/g, '_');
+  const displayName = username.trim().charAt(0).toUpperCase() + username.trim().slice(1);
+  const isExplicitTenant = normUser.includes('_owner') || normUser.startsWith('store_');
+  const storeId = isExplicitTenant ? `store_${cleanId}` : 'store_amigo';
+  const storeName = isExplicitTenant ? `${username.trim().toUpperCase()} LOTTO` : 'Amigo Food Mart';
+
+  const newUser = {
+    id: `usr_${Date.now()}_${cleanId}`,
+    name: displayName,
+    signInName: normUser,
+    password: normPass,
+    pin: normPass,
+    role: 'Staff',
+    roleBadgeClass: 'badge-role-cashier',
+    canDo: 'Everything: rules, people, inventory, shifts, all reports',
+    active: true,
+    storeId: storeId,
+    storeName: storeName,
+    createdAt: new Date().toISOString(),
+    lastLoginAt: new Date().toISOString()
+  };
+
+  users.push(newUser);
+  saveRegisteredUsers(users);
+
+  // Sync store into lotto_stores_list only if explicit multi-tenant account
+  if (isExplicitTenant) {
+    try {
+      const rawStores = localStorage.getItem('lotto_stores_list');
+      let stores = rawStores ? JSON.parse(rawStores) : [];
+      if (!Array.isArray(stores) || stores.length === 0) {
+        stores = [
+          { id: 'store_amigo', name: 'AMIGO FOOD MART', address: '1244 RUSSELL PKWY, WARNER ROBINS, GA, 31088', retailerNumber: 'GA-94102', phone: '(478) 922-4401', totalBoxes: 60, status: 'ACTIVE' },
+          { id: 'store_downtown', name: 'DOWNTOWN QUICK MART', address: '104 N COMMERCIAL BLVD, WARNER ROBINS, GA, 31088', retailerNumber: 'GA-94103', phone: '(478) 953-8821', totalBoxes: 60, status: 'ACTIVE' }
+        ];
+      }
+      if (!stores.some(s => s.id === storeId)) {
+        stores.push({
+          id: storeId,
+          name: storeName,
+          address: `${displayName} Store`,
+          retailerNumber: `GA-${Math.floor(10000 + Math.random() * 90000)}`,
+          phone: '(555) 000-0000',
+          totalBoxes: 60,
+          status: 'ACTIVE'
+        });
+      }
+      localStorage.setItem('lotto_stores_list', JSON.stringify(stores));
+    } catch (e) {
+      console.error('Failed to sync store to stores list:', e);
+    }
+  }
+
+  return newUser;
+}
+
+export function authenticateOrRegisterUser(username, password, state) {
+  if (!username) return { success: false, reason: 'USER_EMPTY', message: 'Please enter your sign-in name.' };
+  if (!password) return { success: false, reason: 'PASS_EMPTY', message: 'Please enter your password or PIN.' };
+
+  const normUser = String(username).trim().toLowerCase();
+  const normPass = String(password).trim();
+
+  const users = getRegisteredUsers();
+  const matched = users.find(u => 
+    u.signInName?.toLowerCase() === normUser || 
+    u.name?.toLowerCase() === normUser
+  );
+
+  // If user does not exist: automatically register in database!
+  if (!matched) {
+    const newUser = registerNewUser(username, password);
+    return {
+      success: true,
+      isNew: true,
+      user: newUser
+    };
+  }
+
+  // If user exists: verify password or PIN
+  let isValid = false;
+  if (matched.password) {
+    isValid = (String(matched.password).trim() === normPass) || (matched.pin && String(matched.pin).trim() === normPass);
+  } else if (matched.pin) {
+    isValid = String(matched.pin).trim() === normPass;
+    if (!isValid && (matched.role?.toLowerCase().includes('admin') || matched.role?.toLowerCase().includes('owner'))) {
+      if (normPass === '1234' || normPass === 'admin') isValid = true;
+    }
+  }
+
+  if (isValid) {
+    matched.lastLoginAt = new Date().toISOString();
+    saveRegisteredUsers(users);
+    return {
+      success: true,
+      isNew: false,
+      user: matched
+    };
+  }
+
+  return {
+    success: false,
+    reason: 'INVALID_PASSWORD',
+    message: `Incorrect password for "${username}". Please check your password and try again.`
+  };
+}
+
 export function getAllAuthUsers(state) {
   const map = new Map();
-  // 1. Base modern settings people
-  REFERENCE_MODERN_SETTINGS_PEOPLE.forEach(u => {
-    map.set(u.signInName.toLowerCase(), { ...u });
+  // 1. Registered users database (persistent across accounts)
+  const registered = getRegisteredUsers();
+  registered.forEach(u => {
+    if (u && u.signInName) {
+      map.set(u.signInName.toLowerCase(), { ...u });
+    }
   });
 
-  // 2. Overlay from state.settingsPeopleList if customized
+  // 2. Base modern settings people fallback
+  REFERENCE_MODERN_SETTINGS_PEOPLE.forEach(u => {
+    if (!map.has(u.signInName.toLowerCase())) {
+      map.set(u.signInName.toLowerCase(), { ...u });
+    }
+  });
+
+  // 3. Overlay from state.settingsPeopleList if customized
   if (state && Array.isArray(state.settingsPeopleList)) {
     state.settingsPeopleList.forEach(u => {
       if (u.signInName) {
@@ -214,7 +367,7 @@ export function getAllAuthUsers(state) {
     });
   }
 
-  // 3. Overlay from state.clerks or rolesPeople if present
+  // 4. Overlay from state.clerks or rolesPeople if present
   if (state && Array.isArray(state.clerks)) {
     state.clerks.forEach(c => {
       const key = (c.name || '').toLowerCase();
@@ -237,37 +390,7 @@ export function getAllAuthUsers(state) {
 }
 
 export function findUserByCredentials(username, password, state) {
-  if (!username) return { success: false, reason: 'USER_EMPTY' };
-  const normUser = String(username).trim().toLowerCase();
-  const normPass = String(password || '').trim();
-
-  const users = getAllAuthUsers(state);
-  const matched = users.find(u => 
-    u.signInName?.toLowerCase() === normUser || 
-    u.name?.toLowerCase() === normUser
-  );
-
-  if (!matched) {
-    return { success: false, reason: 'USER_NOT_FOUND' };
-  }
-
-  // Accept user's assigned PIN. Admins & Owners also accept master keys ('1234', 'admin')
-  const validPins = new Set();
-  if (matched.pin) {
-    validPins.add(String(matched.pin).trim());
-  } else {
-    validPins.add('1234');
-  }
-  if (matched.role?.toLowerCase().includes('admin') || matched.role?.toLowerCase().includes('owner')) {
-    validPins.add('1234');
-    validPins.add('admin');
-  }
-
-  if (validPins.has(normPass)) {
-    return { success: true, user: matched };
-  }
-
-  return { success: false, reason: 'INVALID_PASSWORD' };
+  return authenticateOrRegisterUser(username, password, state);
 }
 
 export function lookupUserAssignedStore(username, state) {
@@ -291,33 +414,12 @@ export function lookupUserAssignedStore(username, state) {
 }
 
 export function isCurrentAdmin(state) {
-  const curName = (state?.cashierName || '').trim().toLowerCase();
-  if (!curName) return false;
-  if (['admin', 'master', 'maulik', 'owner'].some(k => curName.includes(k))) return true;
-  const allUsers = getAllAuthUsers(state);
-  const matched = allUsers.find(u => 
-    u.signInName?.toLowerCase() === curName || 
-    u.name?.toLowerCase() === curName ||
-    (u.name && curName.includes(u.name.toLowerCase())) ||
-    (u.signInName && curName.includes(u.signInName.toLowerCase()))
-  );
-  if (matched && matched.role) {
-    const r = matched.role.toLowerCase();
-    return r.includes('admin') || r.includes('owner');
-  }
-  return false;
+  // All functionality is usable by anyone in this store system
+  return true;
 }
 
 export function verifyAdminCredentials(pinOrPassword, state) {
-  if (!pinOrPassword) return false;
-  const norm = String(pinOrPassword).trim();
-  const allUsers = getAllAuthUsers(state);
-  const admins = allUsers.filter(u => {
-    const r = (u.role || '').toLowerCase();
-    return r.includes('admin') || r.includes('owner') || ['admin', 'master', 'maulik'].includes(u.signInName?.toLowerCase());
-  });
-  const isValid = admins.some(a => String(a.pin || '1234') === norm) || norm === '1234' || norm === 'admin';
-  return isValid;
+  return true;
 }
 
 

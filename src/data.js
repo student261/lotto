@@ -1172,6 +1172,11 @@ export function loadState(targetStoreId = null) {
         });
       }
 
+      if (parsed.dataCleared) {
+        if (!Array.isArray(parsed.shiftHistory)) parsed.shiftHistory = [];
+        if (!parsed.shiftStatus) parsed.shiftStatus = 'SHIFT_ENDED';
+      }
+
       return parsed;
     }
   } catch (e) {
@@ -1252,12 +1257,13 @@ export function getCleanEmptyState(existingState = null) {
     registerName,
     shiftNumber: 1,
     cashierName,
-    shiftStatus: 'IN_PROGRESS',
-    shiftStartedAt: new Date().toISOString(),
+    shiftStatus: 'SHIFT_ENDED',
+    shiftStartedAt: null,
     totalSlots: TOTAL_SLOTS,
     slots,
     visibleBoxNumbers: [],
     boxAccessTimes: {},
+    inStockInventory: [],
     inventory: [],
     inventoryBarcodes: {},
     customGames: [],
@@ -1292,10 +1298,24 @@ export function resetToDefaults() {
 
 export function resetToCleanState(existingState = null) {
   const empty = getCleanEmptyState(existingState);
+  empty.dataCleared = true;
+  empty.shiftStatus = 'SHIFT_ENDED';
+  empty.shiftHistory = [];
+  empty.inStockInventory = [];
+  empty.inventory = [];
+  empty.inventoryBarcodes = {};
+  empty.soldOutThisShift = [];
+  empty.partialTakeOuts = [];
+  empty.soldBarcodes = [];
+  empty.shiftNumber = 1;
+  const storeId = getCurrentStoreId();
+  const storeKey = getStoreStorageKey(storeId);
   try {
     localStorage.removeItem(STORAGE_KEY);
     localStorage.removeItem('lotto_track_pos_data_v1');
+    localStorage.removeItem('lotto_track_pos_data_v2');
     localStorage.setItem(STORAGE_KEY, JSON.stringify(empty));
+    localStorage.setItem(storeKey, JSON.stringify(empty));
   } catch (e) {
     console.error('Failed to clear storage:', e);
   }

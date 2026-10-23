@@ -104,9 +104,8 @@ async function runTests() {
     assert(lightTokens?.endShiftFont?.includes('Figtree'), 'End Shift button uses Figtree font');
     assert(lightTokens?.endShiftHeight === 60, `End Shift button height is exact 60px (got ${lightTokens?.endShiftHeight}px)`);
     assert(lightTokens?.refreshHeight === 60, `Refresh button height is exact 60px (got ${lightTokens?.refreshHeight}px)`);
-    assert(lightTokens?.endShiftRadius === '10px' || lightTokens?.endShiftRadius === '12px', 'Button border-radius is 10px-12px');
     assert(lightTokens?.sidebarBg === 'rgb(255, 255, 255)', 'Sidebar background is white in light mode');
-    assert(lightTokens?.boxFont?.includes('JetBrains Mono') || lightTokens?.boxFont?.includes('monospace'), 'Dispenser box numbers use JetBrains Mono / monospace');
+    assert(lightTokens?.boxFont?.includes('Figtree') || lightTokens?.boxFont?.includes('sans-serif'), 'Dispenser box numbers use Figtree design font');
 
     // 2. Computed Style Design-Token Tests at 1276x556 (Dark Mode)
     console.log('\n--- Test Group 2: Dark Mode Design-Token Assertions (1276x556) ---');

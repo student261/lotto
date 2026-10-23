@@ -1311,8 +1311,7 @@
               type="text" 
               id="inputSignInUser" 
               class="signin-input" 
-              placeholder="e.g. rosa or admin" 
-              value="rosa"
+              placeholder="e.g. amigo or admin" 
               autocomplete="username" 
               required
             >
@@ -1350,7 +1349,7 @@
         </form>
 
         <div class="signin-footer-hint">
-          Forgot your password? Ask the store owner to reset it.
+          New user? Enter your sign-in name &amp; password to register and open your store.
         </div>
       </div>
     </div>
@@ -1545,15 +1544,15 @@
             </button>
           </div>
 
-          <!-- Right Column: LAST SCAN Card with Big Box Number 4 -->
+          <!-- Right Column: LAST SCAN Card with Big Box Number -->
           <div class="dashboard-last-scan-card" id="lastScanReadoutContainer">
             <div class="last-scan-text-group">
               <div class="last-scan-micro-label">LAST SCAN</div>
-              <div class="last-scan-game-title" id="scanActionTitle">$2 Hit 100</div>
-              <div class="last-scan-box-ticket" id="lastScanDisplay">Box 4 &middot; ticket 011</div>
+              <div class="last-scan-game-title" id="scanActionTitle">Ready to scan</div>
+              <div class="last-scan-box-ticket" id="lastScanDisplay">Scan a ticket to start</div>
             </div>
             <div class="last-scan-num-badge">
-              <span class="last-scan-big-number" id="largeStatReadout">4</span>
+              <span class="last-scan-big-number" id="largeStatReadout">&ndash;</span>
             </div>
           </div>
         </div>
@@ -1573,13 +1572,13 @@
           <!-- Card 2: This Month -->
           <button type="button" class="kpi-royal-card" id="tabThisMonth">
             <span class="kpi-royal-label">This Month</span>
-            <strong class="kpi-royal-val" id="metricThisMonth">15</strong>
+            <strong class="kpi-royal-val" id="metricThisMonth">0</strong>
           </button>
 
           <!-- Card 3: This Week -->
           <button type="button" class="kpi-royal-card" id="tabThisWeek">
             <span class="kpi-royal-label">This Week</span>
-            <strong class="kpi-royal-val" id="metricThisWeek">1</strong>
+            <strong class="kpi-royal-val" id="metricThisWeek">0</strong>
           </button>
 
           <!-- Card 4: Today -->
@@ -1591,7 +1590,7 @@
           <!-- Card 5: Inactive -->
           <button type="button" class="kpi-royal-card" id="tabInactive">
             <span class="kpi-royal-label">Inactive</span>
-            <strong class="kpi-royal-val text-amber-orange" id="metricInactive">4</strong>
+            <strong class="kpi-royal-val text-amber-orange" id="metricInactive">0</strong>
           </button>
 
           <!-- Card 6: Update Inventory -->
@@ -3408,6 +3407,7 @@
             <button type="button" class="btn-settings-top-tab" data-tab="boxes">Boxes</button>
             <button type="button" class="btn-settings-top-tab" data-tab="games">Games</button>
             <button type="button" class="btn-settings-top-tab" data-tab="people">People</button>
+            <button type="button" class="btn-settings-top-tab" data-tab="cleardata">Clear data</button>
           </div>
         </header>
 
@@ -3417,17 +3417,6 @@
             <!-- Left Card: Store -->
             <div class="settings-white-card">
               <h2 class="settings-card-title">Store</h2>
-              <div class="settings-form-field" style="margin-bottom: 16px;">
-                <label for="settingsStoreSelect" class="settings-field-label">Current store</label>
-                <div style="display: flex; gap: 8px; align-items: center;">
-                  <div class="settings-select-wrapper" style="flex: 1;">
-                    <select id="settingsStoreSelect" class="settings-select-control">
-                    </select>
-                  </div>
-                  <button type="button" class="btn-settings-action-blue" id="btnSettingsAddStore" style="white-space: nowrap; padding: 7px 12px; font-size: 0.82rem; margin: 0;">&plus; Add Store</button>
-                </div>
-                <span class="settings-field-caption">Switch between stores or create a new store</span>
-              </div>
               <div class="settings-form-field">
                 <label for="setStoreName" class="settings-field-label">Store name</label>
                 <input type="text" id="setStoreName" class="settings-input-control" value="Amigo Food Mart" placeholder="Store name">
@@ -3563,6 +3552,33 @@
           </div>
         </div>
 
+        <!-- Tab 5: Clear data (System Reset & Factory Fresh) -->
+        <div class="settings-tab-pane-new" id="paneSettingsClearData" style="display: none;">
+          <div class="settings-danger-card">
+            <div class="settings-danger-header">
+              <div class="settings-danger-icon" aria-hidden="true">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/>
+                  <line x1="12" y1="9" x2="12" y2="13"/>
+                  <line x1="12" y1="17" x2="12.01" y2="17"/>
+                </svg>
+              </div>
+              <div>
+                <h2 class="settings-card-title danger-title">Clear all data &amp; reset system</h2>
+                <p class="settings-field-caption danger-caption">Permanently resets the POS system back to fresh state as if it has never been used. Removes all dispenser slots, active ticket packs, sales history, ticket history, shift reports, and inventory.</p>
+              </div>
+            </div>
+            <div class="settings-danger-body">
+              <label for="inputConfirmClear" class="settings-field-label">To confirm reset, please type <strong class="danger-highlight">CLEAR</strong> below:</label>
+              <div class="settings-danger-input-row">
+                <input type="text" id="inputConfirmClear" class="settings-input-control danger-input" placeholder="Type CLEAR here..." autocomplete="off" spellcheck="false">
+                <button type="button" id="btnClearAllData" class="btn-settings-danger-action" disabled>Clear all data</button>
+              </div>
+              <span class="settings-field-caption danger-warning-text">Warning: This action cannot be undone. All ticket history and shift data will be completely wiped.</span>
+            </div>
+          </div>
+        </div>
+
         <!-- Legacy Compatibility Container (Preserves test compatibility while invisible to user) -->
         <div id="settingsLegacyCompatibilityContainer" style="display: none;" aria-hidden="true">
           <button type="button" class="settings-tab-btn" data-tab="store">Store</button>
@@ -3594,10 +3610,6 @@
             <select id="setReportPrinter"><option value="receipt_80">Receipt</option></select>
             <input type="checkbox" id="toggleAutoPrintDayReport">
             <input type="checkbox" id="toggleShowEmptyBoxesReport">
-          </div>
-          <div id="paneSettingsClearData">
-            <input type="text" id="inputConfirmClear" placeholder="Type CLEAR here...">
-            <button type="button" id="btnClearAllData">Clear all data</button>
           </div>
           <button type="button" id="btnSettingsSaveAll">Save changes</button>
           <input type="text" id="setStoreAddress" value="2300 Moody Rd, Warner Robins, GA 31088">
@@ -5628,9 +5640,9 @@
         </div>
 
         <div class="cashier-store-select-row" style="margin-top: 10px; margin-bottom: 8px;">
-          <label for="selectCashierModalStore" style="font-size:0.6875rem; text-transform:uppercase; letter-spacing:0.05em; opacity:0.85; display:block; margin-bottom:4px; font-weight:600;">Store Location</label>
-          <select id="selectCashierModalStore" class="cashier-store-select" style="width: 100%; padding: 6px 10px; border-radius: 8px; font-size: 0.84rem; font-weight: 600; background: #ffffff; border: 1.5px solid rgba(0,0,0,0.15); color: #0f172a; cursor: pointer; outline: none;">
-          </select>
+          <label for="inputCashierModalStoreName" style="font-size:0.6875rem; text-transform:uppercase; letter-spacing:0.05em; opacity:0.85; display:block; margin-bottom:4px; font-weight:600;">Store Name</label>
+          <input type="text" id="inputCashierModalStoreName" class="cashier-store-input" placeholder="e.g. AMIGO FOOD MART" value="AMIGO FOOD MART" autocomplete="off" spellcheck="false" style="width: 100%; padding: 7px 10px; border-radius: 8px; font-size: 0.84rem; font-weight: 600; background: #ffffff; border: 1.5px solid rgba(0,0,0,0.15); color: #0f172a; outline: none; box-sizing: border-box;">
+          <select id="selectCashierModalStore" style="display: none;"></select>
         </div>
 
         <div class="cashier-quick-clerks">
@@ -7122,6 +7134,8 @@
         </div>
       </div>
     </div>
+  </dialog>
+
   <!-- ==========================================================================
        MODERN REFERENCE DIALOGS (Matching C:\Users\Admin\Downloads\02)
        ========================================================================== -->
@@ -7405,6 +7419,126 @@
           <button type="button" class="btn btn-lg" id="btnCancelCheckClose" style="background: var(--danger-soft); border-color: transparent; color: var(--danger); min-width: 160px">Cancel</button>
           <button type="button" class="btn btn-primary btn-lg" id="btnConfirmCheckClose" style="min-width: 200px">
             <svg class="ic" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"></path></svg>Confirm
+          </button>
+        </div>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- 6. Receive a Book Modal (Matching Inventory.dc.html lines 173-242 and user reference design) -->
+  <dialog id="receiveBookModernModal" class="lt-modal-dialog">
+    <div class="scrim modal-scrim-wrap lt" id="receiveBookScrim">
+      <div class="modal rb" role="dialog" aria-modal="true" aria-labelledby="rec-h" onclick="event.stopPropagation()">
+        <div class="modal-h">
+          <span class="icon-wrap" style="background: var(--brand-soft); color: var(--brand);">
+            <svg class="ic ic-lg" viewBox="0 0 24 24"><path d="m7.5 4.27 9 5.15"></path><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"></path><path d="m3.3 7 8.7 5 8.7-5"></path><path d="M12 22V12"></path></svg>
+          </span>
+          <div>
+            <h2 id="rec-h">Receive a book</h2>
+            <p>Scan the pack barcode, or tap a box and type with the keypad.</p>
+          </div>
+          <button type="button" class="btn btn-ghost icon-btn x" id="closeReceiveBookBtn" aria-label="Close" style="margin-left: auto;">
+            <svg class="ic" viewBox="0 0 24 24"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
+          </button>
+        </div>
+        <div class="modal-b">
+          <div class="rb-grid">
+            <div class="rb-l">
+              <div class="scan-field" style="height: 56px">
+                <svg class="ic" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h2"></path><path d="M17 3h2a2 2 0 0 1 2 2v2"></path><path d="M21 17v2a2 2 0 0 1-2 2h-2"></path><path d="M7 21H5a2 2 0 0 1-2-2v-2"></path><path d="M8 7v10"></path><path d="M12 7v10"></path><path d="M17 7v10"></path></svg>
+                <label for="rbCodeInput" class="sr-only" style="display:none">Pack barcode</label>
+                <input id="rbCodeInput" placeholder="Scan pack barcode" autocomplete="off" autofocus>
+                <button type="button" class="btn btn-primary btn-sm" id="rbReadBtn" style="color: #ffffff">Read</button>
+              </div>
+
+              <div class="rb-three">
+                <div class="field">
+                  <label for="rbGidInput">Game ID</label>
+                  <input id="rbGidInput" class="input mono on" inputmode="numeric" placeholder="4 digits">
+                </div>
+                <div class="field">
+                  <label for="rbPackInput">Pack #</label>
+                  <input id="rbPackInput" class="input mono" inputmode="numeric" placeholder="6–7 digits">
+                </div>
+                <div class="field">
+                  <label for="rbPosInput">Start ticket</label>
+                  <input id="rbPosInput" class="input mono" inputmode="numeric" value="000" placeholder="000">
+                </div>
+              </div>
+
+              <div id="rbMsgOk" class="msg ok" style="display: none;">
+                <svg class="ic" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"></path></svg>
+                <span id="rbMsgOkText">Game recognized — name and price are filled in.</span>
+              </div>
+              <div id="rbMsgInfo" class="msg info" style="display: none;">
+                <svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg>
+                <span id="rbMsgInfoText">New game. Add its name and price once — next time it fills in by itself.</span>
+              </div>
+
+              <div class="field">
+                <label for="rbNameInput">Game name</label>
+                <input id="rbNameInput" class="input" placeholder="e.g. Lucky Cash">
+              </div>
+
+              <div class="field">
+                <label>Ticket price</label>
+                <div class="prices" role="group" aria-label="Ticket price" id="rbPricesGroup">
+                  <button type="button" class="pc" data-price="1">$1</button>
+                  <button type="button" class="pc" data-price="2">$2</button>
+                  <button type="button" class="pc" data-price="3">$3</button>
+                  <button type="button" class="pc" data-price="5">$5</button>
+                  <button type="button" class="pc" data-price="10">$10</button>
+                  <button type="button" class="pc" data-price="20">$20</button>
+                  <button type="button" class="pc" data-price="30">$30</button>
+                  <button type="button" class="pc" data-price="50">$50</button>
+                  <div class="pc-other" id="rbPriceOtherWrap">
+                    <span>$</span>
+                    <input id="rbPriceOtherInput" inputmode="decimal" placeholder="Other" aria-label="Other price">
+                  </div>
+                </div>
+              </div>
+
+              <div class="pv" id="rbPackValueBox">
+                <div>
+                  <span class="l">Pack value · automatic</span>
+                  <b id="rbPackValueAmount">$300</b>
+                </div>
+                <div class="eq" id="rbPackValueEq">Pick a ticket price — the pack value is set for you</div>
+                <span class="tag tag-muted" id="rbPackValueTag">Standard $300 pack</span>
+              </div>
+
+              <div id="rbMsgErr" class="msg err" role="alert" style="display: none;">
+                <svg class="ic" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg>
+                <span id="rbMsgErrText"></span>
+              </div>
+            </div>
+
+            <div class="rb-pad">
+              <div class="rb-target">Typing in <b id="rbTargetLabel">Game ID</b></div>
+              <div class="rb-disp mono" id="rbKeypadDisplay"></div>
+              <div class="kgrid" role="group" aria-label="Number pad" id="rbKeypadGrid">
+                <button type="button" class="kk" data-key="7">7</button>
+                <button type="button" class="kk" data-key="8">8</button>
+                <button type="button" class="kk" data-key="9">9</button>
+                <button type="button" class="kk" data-key="4">4</button>
+                <button type="button" class="kk" data-key="5">5</button>
+                <button type="button" class="kk" data-key="6">6</button>
+                <button type="button" class="kk" data-key="1">1</button>
+                <button type="button" class="kk" data-key="2">2</button>
+                <button type="button" class="kk" data-key="3">3</button>
+                <button type="button" class="kk fn" data-key=".">.</button>
+                <button type="button" class="kk" data-key="0">0</button>
+                <button type="button" class="kk fn" data-key="back" aria-label="Delete last digit">⌫</button>
+              </div>
+              <button type="button" class="btn btn-block" id="rbKeypadClear">Clear</button>
+            </div>
+          </div>
+        </div>
+        <div class="modal-f">
+          <button type="button" class="btn btn-lg" id="rbCancelBtn">Cancel</button>
+          <button type="button" class="btn btn-primary btn-lg" id="rbSaveBtn" style="color: #ffffff; min-width: 220px;" disabled>
+            <svg class="ic" viewBox="0 0 24 24" style="stroke: #ffffff;"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>
+            Add to inventory
           </button>
         </div>
       </div>

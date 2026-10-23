@@ -442,14 +442,15 @@ export const REFERENCE_REMOVED_PACKS = [
  * Reconciles inventory data and returns metrics, active tab rows, and counts.
  */
 export function getInventoryScreenData(state, activeTab = 'in_stock', searchQuery = '') {
+  const isDataCleared = Boolean(state?.dataCleared);
   const query = (searchQuery || '').trim().toLowerCase();
   const totalSlotsCount = 65;
 
   // 1. In Stock Items (default 4 from Image 1, plus any dynamically added scanned items)
   let inStockItems = [];
-  if (state?.inStockInventory && Array.isArray(state.inStockInventory) && state.inStockInventory.length > 0) {
+  if (Array.isArray(state?.inStockInventory)) {
     inStockItems = JSON.parse(JSON.stringify(state.inStockInventory));
-  } else {
+  } else if (!isDataCleared) {
     inStockItems = JSON.parse(JSON.stringify(REFERENCE_IN_STOCK_PACKS));
   }
 
@@ -485,7 +486,7 @@ export function getInventoryScreenData(state, activeTab = 'in_stock', searchQuer
         });
       }
     });
-  } else {
+  } else if (!isDataCleared) {
     // Generate active items from REFERENCE_INVENTORY_ITEMS
     REFERENCE_INVENTORY_ITEMS.forEach(r => {
       activeItems.push({
@@ -513,8 +514,8 @@ export function getInventoryScreenData(state, activeTab = 'in_stock', searchQuer
   }
   activeItems.sort((a, b) => (Number(a.boxNumber) || 0) - (Number(b.boxNumber) || 0));
 
-  // 3. Completed Items (3 reference items)
-  let completedItems = JSON.parse(JSON.stringify(REFERENCE_COMPLETED_PACKS));
+  // 3. Completed Items (3 reference items if not cleared)
+  let completedItems = isDataCleared ? [] : JSON.parse(JSON.stringify(REFERENCE_COMPLETED_PACKS));
   if (state?.soldOutThisShift && state.soldOutThisShift.length > 0) {
     state.soldOutThisShift.forEach((so, idx) => {
       completedItems.push({
@@ -535,8 +536,27 @@ export function getInventoryScreenData(state, activeTab = 'in_stock', searchQuer
     });
   }
 
-  // 4. Removed Items (1 reference item)
-  let removedItems = JSON.parse(JSON.stringify(REFERENCE_REMOVED_PACKS));
+  // 4. Removed Items (1 reference item if not cleared)
+  let removedItems = isDataCleared ? [] : JSON.parse(JSON.stringify(REFERENCE_REMOVED_PACKS));
+  if (state?.partialTakeOuts && state.partialTakeOuts.length > 0) {
+    state.partialTakeOuts.forEach((pto, idx) => {
+      removedItems.push({
+        id: `rem_live_${idx}`,
+        gameName: pto.gameName || 'Scratch-off',
+        gameNumber: `Game ${pto.gameCode || 1500}`,
+        packNumber: String(pto.packNumber),
+        price: pto.price || 5,
+        packSize: '60 tickets',
+        packSizeNum: 60,
+        status: 'REMOVED',
+        statusLabel: 'Removed',
+        statusBadgeClass: 'badge-removed',
+        boxNumber: pto.boxNumber || null,
+        position: String(pto.ticket || 0).padStart(3, '0'),
+        receivedDate: 'Today'
+      });
+    });
+  }
 
   // 5. All Items (Sum of inStock + active + completed + removed = 27)
   let allItems = [
@@ -595,13 +615,13 @@ export function getInventoryScreenData(state, activeTab = 'in_stock', searchQuer
     kpis: {
       packsOnRackCount: activeItems.length,
       emptyBoxesCount: emptyBoxes.length,
-      ticketsOnRackCount: 1882,
-      totalRackCapacity: 2240,
-      rackValue: 6383.00,
-      safeValue: 1200.00,
+      ticketsOnRackCount: isDataCleared ? 0 : 1882,
+      totalRackCapacity: isDataCleared ? 0 : 2240,
+      rackValue: isDataCleared ? 0.00 : 6383.00,
+      safeValue: isDataCleared ? 0.00 : 1200.00,
       safePacksCount: inStockItems.length,
-      soldTodaySales: 1237.00,
-      soldTodayTickets: 248
+      soldTodaySales: isDataCleared ? 0.00 : 1237.00,
+      soldTodayTickets: isDataCleared ? 0 : 248
     },
     counts: {
       inStock: inStockItems.length,
