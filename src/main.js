@@ -613,6 +613,11 @@ function initTheme() {
 function applyTheme(theme, notify = true) {
   currentTheme = theme;
   document.documentElement.setAttribute('data-theme', theme);
+  if (theme === 'dark') {
+    document.body.classList.add('dark-mode');
+  } else {
+    document.body.classList.remove('dark-mode');
+  }
   localStorage.setItem('lotto_theme', theme);
 
   if (theme === 'dark') {
@@ -813,7 +818,8 @@ function setupSidebarAutoCollapse() {
   if (_sidebarAutoCollapseInitialized) return;
   _sidebarAutoCollapseInitialized = true;
 
-  const autoCloseSeconds = 5;
+  // Do not auto-collapse sidebar arbitrarily after 5s; manual collapse button is used instead
+  const autoCloseSeconds = 0;
   if (autoCloseSeconds <= 0) return;
 
   const sidebar = document.querySelector('.pos-sidebar');

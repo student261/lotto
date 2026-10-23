@@ -1887,4 +1887,171 @@ dialog textarea:focus {
   background: var(--surface-2, #1C2128) !important;
 }
 
+/* ==========================================================================
+   Full Dark Mode Palette Alignment for Views & Tables
+   ========================================================================== */
+
+/* Dark Mode Table Card Containers */
+[data-theme="dark"] .inv-table-card,
+[data-theme="dark"] .rpt-table-card,
+[data-theme="dark"] .rpt-table-card-clean {
+  background: var(--surface, #161A20) !important;
+  border-color: var(--line, #272D36) !important;
+}
+
+[data-theme="dark"] .inv-modern-table td,
+[data-theme="dark"] .rpt-table-clean td {
+  background: var(--surface, #161A20) !important;
+  border-bottom-color: var(--line, #272D36) !important;
+  color: var(--ink, #EEF1F5) !important;
+}
+
+/* Reports Header & Titles in Dark Mode */
+[data-theme="dark"] .hist-header-titles .page-main-title {
+  color: var(--ink, #EEF1F5) !important;
+}
+
+[data-theme="dark"] .hist-header-titles .page-subtitle {
+  color: var(--ink-3, #8F98A5) !important;
+}
+
+[data-theme="dark"] .reports-view-switcher {
+  background: var(--surface-3, #252B34) !important;
+  border-color: var(--line, #272D36) !important;
+}
+
+[data-theme="dark"] .btn-rpt-switch {
+  color: var(--ink-2, #B7BFCA) !important;
+}
+
+[data-theme="dark"] .btn-rpt-switch:hover {
+  color: var(--ink, #EEF1F5) !important;
+}
+
+[data-theme="dark"] .btn-rpt-switch.active {
+  background: var(--surface, #161A20) !important;
+  color: var(--ink, #EEF1F5) !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4) !important;
+}
+
+/* Inventory Action Buttons in Dark Mode */
+[data-theme="dark"] .btn-inv-action-outlined {
+  background: var(--surface, #161A20) !important;
+  border-color: var(--line-strong, #38404B) !important;
+  color: var(--ink, #EEF1F5) !important;
+}
+
+[data-theme="dark"] .btn-inv-action-outlined:hover {
+  background: var(--surface-2, #1C2128) !important;
+}
+
+/* Settings Page Dark Mode */
+[data-theme="dark"] .settings-white-card {
+  background: var(--surface, #161A20) !important;
+  border-color: var(--line, #272D36) !important;
+  color: var(--ink, #EEF1F5) !important;
+}
+
+[data-theme="dark"] .settings-card-title {
+  color: var(--ink, #EEF1F5) !important;
+}
+
+[data-theme="dark"] .settings-field-label {
+  color: var(--ink-2, #B7BFCA) !important;
+}
+
+[data-theme="dark"] .settings-field-caption {
+  color: var(--ink-3, #8F98A5) !important;
+}
+
+[data-theme="dark"] .settings-input-control,
+[data-theme="dark"] .settings-select-control {
+  background: var(--surface-2, #1C2128) !important;
+  border-color: var(--line-strong, #38404B) !important;
+  color: var(--ink, #EEF1F5) !important;
+}
+
+[data-theme="dark"] .settings-input-control:focus,
+[data-theme="dark"] .settings-select-control:focus {
+  border-color: var(--brand, #6B97FF) !important;
+}
+
+[data-theme="dark"] .settings-modern-table th {
+  background: var(--surface-2, #1C2128) !important;
+  color: var(--ink-3, #8F98A5) !important;
+  border-color: var(--line, #272D36) !important;
+}
+
+[data-theme="dark"] .settings-modern-table td {
+  background: var(--surface, #161A20) !important;
+  color: var(--ink, #EEF1F5) !important;
+  border-color: var(--line, #272D36) !important;
+}
+
+[data-theme="dark"] .settings-top-tabs-switcher {
+  background: var(--surface-3, #252B34) !important;
+  border-color: var(--line, #272D36) !important;
+}
+
+[data-theme="dark"] .btn-settings-top-tab {
+  color: var(--ink-2, #B7BFCA) !important;
+}
+
+[data-theme="dark"] .btn-settings-top-tab:hover {
+  color: var(--ink, #EEF1F5) !important;
+}
+
+[data-theme="dark"] .btn-settings-top-tab.active {
+  background: var(--surface, #161A20) !important;
+  color: var(--ink, #EEF1F5) !important;
+}
+
+[data-theme="dark"] .settings-recipient-avatar {
+  background: var(--brand-soft, #18233D) !important;
+  color: var(--brand, #6B97FF) !important;
+}
+
+[data-theme="dark"] .settings-recipient-email {
+  color: var(--ink, #EEF1F5) !important;
+}
+
+[data-theme="dark"] .btn-stepper-btn {
+  background: var(--surface-2, #1C2128) !important;
+  border-color: var(--line-strong, #38404B) !important;
+  color: var(--ink, #EEF1F5) !important;
+}
+
+[data-theme="dark"] .settings-stepper-display {
+  color: var(--ink, #EEF1F5) !important;
+}
+
+/* Close Shift View Dark Mode */
+[data-theme="dark"] .cs-page-title,
+[data-theme="dark"] .sc-page-title,
+[data-theme="dark"] .sc-main-headline,
+[data-theme="dark"] .ssh-page-title {
+  color: var(--ink, #EEF1F5) !important;
+}
+
+[data-theme="dark"] .cs-card,
+[data-theme="dark"] .sc-card,
+[data-theme="dark"] .ssh-card {
+  background: var(--surface, #161A20) !important;
+  border-color: var(--line, #272D36) !important;
+  color: var(--ink, #EEF1F5) !important;
+}
+
+[data-theme="dark"] .cs-card-heading,
+[data-theme="dark"] .ssh-card-title {
+  color: var(--ink, #EEF1F5) !important;
+}
+
+/* Day Report View Dark Mode */
+[data-theme="dark"] .day-report-sheet-card {
+  background: var(--surface, #161A20) !important;
+  border-color: var(--line, #272D36) !important;
+  color: var(--ink, #EEF1F5) !important;
+}
+
+
 

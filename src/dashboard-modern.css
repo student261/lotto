@@ -393,46 +393,47 @@
 }
 
 [data-theme="dark"] #viewSellCounter #mainShiftActionBtn {
-  background: var(--surface-3, #252B34);
-  border-color: var(--line-strong, #38404B);
-  color: var(--ink, #EEF1F5);
+  background: var(--surface-3, #252B34) !important;
+  border-color: var(--line-strong, #38404B) !important;
+  color: var(--ink, #EEF1F5) !important;
 }
 
 [data-theme="dark"] #viewSellCounter #btnHeaderRefresh {
-  background: var(--surface, #161A20);
-  border-color: var(--line, #272D36);
-  color: var(--ink, #EEF1F5);
+  background: var(--surface, #161A20) !important;
+  border-color: var(--line, #272D36) !important;
+  color: var(--ink, #EEF1F5) !important;
 }
 
 [data-theme="dark"] #viewSellCounter #btnHeaderCancel {
-  background: var(--danger-soft, #371614);
-  color: var(--danger, #FF6F63);
+  background: var(--danger-soft, #371614) !important;
+  border-color: var(--danger, #C0261B) !important;
+  color: var(--danger, #FF6F63) !important;
 }
 
 [data-theme="dark"] #viewSellCounter .dashboard-kpi-bar .kpi-metric-card,
 [data-theme="dark"] #viewSellCounter .dashboard-kpi-bar .kpi-royal-item,
 [data-theme="dark"] #viewSellCounter .dashboard-kpi-bar > div {
-  background: var(--surface, #161A20);
-  border-color: var(--line, #272D36);
+  background: var(--surface, #161A20) !important;
+  border-color: var(--line, #272D36) !important;
 }
 
 [data-theme="dark"] #viewSellCounter .kpi-value,
 [data-theme="dark"] #viewSellCounter .kpi-royal-val {
-  color: var(--ink, #EEF1F5);
+  color: var(--ink, #EEF1F5) !important;
 }
 
 [data-theme="dark"] #viewSellCounter .dispenser-rack-container,
 [data-theme="dark"] #viewSellCounter .box-card {
-  background: var(--surface, #161A20);
-  border-color: var(--line, #272D36);
+  background: var(--surface, #161A20) !important;
+  border-color: var(--line, #272D36) !important;
 }
 
 [data-theme="dark"] #viewSellCounter .box-card .box-main-number {
-  color: var(--ink, #EEF1F5);
+  color: var(--ink, #EEF1F5) !important;
 }
 
 [data-theme="dark"] #viewSellCounter .box-card .ticket-sold-count {
-  color: var(--brand, #6B97FF);
+  color: var(--brand, #6B97FF) !important;
 }
 
 [data-theme="dark"] #viewSellCounter #undoActionBtn {

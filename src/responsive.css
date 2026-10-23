@@ -2532,3 +2532,199 @@ html, body {
   margin-top: 16px !important;
 }
 
+/* ==========================================================================
+   Desktop POS Dark Mode Overrides ([data-theme="dark"])
+   ========================================================================== */
+[data-theme="dark"] .dashboard-heading {
+  color: #EEF1F5 !important;
+}
+
+[data-theme="dark"] .dashboard-subheading {
+  color: #8F98A5 !important;
+}
+
+[data-theme="dark"] .shift-status-pill-badge {
+  background: #143825 !important;
+  color: #2ED573 !important;
+}
+
+[data-theme="dark"] .shift-pill-title {
+  color: #2ED573 !important;
+}
+
+[data-theme="dark"] .shift-pill-sub {
+  color: #6EE7B7 !important;
+}
+
+[data-theme="dark"] .shift-pill-green-dot {
+  background-color: #2ED573 !important;
+}
+
+[data-theme="dark"] .btn-ctrl-refresh {
+  background: #161A20 !important;
+  border-color: #272D36 !important;
+  color: #EEF1F5 !important;
+}
+
+[data-theme="dark"] .btn-ctrl-refresh:hover {
+  background: #1C2128 !important;
+  border-color: #38404B !important;
+}
+
+[data-theme="dark"] .btn-ctrl-end-shift {
+  background: #252B34 !important;
+  border: 1px solid #38404B !important;
+  color: #EEF1F5 !important;
+}
+
+[data-theme="dark"] .btn-ctrl-end-shift:hover {
+  background: #2E3541 !important;
+}
+
+[data-theme="dark"] .btn-ctrl-cancel {
+  background: #371614 !important;
+  border-color: rgba(239, 68, 68, 0.3) !important;
+  color: #FF6F63 !important;
+}
+
+[data-theme="dark"] .btn-ctrl-cancel:hover {
+  background: #4B1E1B !important;
+}
+
+[data-theme="dark"] .dashboard-scanner-input-wrap {
+  background: #161A20 !important;
+  border-color: #6B97FF !important;
+  box-shadow: 0 0 0 3px rgba(107, 151, 255, 0.15) !important;
+}
+
+[data-theme="dark"] .dashboard-scanner-field {
+  color: #EEF1F5 !important;
+}
+
+[data-theme="dark"] .dashboard-scanner-field::placeholder {
+  color: #8F98A5 !important;
+}
+
+[data-theme="dark"] .btn-scanner-enter-pill {
+  background: #20242B !important;
+  border-color: #3E4554 !important;
+  color: #EEF1F5 !important;
+}
+
+[data-theme="dark"] .btn-scanner-enter-pill:hover {
+  background: #6B97FF !important;
+  color: #FFFFFF !important;
+  border-color: #6B97FF !important;
+}
+
+[data-theme="dark"] .btn-ctrl-undo {
+  background: #20242B !important;
+  border-color: #2E3440 !important;
+  color: #EEF1F5 !important;
+}
+
+[data-theme="dark"] .btn-ctrl-undo:hover {
+  background: #282E39 !important;
+  color: #FFFFFF !important;
+}
+
+[data-theme="dark"] .dashboard-last-scan-card {
+  background: #161A20 !important;
+  border-color: #272D36 !important;
+}
+
+[data-theme="dark"] .last-scan-micro-label {
+  color: #8F98A5 !important;
+}
+
+[data-theme="dark"] .last-scan-game-title {
+  color: #EEF1F5 !important;
+}
+
+[data-theme="dark"] .last-scan-box-ticket {
+  color: #8F98A5 !important;
+}
+
+[data-theme="dark"] .last-scan-num-badge {
+  background: #20242B !important;
+  border-color: #2E3440 !important;
+}
+
+[data-theme="dark"] .last-scan-big-number {
+  color: #EEF1F5 !important;
+}
+
+[data-theme="dark"] .box-card {
+  background: #161A20 !important;
+  border-color: #272D36 !important;
+}
+
+[data-theme="dark"] .box-card:hover {
+  border-color: #6B97FF !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4) !important;
+}
+
+[data-theme="dark"] .sell-counter-view .box-card .price-tag {
+  color: #34D399 !important;
+}
+
+[data-theme="dark"] .sell-counter-view .box-card .box-main-number {
+  color: #EEF1F5 !important;
+}
+
+[data-theme="dark"] .sell-counter-view .box-card .card-dashed-line {
+  border-bottom-color: #2E3440 !important;
+}
+
+[data-theme="dark"] .sell-counter-view .box-card .ticket-sold-count {
+  color: #6B97FF !important;
+}
+
+[data-theme="dark"] .pos-sidebar .sidebar-nav-item.active,
+[data-theme="dark"] .pos-sidebar .sidebar-nav-item#navSellCounter.active {
+  background: var(--brand-soft, #18233D) !important;
+  color: var(--brand-ink, #B9CDFF) !important;
+}
+
+[data-theme="dark"] .pos-sidebar .sidebar-nav-item.active svg,
+[data-theme="dark"] .pos-sidebar .sidebar-nav-item#navSellCounter.active svg {
+  stroke: var(--brand, #6B97FF) !important;
+}
+
+[data-theme="dark"] .pos-sidebar .sidebar-footer {
+  border-top-color: #272D36 !important;
+}
+
+[data-theme="dark"] .pos-sidebar .sidebar-action-btn,
+[data-theme="dark"] .pos-sidebar .sidebar-signout-btn {
+  color: #8F98A5 !important;
+}
+
+[data-theme="dark"] .pos-sidebar .sidebar-action-btn:hover,
+[data-theme="dark"] .pos-sidebar .sidebar-signout-btn:hover {
+  background: #1C2128 !important;
+  color: #EEF1F5 !important;
+}
+
+[data-theme="dark"] .pos-sidebar .user-avatar-initial {
+  background: #1C2128 !important;
+  color: #6B97FF !important;
+}
+
+[data-theme="dark"] .pos-sidebar .user-name {
+  color: #EEF1F5 !important;
+}
+
+[data-theme="dark"] .pos-sidebar .user-role-line {
+  color: #8F98A5 !important;
+}
+
+[data-theme="dark"] .inv-empty-title {
+  color: #EEF1F5 !important;
+}
+
+[data-theme="dark"] .inv-empty-sub {
+  color: #8F98A5 !important;
+}
+
+
