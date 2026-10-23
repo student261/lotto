@@ -223,21 +223,21 @@ html, body {
    and adapts dispenser grid so cards do NOT stretch awkwardly.
    ------------------------------------------------------------------ */
 @media (min-width: 1400px) {
-  /* Allow views to expand fluidly instead of being clipped to 1400px */
+  /* Allow views to expand fluidly with clean 24px edge padding matching dashboard */
   .receive-packs-view,
   .day-report-view,
   .inventory-view,
   .history-view,
   .settings-view {
-    max-width: 2200px !important;
-    margin: 0 auto !important;
+    max-width: none !important;
+    margin: 0 !important;
     width: 100% !important;
-    padding-left: 2rem !important;
-    padding-right: 2rem !important;
+    padding-left: 24px !important;
+    padding-right: 24px !important;
   }
 
   .pos-main-container {
-    padding: 0 2.5rem 1rem !important;
+    padding: 0 !important;
   }
 
   .dispensers-grid {
@@ -253,7 +253,7 @@ html, body {
 
 @media (min-width: 1800px) {
   .pos-main-container {
-    padding: 0 1.5rem 1rem !important;
+    padding: 0 !important;
   }
 
   .pos-unified-header-bar {

@@ -11422,14 +11422,14 @@ function setupEventListeners() {
 
         return `
           <tr data-shift-id="${s.id}">
-            <td class="rpt-td-shift"><strong>${shiftLabel}</strong></td>
+            <td class="rpt-td-shift mono"><b>${shiftLabel}</b></td>
             <td class="rpt-td-date">${dateStr}</td>
             <td class="rpt-td-person">${person}</td>
-            <td class="rpt-td-started">${startStr}</td>
-            <td class="rpt-td-closed">${closeStr}</td>
-            <td class="rpt-td-tickets">${tickets}</td>
-            <td class="rpt-td-sales">${salesStr}</td>
-            <td class="rpt-td-email"><span class="rpt-email-sent-badge">Sent</span></td>
+            <td class="rpt-td-started muted" style="color: var(--ink-3, #66707D);">${startStr}</td>
+            <td class="rpt-td-closed muted" style="color: var(--ink-3, #66707D);">${closeStr}</td>
+            <td class="rpt-td-tickets r mono" style="font-weight: 700; text-align: right;">${tickets}</td>
+            <td class="rpt-td-sales r money mono" style="font-weight: 800; text-align: right; color: var(--money, #0A7A42);">${salesStr}</td>
+            <td class="rpt-td-email"><span class="tag tag-money">Sent</span></td>
             <td class="rpt-td-action" style="text-align: right;">
               <button type="button" class="btn-rpt-view rpt-btn-open-shift" data-shift-id="${s.id}" data-day="${dateStr}" data-shift="${shiftLabel}">View</button>
             </td>
@@ -11894,11 +11894,11 @@ function setupEventListeners() {
     }
 
     tbody.innerHTML = items.map(item => {
-      const boxDisplay = item.boxNumber ? String(item.boxNumber).padStart(2, '0') : '—';
+      const boxDisplay = item.boxNumber ? `<span class="boxn">${String(item.boxNumber).padStart(2, '0')}</span>` : `<span class="muted" style="color: var(--ink-3, #66707D);">—</span>`;
       const badgeClass = item.statusBadgeClass || (
-        item.status === 'ACTIVE' ? 'badge-active' :
-        item.status === 'COMPLETED' ? 'badge-completed' :
-        item.status === 'REMOVED' ? 'badge-removed' : 'badge-in-stock'
+        item.status === 'ACTIVE' ? 'tag tag-money' :
+        item.status === 'COMPLETED' ? 'tag tag-muted' :
+        item.status === 'REMOVED' ? 'tag tag-warn' : 'tag tag-brand'
       );
       const statusText = item.statusLabel || (
         item.status === 'ACTIVE' ? 'Active' :
@@ -11906,23 +11906,23 @@ function setupEventListeners() {
         item.status === 'REMOVED' ? 'Removed' : 'In stock'
       );
       const priceDisplay = `$${item.price}`;
-      const posDisplay = item.position !== undefined ? String(item.position) : '000';
+      const posDisplay = item.position !== undefined ? String(item.position).padStart(3, '0') : '000';
       const recDisplay = item.receivedDate || 'Oct 17';
       const sizeDisplay = item.packSize || `${item.packSizeNum || 100} tickets`;
 
       return `
         <tr class="inv-clickable-row" data-pack-num="${item.packNumber}" title="Click to edit book details">
-          <td class="td-inv-game">
-            <div class="game-title">${item.gameName}</div>
-            <div class="game-num">${item.gameNumber}</div>
+          <td class="td-inv-game g">
+            <div class="game-title"><b>${item.gameName}</b></div>
+            <div class="game-num">Game ${item.gameNumber}</div>
           </td>
-          <td class="td-inv-pack">${item.packNumber}</td>
-          <td class="td-inv-price">${priceDisplay}</td>
-          <td class="td-inv-size">${sizeDisplay}</td>
+          <td class="td-inv-pack mono" style="font-weight: 700;">${item.packNumber}</td>
+          <td class="td-inv-price r money" style="font-weight: 700;">${priceDisplay}</td>
+          <td class="td-inv-size r">${sizeDisplay}</td>
           <td class="td-inv-status"><span class="${badgeClass}">${statusText}</span></td>
           <td class="td-inv-box">${boxDisplay}</td>
-          <td class="td-inv-pos">${posDisplay}</td>
-          <td class="td-inv-rec">${recDisplay}</td>
+          <td class="td-inv-pos r mono">${posDisplay}</td>
+          <td class="td-inv-rec muted" style="color: var(--ink-3, #66707D);">${recDisplay}</td>
         </tr>
       `;
     }).join('');
