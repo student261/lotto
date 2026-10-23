@@ -13,6 +13,12 @@ import { getSettingsPeopleList, getSettingsRolesPeopleList, REFERENCE_MODERN_SET
 import { initDatabaseSync, checkMySQLStatus, saveShiftReportToDB, syncHistoricalShiftsToDB, logTicketScanToDB } from './dbSync.js';
 import { openDaySettlementModal, openPastDaysModal } from './settlementHistoryModals.js';
 
+const BUILD_ID = '2026-10-22-phase0';
+if (typeof document !== 'undefined' && document.documentElement) {
+  document.documentElement.dataset.build = BUILD_ID;
+}
+console.info(`[LottoTrack Pro] Build ID: ${BUILD_ID}`);
+
 let state = loadState();
 if (state && (state.cashierName !== 'Maulik' || state.shiftNumber !== 13 || state.shiftStatus !== 'IN_PROGRESS')) {
   state.cashierName = 'Maulik';
@@ -749,641 +755,174 @@ function sanitizeAndMigrateSlots() {
   }
 }
 
-// =============================================================
-// Modern Mockup (02) Interactive Dialogs Handler
-// =============================================================
-let currentModernBoxSlot = null;
-let currentModernChosenEmptyBox = null;
-let currentModernActivationPack = null;
-
-export function openModernKpiListModal(filterType = 'today') {
-  const modal = document.getElementById('kpiListModal');
-  const countEl = document.getElementById('kpiListModalCount');
-  const titleEl = document.getElementById('kpiListModalTitle');
-  const subEl = document.getElementById('kpiListModalSub');
-  const colHeaderEl = document.getElementById('kpiListModalColHeader');
-  const tbodyEl = document.getElementById('kpiListModalTableBody');
-  const emptyWrap = document.getElementById('kpiListModalEmpty');
-  const emptyTitle = document.getElementById('kpiListModalEmptyTitle');
-  const emptyText = document.getElementById('kpiListModalEmptyText');
-  const tableWrap = document.getElementById('kpiListModalTableWrap');
-  if (!modal || !tbodyEl) return;
-
-  tbodyEl.innerHTML = '';
-  let title = 'Today';
-  let sub = 'Today · live tickets';
-  let colHeader = 'Sold';
-  let count = 0;
-  let rows = [];
-
-  const activeSlots = (state.slots || []).filter(s => s && s.status === 'ACTIVE' && s.packNumber);
-
-  if (filterType === 'inactive') {
-    title = 'Inactive boxes';
-    sub = 'Inactive boxes · Empty or waiting book';
-    colHeader = 'Status';
-    const emptySlots = (state.slots || []).filter(s => !s || s.status !== 'ACTIVE' || !s.packNumber);
-    count = emptySlots.length;
-    rows = emptySlots.map(s => ({
-      boxNumber: s.boxNumber,
-      gameName: 'Empty slot',
-      packNumber: '---',
-      price: '-',
-      pos: '00',
-      tagText: 'EMPTY',
-      tagCls: 'tag-subtle'
-    }));
-  } else if (filterType === 'week') {
-    title = 'This Week';
-    sub = 'This Week · Monday to now';
-    colHeader = 'Sold';
-    count = document.getElementById('metricThisWeek')?.textContent || 0;
-    rows = activeSlots.map(s => {
-      const sold = Math.max(0, (s.currentTicket || 0) - (s.startTicket || 0));
-      return {
-        boxNumber: s.boxNumber,
-        gameName: cleanGameTitle(s.gameName),
-        packNumber: s.packNumber,
-        price: `$${Number(s.price || 1).toFixed(0)}`,
-        pos: `#${String(s.currentTicket || 0).padStart(2, '0')}`,
-        tagText: sold > 0 ? `${sold} sold` : 'Active',
-        tagCls: sold > 0 ? 'tag-money' : 'tag-brand'
-      };
-    });
-  } else if (filterType === 'month') {
-    title = 'This Month';
-    sub = 'This Month · 31 days';
-    colHeader = 'Sold';
-    count = document.getElementById('metricThisMonth')?.textContent || 0;
-    rows = activeSlots.map(s => {
-      const sold = Math.max(0, (s.currentTicket || 0) - (s.startTicket || 0));
-      return {
-        boxNumber: s.boxNumber,
-        gameName: cleanGameTitle(s.gameName),
-        packNumber: s.packNumber,
-        price: `$${Number(s.price || 1).toFixed(0)}`,
-        pos: `#${String(s.currentTicket || 0).padStart(2, '0')}`,
-        tagText: sold > 0 ? `${sold} sold` : 'Active',
-        tagCls: sold > 0 ? 'tag-money' : 'tag-brand'
-      };
-    });
-  } else {
-    // Today
-    title = 'Today';
-    sub = 'Today · live tickets';
-    colHeader = 'Sold';
-    count = document.getElementById('metricToday')?.textContent || 0;
-    rows = activeSlots.map(s => {
-      const sold = Math.max(0, (s.currentTicket || 0) - (s.startTicket || 0));
-      return {
-        boxNumber: s.boxNumber,
-        gameName: cleanGameTitle(s.gameName),
-        packNumber: s.packNumber,
-        price: `$${Number(s.price || 1).toFixed(0)}`,
-        pos: `#${String(s.currentTicket || 0).padStart(2, '0')}`,
-        tagText: sold > 0 ? `${sold} sold` : 'Active',
-        tagCls: sold > 0 ? 'tag-money' : 'tag-brand'
-      };
-    });
-  }
-
-  if (countEl) countEl.textContent = count;
-  if (titleEl) titleEl.textContent = title;
-  if (subEl) subEl.textContent = sub;
-  if (colHeaderEl) colHeaderEl.textContent = colHeader;
-
-  if (rows.length === 0) {
-    if (emptyWrap) emptyWrap.style.display = 'flex';
-    if (tableWrap) tableWrap.style.display = 'none';
-    if (emptyTitle) emptyTitle.textContent = `No ${title} items`;
-    if (emptyText) emptyText.textContent = `There are currently no items matching ${title}.`;
-  } else {
-    if (emptyWrap) emptyWrap.style.display = 'none';
-    if (tableWrap) tableWrap.style.display = 'block';
-    tbodyEl.innerHTML = rows.map(r => `
-      <tr>
-        <td><span class="boxn">${r.boxNumber}</span></td>
-        <td class="g"><b>${r.gameName}</b><span>Pack ${r.packNumber}</span></td>
-        <td class="r money" style="font-weight: 700">${r.price}</td>
-        <td class="r big">${r.pos}</td>
-        <td class="r"><span class="tag ${r.tagCls}">${r.tagText}</span></td>
-      </tr>
-    `).join('');
-  }
-
-  sfx.keypad();
-  modal.showModal();
-}
-
-export function openModernSettlementModal() {
-  const modal = document.getElementById('settlementModernModal');
-  if (!modal) return;
-
-  const activeSlots = (state.slots || []).filter(s => s && s.status === 'ACTIVE' && s.packNumber);
-  const scannedInEndShift = activeSlots.filter(s => s.scannedInEndShift).length;
-  const totalSold = state.salesSummary?.totalTickets || 0;
-  const totalRev = Number(state.salesSummary?.totalRevenue || 0).toFixed(2);
-
-  const subEl = document.getElementById('settleModernSub');
-  if (subEl) subEl.textContent = `Shift #${state.shiftNumber || 1} in progress`;
-
-  const thisBoxesEl = document.getElementById('settleThisBoxes');
-  if (thisBoxesEl) thisBoxesEl.textContent = scannedInEndShift;
-  const thisScanNoteEl = document.getElementById('settleThisScanNote');
-  if (thisScanNoteEl) thisScanNoteEl.textContent = `of ${activeSlots.length} active`;
-
-  const thisTicketsEl = document.getElementById('settleThisTickets');
-  if (thisTicketsEl) thisTicketsEl.textContent = totalSold;
-
-  const thisSalesEl = document.getElementById('settleThisSales');
-  if (thisSalesEl) thisSalesEl.textContent = `$${totalRev}`;
-
-  // Last shift
-  const lastShift = (state.shiftHistory && state.shiftHistory.length > 0)
-    ? state.shiftHistory[state.shiftHistory.length - 1]
-    : null;
-
-  const lastShiftNo = document.getElementById('settleLastShiftNo');
-  if (lastShiftNo) lastShiftNo.textContent = lastShift ? `#${lastShift.shiftNumber}` : '#12';
-
-  const lastShiftMeta = document.getElementById('settleLastShiftMeta');
-  if (lastShiftMeta) {
-    const cashier = lastShift?.cashier || 'Daniel';
-    const time = lastShift?.closedAt || '10:05 PM';
-    lastShiftMeta.textContent = `${cashier} · closed ${time}`;
-  }
-
-  const lastTickets = document.getElementById('settleLastTickets');
-  if (lastTickets) lastTickets.textContent = lastShift?.totalTickets || 251;
-
-  const lastBoxes = document.getElementById('settleLastBoxes');
-  if (lastBoxes) lastBoxes.textContent = `${lastShift?.boxesScanned || 19} boxes`;
-
-  const lastSales = document.getElementById('settleLastSales');
-  if (lastSales) lastSales.textContent = lastShift ? `$${Number(lastShift.totalRevenue || 0).toFixed(2)}` : '$1,512.00';
-
-  sfx.keypad();
-  modal.showModal();
-}
-
-export function openModernBoxDetails(slot) {
-  if (!slot) return;
-  currentModernBoxSlot = slot;
-  currentModernChosenEmptyBox = null;
-  const modal = document.getElementById('boxModernDetailsModal');
-  if (!modal) return;
-
-  const cleanName = cleanGameTitle(slot.gameName);
-  const std = getStandardPackDetails(slot.price || 1);
-  const packSize = slot.initialTickets || slot.packSize || std.packSize || 100;
-  const currentTicketNum = slot.currentTicket !== undefined && slot.currentTicket !== null ? Number(slot.currentTicket) : 0;
-  const priceFormatted = `$${Number(slot.price || 1).toFixed(2)}`;
-
-  const iconWrap = document.getElementById('boxModernIconWrap');
-  if (iconWrap) iconWrap.textContent = slot.boxNumber;
-  const heading = document.getElementById('boxModernHeading');
-  if (heading) heading.textContent = `Box ${slot.boxNumber} · ${cleanName}`;
-  const sub = document.getElementById('boxModernSub');
-  if (sub) sub.textContent = `Pack ${slot.packNumber || '---'} · ${priceFormatted} a ticket`;
-
-  const openPos = document.getElementById('boxModernOpeningPos');
-  if (openPos) openPos.textContent = `#${String(slot.startTicket || 0).padStart(2, '0')}`;
-  const posNote = document.getElementById('boxModernPosNote');
-  if (posNote) posNote.textContent = 'opening position';
-  const packSizeEl = document.getElementById('boxModernPackSize');
-  if (packSizeEl) packSizeEl.textContent = packSize;
-  const lastTicket = document.getElementById('boxModernLastTicket');
-  if (lastTicket) lastTicket.textContent = `last ticket #${String(packSize - 1).padStart(2, '0')}`;
-  const gidEl = document.getElementById('boxModernGameId');
-  if (gidEl) gidEl.textContent = slot.gameId || '1401';
-  const actTime = document.getElementById('boxModernActivatedTime');
-  if (actTime) actTime.textContent = `activated ${slot.activatedTime || 'Oct 19'}`;
-
-  // Default to Tab 1 (Change box)
-  showModernBoxTab('move');
-
-  // Populate empty boxes chips
-  const emptyBoxesList = document.getElementById('boxModernEmptyBoxesList');
-  const confirmMoveBtn = document.getElementById('btnBoxModernConfirmMove');
-  if (confirmMoveBtn) {
-    confirmMoveBtn.disabled = true;
-    confirmMoveBtn.textContent = 'Move to box ...';
-  }
-  if (emptyBoxesList) {
-    emptyBoxesList.innerHTML = '';
-    const emptySlots = (state.slots || []).filter(s => s && (s.status !== 'ACTIVE' || !s.packNumber) && Number(s.boxNumber) !== Number(slot.boxNumber));
-    if (emptySlots.length === 0) {
-      emptyBoxesList.innerHTML = '<span class="muted" style="font-size:13px;">No empty boxes available in rack.</span>';
-    } else {
-      emptySlots.forEach(es => {
-        const chip = document.createElement('button');
-        chip.type = 'button';
-        chip.className = 'chip';
-        chip.textContent = es.boxNumber;
-        chip.addEventListener('click', () => {
-          emptyBoxesList.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
-          chip.classList.add('active');
-          currentModernChosenEmptyBox = Number(es.boxNumber);
-          if (confirmMoveBtn) {
-            confirmMoveBtn.disabled = false;
-            confirmMoveBtn.textContent = `Move to box ${currentModernChosenEmptyBox}`;
-          }
-        });
-        emptyBoxesList.appendChild(chip);
-      });
-    }
-  }
-
-  // Setup Remove Tab defaults
-  const rmPosInput = document.getElementById('boxModernRmPos');
-  if (rmPosInput) rmPosInput.value = currentTicketNum;
-
-  sfx.keypad();
-  modal.showModal();
-}
-
-export function showModernBoxTab(tabName) {
-  const tabMove = document.getElementById('tabBoxModernMove');
-  const tabRemove = document.getElementById('tabBoxModernRemove');
-  const panelMove = document.getElementById('panelBoxModernMove');
-  const panelRemove = document.getElementById('panelBoxModernRemove');
-  const btnMove = document.getElementById('btnBoxModernConfirmMove');
-  const btnRemove = document.getElementById('btnBoxModernConfirmRemove');
-
-  if (tabName === 'move') {
-    tabMove?.classList.add('active');
-    tabRemove?.classList.remove('active');
-    if (panelMove) panelMove.style.display = 'block';
-    if (panelRemove) panelRemove.style.display = 'none';
-    if (btnMove) btnMove.style.display = 'inline-flex';
-    if (btnRemove) btnRemove.style.display = 'none';
-  } else {
-    tabMove?.classList.remove('active');
-    tabRemove?.classList.add('active');
-    if (panelMove) panelMove.style.display = 'none';
-    if (panelRemove) panelRemove.style.display = 'block';
-    if (btnMove) btnMove.style.display = 'none';
-    if (btnRemove) btnRemove.style.display = 'inline-flex';
-  }
-}
-
-export function openModernActivationKeypad(targetBoxNumber, packData = null) {
-  const modal = document.getElementById('bookActivationKeypadModal');
-  if (!modal) return;
-
-  const defaultGame = SAMPLE_GAMES[0];
-  const pack = packData || {
-    packNumber: String(Math.floor(100000 + Math.random() * 900000)),
-    gameId: defaultGame.id,
-    gameName: defaultGame.name,
-    price: defaultGame.price,
-    packSize: defaultGame.packSize
-  };
-  currentModernActivationPack = pack;
-
-  const priceEl = document.getElementById('actKeypadPrice');
-  if (priceEl) priceEl.textContent = `$${pack.price || 1}`;
-  const nameEl = document.getElementById('actKeypadGameName');
-  if (nameEl) nameEl.textContent = cleanGameTitle(pack.gameName);
-  const packMetaEl = document.getElementById('actKeypadPackMeta');
-  if (packMetaEl) packMetaEl.textContent = `Game ${pack.gameId || '1401'} · Pack ${pack.packNumber}`;
-  const stockMetaEl = document.getElementById('actKeypadStockMeta');
-  if (stockMetaEl) stockMetaEl.textContent = `${pack.packSize || 100} tickets · in stock`;
-
-  const boxInput = document.getElementById('actKeypadBoxInput');
-  const chosenBox = targetBoxNumber || findFirstEmptyBox();
-  if (boxInput) {
-    boxInput.value = chosenBox;
-    boxInput.focus();
-  }
-
-  const showTarget = document.getElementById('actKeypadTargetBoxShow');
-  if (showTarget) showTarget.textContent = chosenBox;
-
-  updateModernKeypadEmptyStatus(chosenBox);
-  populateModernKeypadNearChips(chosenBox);
-
-  sfx.keypad();
-  modal.showModal();
-}
-
-export function updateModernKeypadEmptyStatus(boxNum) {
-  const msgEl = document.getElementById('actKeypadMsg');
-  const showTarget = document.getElementById('actKeypadTargetBoxShow');
-  if (showTarget) showTarget.textContent = boxNum || '...';
-  if (!msgEl) return;
-
-  const targetSlot = (state.slots || []).find(s => Number(s.boxNumber) === Number(boxNum));
-  if (!boxNum || isNaN(Number(boxNum))) {
-    msgEl.className = 'kmsg';
-    msgEl.textContent = '';
-  } else if (!targetSlot || targetSlot.status !== 'ACTIVE' || !targetSlot.packNumber) {
-    msgEl.className = 'kmsg ok';
-    msgEl.textContent = `✓ Box #${boxNum} is empty and ready`;
-  } else {
-    msgEl.className = 'kmsg err';
-    msgEl.textContent = `⚠ Box #${boxNum} currently holds ${cleanGameTitle(targetSlot.gameName)}`;
-  }
-}
-
-export function populateModernKeypadNearChips(currentBox) {
-  const chipsWrap = document.getElementById('actKeypadNearChips');
-  if (!chipsWrap) return;
-  chipsWrap.innerHTML = '';
-
-  const emptySlots = (state.slots || []).filter(s => s && (s.status !== 'ACTIVE' || !s.packNumber));
-  emptySlots.slice(0, 8).forEach(s => {
-    const chip = document.createElement('button');
-    chip.type = 'button';
-    chip.className = `chip ${Number(s.boxNumber) === Number(currentBox) ? 'active' : ''}`;
-    chip.textContent = s.boxNumber;
-    chip.addEventListener('click', () => {
-      const boxInput = document.getElementById('actKeypadBoxInput');
-      if (boxInput) boxInput.value = s.boxNumber;
-      updateModernKeypadEmptyStatus(s.boxNumber);
-      populateModernKeypadNearChips(s.boxNumber);
-    });
-    chipsWrap.appendChild(chip);
-  });
-}
-
-export function openModernCloseShiftCheckModal(activeCount, activations, emptySlots, soldOutItems) {
-  const modal = document.getElementById('closeShiftCheckModal');
-  if (!modal) return;
-
-  const actsEl = document.getElementById('checkModalActs');
-  if (actsEl) actsEl.textContent = activations;
-  const emptyEl = document.getElementById('checkModalEmpty');
-  if (emptyEl) emptyEl.textContent = emptySlots;
-  const totalEl = document.getElementById('checkModalTotalSlots');
-  if (totalEl) totalEl.textContent = state.totalSlots || 65;
-  const soldOutCountEl = document.getElementById('checkModalSoldOutCount');
-  if (soldOutCountEl) soldOutCountEl.textContent = soldOutItems.length;
-
-  const listContainer = document.getElementById('checkModalSoldOutList');
-  if (listContainer) {
-    if (soldOutItems.length > 0) {
-      listContainer.innerHTML = soldOutItems.map(item => `
-        <div class="row">
-          <span class="boxn">${item.boxNumber}</span>
-          <span class="grow"><b>$${item.price || 1}</b> ${item.gameName}</span>
-          <span class="muted mono" style="font-size: 12px">SOLD OUT</span>
-        </div>
-      `).join('');
-    } else {
-      listContainer.innerHTML = '<div class="empty">Every active box was scanned — nothing sold out.</div>';
-    }
-  }
-
-  const warnBanner = document.getElementById('checkModalWarnBanner');
-  if (warnBanner) {
-    const unverifiedBoxes = (state.slots || []).filter(s => s && s.status === 'ACTIVE' && s.packNumber && !s.scannedInEndShift);
-    warnBanner.style.display = unverifiedBoxes.length > 0 ? 'flex' : 'none';
-  }
-
-  modal.showModal();
-}
-
-export function setupModernMockupDialogs() {
-  // 1. KPI List Modal Close Handlers
-  const kpiModal = document.getElementById('kpiListModal');
-  document.getElementById('closeKpiListModalBtn')?.addEventListener('click', () => kpiModal?.close());
-  document.getElementById('kpiListModalCloseBottomBtn')?.addEventListener('click', () => kpiModal?.close());
-  document.getElementById('kpiListModalScrim')?.addEventListener('click', (e) => {
-    if (e.target.id === 'kpiListModalScrim') kpiModal?.close();
-  });
-
-  // 2. Settlement Modern Modal Handlers
-  const settleModal = document.getElementById('settlementModernModal');
-  document.getElementById('closeSettleModernBtn')?.addEventListener('click', () => settleModal?.close());
-  document.getElementById('settlementModalScrim')?.addEventListener('click', (e) => {
-    if (e.target.id === 'settlementModalScrim') settleModal?.close();
-  });
-  document.getElementById('settleAllReportsBtn')?.addEventListener('click', () => {
-    settleModal?.close();
-    openHistoryModal('all');
-  });
-  document.getElementById('settleEndShiftActionBtn')?.addEventListener('click', () => {
-    settleModal?.close();
-    openEndShiftConfirmation();
-  });
-
-  // 3. Box Modern Details Handlers
-  const boxModal = document.getElementById('boxModernDetailsModal');
-  document.getElementById('closeBoxModernDetailsBtn')?.addEventListener('click', () => boxModal?.close());
-  document.getElementById('closeBoxModernDetailsBottomBtn')?.addEventListener('click', () => boxModal?.close());
-  document.getElementById('boxModernDetailsScrim')?.addEventListener('click', (e) => {
-    if (e.target.id === 'boxModernDetailsScrim') boxModal?.close();
-  });
-  document.getElementById('tabBoxModernMove')?.addEventListener('click', () => showModernBoxTab('move'));
-  document.getElementById('tabBoxModernRemove')?.addEventListener('click', () => showModernBoxTab('remove'));
-
-  document.getElementById('btnBoxModernConfirmMove')?.addEventListener('click', () => {
-    if (!currentModernBoxSlot || !currentModernChosenEmptyBox) return;
-    const sourceSlot = currentModernBoxSlot;
-    const targetBoxNum = currentModernChosenEmptyBox;
-    const targetSlot = state.slots.find(s => Number(s.boxNumber) === Number(targetBoxNum));
-    if (!targetSlot) return;
-
-    recordUndoAction({
-      type: 'SWITCH_BOX',
-      sourceBoxNumber: sourceSlot.boxNumber,
-      targetBoxNumber: targetBoxNum,
-      sourceSnapshot: { ...sourceSlot },
-      targetSnapshot: { ...targetSlot }
-    });
-
-    targetSlot.status = sourceSlot.status;
-    targetSlot.packNumber = sourceSlot.packNumber;
-    targetSlot.gameId = sourceSlot.gameId;
-    targetSlot.gameName = sourceSlot.gameName;
-    targetSlot.price = sourceSlot.price;
-    targetSlot.packSize = sourceSlot.packSize;
-    targetSlot.startTicket = sourceSlot.startTicket;
-    targetSlot.currentTicket = sourceSlot.currentTicket;
-    targetSlot.activatedThisShift = sourceSlot.activatedThisShift;
-    targetSlot.daysActive = sourceSlot.daysActive;
-    targetSlot.scannedInEndShift = sourceSlot.scannedInEndShift;
-
-    sourceSlot.status = 'EMPTY';
-    sourceSlot.packNumber = '';
-    sourceSlot.gameId = '';
-    sourceSlot.gameName = '';
-    sourceSlot.price = 0;
-    sourceSlot.packSize = 0;
-    sourceSlot.startTicket = 0;
-    sourceSlot.currentTicket = 0;
-    sourceSlot.activatedThisShift = false;
-    sourceSlot.daysActive = 0;
-    sourceSlot.scannedInEndShift = false;
-
-    saveState(state);
-    sfx.chime();
-    boxModal?.close();
-    renderHeaderAndMetrics();
-    renderDispenserRack();
-    renderSlotsRibbon();
-    showToast(`🔄 Moved Pack from Box #${sourceSlot.boxNumber} to Box #${targetBoxNum}`, 'success');
-  });
-
-  document.getElementById('btnBoxModernConfirmRemove')?.addEventListener('click', () => {
-    if (!currentModernBoxSlot) return;
-    const slotToClear = currentModernBoxSlot;
-    boxModal?.close();
-
-    recordUndoAction({
-      type: 'ADJUST_COUNT',
-      boxNumber: slotToClear.boxNumber,
-      prevTicket: slotToClear.currentTicket,
-      prevStatus: slotToClear.status
-    });
-
-    const finalPos = parseInt(document.getElementById('boxModernRmPos')?.value, 10);
-    if (!isNaN(finalPos) && finalPos > 0) {
-      slotToClear.currentTicket = finalPos;
-      recordSoldOutPack(slotToClear, finalPos);
-    }
-
-    slotToClear.currentTicket = 0;
-    slotToClear.status = 'EMPTY';
-    slotToClear.packNumber = '';
-    slotToClear.gameName = '';
-    slotToClear.activatedThisShift = false;
-
-    saveState(state);
-    sfx.alert();
-    renderHeaderAndMetrics();
-    renderDispenserRack();
-    renderSlotsRibbon();
-    showToast(`🗑️ Book removed from Box #${slotToClear.boxNumber}. Slot is now empty.`, 'warning');
-  });
-
-  // 4. Book Activation Keypad Modal Handlers
-  const actKeypadModal = document.getElementById('bookActivationKeypadModal');
-  const actKeypadBoxInput = document.getElementById('actKeypadBoxInput');
-  document.getElementById('closeActivationKeypadBtn')?.addEventListener('click', () => actKeypadModal?.close());
-  document.getElementById('activationKeypadScrim')?.addEventListener('click', (e) => {
-    if (e.target.id === 'activationKeypadScrim') actKeypadModal?.close();
-  });
-
-  document.getElementById('btnActKeypadArrowUp')?.addEventListener('click', () => {
-    sfx.keypad();
-    const curr = parseInt(actKeypadBoxInput?.value, 10) || 1;
-    const emptySlots = (state.slots || []).filter(s => s && (s.status !== 'ACTIVE' || !s.packNumber) && Number(s.boxNumber) > curr);
-    const nextBox = emptySlots.length > 0 ? emptySlots[0].boxNumber : curr + 1;
-    if (actKeypadBoxInput) actKeypadBoxInput.value = nextBox;
-    updateModernKeypadEmptyStatus(nextBox);
-    populateModernKeypadNearChips(nextBox);
-  });
-
-  document.getElementById('btnActKeypadArrowDown')?.addEventListener('click', () => {
-    sfx.keypad();
-    const curr = parseInt(actKeypadBoxInput?.value, 10) || 1;
-    const emptySlots = (state.slots || []).filter(s => s && (s.status !== 'ACTIVE' || !s.packNumber) && Number(s.boxNumber) < curr);
-    const prevBox = emptySlots.length > 0 ? emptySlots[emptySlots.length - 1].boxNumber : Math.max(1, curr - 1);
-    if (actKeypadBoxInput) actKeypadBoxInput.value = prevBox;
-    updateModernKeypadEmptyStatus(prevBox);
-    populateModernKeypadNearChips(prevBox);
-  });
-
-  actKeypadBoxInput?.addEventListener('input', () => {
-    const val = parseInt(actKeypadBoxInput.value, 10);
-    updateModernKeypadEmptyStatus(val);
-    populateModernKeypadNearChips(val);
-  });
-
-  document.querySelectorAll('.btn-kp-num').forEach(btn => {
-    btn.addEventListener('click', () => {
-      sfx.keypad();
-      const num = btn.getAttribute('data-key');
-      if (!actKeypadBoxInput) return;
-      const curr = String(actKeypadBoxInput.value || '');
-      actKeypadBoxInput.value = (curr === '0' || curr === '') ? num : curr + num;
-      updateModernKeypadEmptyStatus(actKeypadBoxInput.value);
-      populateModernKeypadNearChips(actKeypadBoxInput.value);
-    });
-  });
-
-  document.getElementById('btnKpClear')?.addEventListener('click', () => {
-    sfx.keypad();
-    if (actKeypadBoxInput) actKeypadBoxInput.value = '';
-    updateModernKeypadEmptyStatus('');
-  });
-
-  document.getElementById('btnKpBack')?.addEventListener('click', () => {
-    sfx.keypad();
-    if (actKeypadBoxInput && actKeypadBoxInput.value.length > 0) {
-      actKeypadBoxInput.value = actKeypadBoxInput.value.slice(0, -1);
-      updateModernKeypadEmptyStatus(actKeypadBoxInput.value);
-    }
-  });
-
-  function executeModernKeypadActivation() {
-    if (!actKeypadBoxInput) return;
-    const boxNum = parseInt(actKeypadBoxInput.value, 10);
-    if (!boxNum || boxNum < 1 || boxNum > 100) {
-      showToast('Please enter a valid box number (1-100)', 'error');
-      return;
-    }
-    const pack = currentModernActivationPack || SAMPLE_GAMES[0];
-    keypadBoxInput.value = boxNum;
-    pendingActivationPack = pack;
-    commitBoxActivation();
-    actKeypadModal?.close();
-  }
-
-  document.getElementById('btnKpEnter')?.addEventListener('click', executeModernKeypadActivation);
-  document.getElementById('btnActKeypadConfirmAdd')?.addEventListener('click', executeModernKeypadActivation);
-  document.getElementById('btnActKeypadNotInBox')?.addEventListener('click', () => {
-    sfx.chime();
-    actKeypadModal?.close();
-    showToast(`Pack #${currentModernActivationPack?.packNumber || '0000'} stored in back-office inventory.`, 'info');
-  });
-
-  // 5. Close Shift Check Modal Handlers
-  const checkModal = document.getElementById('closeShiftCheckModal');
-  document.getElementById('closeCheckModalBtn')?.addEventListener('click', () => checkModal?.close());
-  document.getElementById('btnCancelCheckClose')?.addEventListener('click', () => checkModal?.close());
-  document.getElementById('closeShiftCheckScrim')?.addEventListener('click', (e) => {
-    if (e.target.id === 'closeShiftCheckScrim') checkModal?.close();
-  });
-
-  document.getElementById('btnConfirmCheckClose')?.addEventListener('click', () => {
-    const cashes = parseFloat(document.getElementById('terminalInputCashes')?.value) || 0;
-    const online = parseFloat(document.getElementById('terminalInputOnline')?.value) || 0;
-    const oc = parseFloat(document.getElementById('terminalInputOc')?.value) || 0;
-    if (cashes) state.cashes = cashes;
-    if (online) state.onlineSales = online;
-    if (oc) state.onlineCashes = oc;
-    checkModal?.close();
-    confirmEndShift();
-  });
-}
-
+let _setupEventListenersDone = false;
+let _setupKeypadDone = false;
+let _setupHardwareScannerListenerDone = false;
+let _setupModernMockupDialogsDone = false;
 let _eventListenersInitialized = false;
+
+function showSystemLoadErrorBanner(failedStepName, error) {
+  try {
+    let banner = document.getElementById('systemLoadErrorBanner');
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'systemLoadErrorBanner';
+      banner.style.cssText = 'position:fixed; top:0; left:0; right:0; z-index:999999; background:#dc2626; color:#ffffff; padding:12px 20px; display:flex; align-items:center; justify-content:space-between; font-family:sans-serif; font-size:14px; font-weight:600; box-shadow:0 4px 12px rgba(0,0,0,0.3);';
+
+      const msgSpan = document.createElement('span');
+      msgSpan.id = 'systemLoadErrorMessage';
+      msgSpan.textContent = 'The system did not load correctly. Do not scan. Refresh the page or contact the owner.';
+      banner.appendChild(msgSpan);
+
+      const reloadBtn = document.createElement('button');
+      reloadBtn.id = 'btnReloadSystemError';
+      reloadBtn.textContent = 'Reload';
+      reloadBtn.style.cssText = 'background:#ffffff; color:#dc2626; border:none; border-radius:6px; padding:6px 16px; font-size:13px; font-weight:700; cursor:pointer; margin-left:16px;';
+      reloadBtn.addEventListener('click', () => {
+        window.location.reload();
+      });
+      banner.appendChild(reloadBtn);
+
+      document.body.prepend(banner);
+    }
+  } catch (bannerErr) {
+    console.error('Failed to render error banner:', bannerErr);
+  }
+}
+
+function runStep(name, fn) {
+  try {
+    fn();
+    return true;
+  } catch (err) {
+    console.error(`[initPOS] Step failed: ${name}`, err);
+    showSystemLoadErrorBanner(name, err);
+    return false;
+  }
+}
+
+function setupModernMockupDialogs() {
+  if (_setupModernMockupDialogsDone) return;
+  _setupModernMockupDialogsDone = true;
+}
+
+let _sidebarAutoCollapseInitialized = false;
+let _sidebarCollapseTimer = null;
+
+function setupSidebarAutoCollapse() {
+  if (_sidebarAutoCollapseInitialized) return;
+  _sidebarAutoCollapseInitialized = true;
+
+  const autoCloseSeconds = 5;
+  if (autoCloseSeconds <= 0) return;
+
+  const sidebar = document.querySelector('.pos-sidebar');
+  if (!sidebar) return;
+
+  let isPointerOver = false;
+
+  function isAnyModalOpen() {
+    const dialogs = document.querySelectorAll('dialog[open]');
+    if (dialogs.length > 0) return true;
+    const modals = document.querySelectorAll('.modal, .modal-overlay, [id$="Modal"], [id$="Dialog"]');
+    for (const m of modals) {
+      if (m.classList.contains('active') || (m.style && m.style.display !== 'none' && m.style.display !== '')) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  let isKeyboardNavigating = false;
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Tab' || e.key.startsWith('Arrow')) {
+      isKeyboardNavigating = true;
+    }
+  }, true);
+
+  window.addEventListener('pointerdown', () => {
+    isKeyboardNavigating = false;
+  }, true);
+
+  function hasKeyboardFocus() {
+    if (!isKeyboardNavigating) return false;
+    try {
+      return Boolean(sidebar.querySelector(':focus-visible') || (sidebar.contains(document.activeElement) && isKeyboardNavigating));
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function scheduleCollapse() {
+    clearTimeout(_sidebarCollapseTimer);
+    _sidebarCollapseTimer = setTimeout(() => {
+      if (isPointerOver) return;
+      if (hasKeyboardFocus()) return;
+      if (isAnyModalOpen()) return;
+      if (window.innerWidth <= 768) return;
+      if (sidebar.classList.contains('collapsed')) return;
+
+      sidebar.classList.add('collapsed');
+      const collapseBtn = document.getElementById('sidebarCollapseBtn');
+      if (collapseBtn) collapseBtn.setAttribute('title', 'Expand Sidebar');
+    }, autoCloseSeconds * 1000);
+  }
+
+  sidebar.addEventListener('pointerenter', () => {
+    isPointerOver = true;
+    clearTimeout(_sidebarCollapseTimer);
+  });
+
+  sidebar.addEventListener('pointerleave', () => {
+    isPointerOver = false;
+    scheduleCollapse();
+  });
+
+  sidebar.addEventListener('pointerdown', () => {
+    scheduleCollapse();
+  });
+
+  const brandCluster = sidebar.querySelector('.brand-left-cluster');
+  if (brandCluster) {
+    brandCluster.style.cursor = 'pointer';
+    brandCluster.addEventListener('click', () => {
+      sidebar.classList.remove('collapsed');
+      const collapseBtn = document.getElementById('sidebarCollapseBtn');
+      if (collapseBtn) collapseBtn.setAttribute('title', 'Collapse Sidebar');
+      scheduleCollapse();
+    });
+  }
+
+  scheduleCollapse();
+}
 
 // Initialize System
 function initPOS() {
-  initTheme();
-  if (localStorage.getItem('lottotrack_sidebar_collapsed') === 'true') {
-    document.querySelector('.pos-sidebar')?.classList.add('collapsed');
-    document.getElementById('sidebarCollapseBtn')?.setAttribute('title', 'Expand Sidebar');
-  }
-  sanitizeAndMigrateSlots();
-  populateActivationGameDropdown();
-  if (state.settings && state.settings.soundEnabled === false) {
-    sfx.muted = true;
-  }
-  renderHeaderAndMetrics();
-  renderDispenserRack();
-  renderSlotsRibbon();
-  if (!_eventListenersInitialized) {
-    setupEventListeners();
-    setupKeypad();
-    setupHardwareScannerListener();
-    setupModernMockupDialogs();
-    _eventListenersInitialized = true;
-  }
+  runStep('initTheme', initTheme);
+  runStep('checkSidebarCollapsed', () => {
+    if (localStorage.getItem('lottotrack_sidebar_collapsed') === 'true') {
+      document.querySelector('.pos-sidebar')?.classList.add('collapsed');
+      document.getElementById('sidebarCollapseBtn')?.setAttribute('title', 'Expand Sidebar');
+    }
+  });
+  runStep('sanitizeAndMigrateSlots', sanitizeAndMigrateSlots);
+  runStep('populateActivationGameDropdown', populateActivationGameDropdown);
+  runStep('initSound', () => {
+    if (state.settings && state.settings.soundEnabled === false) {
+      sfx.muted = true;
+    }
+  });
+  runStep('renderHeaderAndMetrics', renderHeaderAndMetrics);
+  runStep('renderDispenserRack', renderDispenserRack);
+  runStep('renderSlotsRibbon', renderSlotsRibbon);
+
+  // Hardened listener setup with per-step flags so nothing is attached twice
+  runStep('setupEventListeners', setupEventListeners);
+  runStep('setupKeypad', setupKeypad);
+  runStep('setupHardwareScannerListener', setupHardwareScannerListener);
+  runStep('setupModernMockupDialogs', setupModernMockupDialogs);
+  runStep('setupSidebarAutoCollapse', setupSidebarAutoCollapse);
+  _eventListenersInitialized = true;
 }
 
 // -------------------------------------------------------------
@@ -2117,9 +1656,10 @@ function handleBoxCardClick(slot) {
     }
   } else {
     if (isBoxActive) {
-      openModernBoxDetails(slot);
+      // Open Box Adjust Modal so user can view details or adjust count or set to 0 (make empty)
+      openBoxAdjustModal(slot);
     } else {
-      openModernActivationKeypad(slot.boxNumber);
+      openActivationForBox(slot.boxNumber);
     }
   }
 }
@@ -2393,6 +1933,185 @@ function openBoxAdjustModal(slot) {
   }
   if (boxDetailSellOneSub) {
     boxDetailSellOneSub.textContent = `Same as scanning ticket #${String(currentTicket).padStart(3, '0')}`;
+  }
+
+  // Populate new Design Pack fields (Matching Main.dc.html)
+  const boxDetailBoxNumText = document.getElementById('boxDetailBoxNumText');
+  if (boxDetailBoxNumText) boxDetailBoxNumText.textContent = slot.boxNumber;
+
+  const boxDetailOpenPos = document.getElementById('boxDetailOpenPos');
+  if (boxDetailOpenPos) boxDetailOpenPos.textContent = String(startTicket).padStart(3, '0');
+
+  const boxDetailOpenNote = document.getElementById('boxDetailOpenNote');
+  if (boxDetailOpenNote) {
+    boxDetailOpenNote.textContent = slot.activatedThisShift ? 'set when activated' : 'from last shift close';
+  }
+
+  const boxDetailPackSize = document.getElementById('boxDetailPackSize');
+  if (boxDetailPackSize) boxDetailPackSize.textContent = packSize;
+
+  const boxDetailFinalTicket = document.getElementById('boxDetailFinalTicket');
+  if (boxDetailFinalTicket) {
+    boxDetailFinalTicket.textContent = `last ticket ${String(Math.max(0, packSize - 1)).padStart(3, '0')}`;
+  }
+
+  const boxDetailGid = document.getElementById('boxDetailGid');
+  if (boxDetailGid) boxDetailGid.textContent = slot.gameId || '1421';
+
+  const boxDetailSince = document.getElementById('boxDetailSince');
+  if (boxDetailSince) {
+    boxDetailSince.textContent = slot.activatedThisShift ? 'activated today' : `${daysActive} day${daysActive === 1 ? '' : 's'} on rack`;
+  }
+
+  // Setup Move Box empty chips
+  let selectedMoveBox = null;
+  const movePickContainer = document.getElementById('boxMovePickChips');
+  const btnExecuteMoveBox = document.getElementById('btnExecuteMoveBox');
+  if (btnExecuteMoveBox) {
+    btnExecuteMoveBox.disabled = true;
+    btnExecuteMoveBox.textContent = 'Move to box —';
+  }
+
+  if (movePickContainer) {
+    const emptyBoxes = state.slots
+      .filter(s => s.status !== 'ACTIVE' || !s.packNumber)
+      .map(s => s.boxNumber)
+      .sort((a, b) => a - b);
+
+    if (emptyBoxes.length === 0) {
+      movePickContainer.innerHTML = '<span style="font-size: 13px; color: var(--ink-3); padding: 4px;">No empty boxes available in rack.</span>';
+    } else {
+      movePickContainer.innerHTML = emptyBoxes.map(num => `
+        <button type="button" class="chip" data-box="${num}">${num}</button>
+      `).join('');
+
+      movePickContainer.querySelectorAll('.chip').forEach(chip => {
+        chip.addEventListener('click', () => {
+          movePickContainer.querySelectorAll('.chip').forEach(c => c.classList.remove('on'));
+          chip.classList.add('on');
+          selectedMoveBox = Number(chip.dataset.box);
+          if (btnExecuteMoveBox) {
+            btnExecuteMoveBox.disabled = false;
+            btnExecuteMoveBox.textContent = `Move to box ${selectedMoveBox}`;
+          }
+        });
+      });
+    }
+  }
+
+  // Wire execute move button
+  if (btnExecuteMoveBox) {
+    btnExecuteMoveBox.onclick = () => {
+      if (!selectedMoveBox || !currentAdjustingSlot) return;
+      const fromBox = currentAdjustingSlot.boxNumber;
+      const toBox = selectedMoveBox;
+      const targetSlot = state.slots.find(s => s.boxNumber === toBox);
+      const sourceSlot = currentAdjustingSlot;
+
+      if (!targetSlot) return;
+
+      // Swap pack data to target slot
+      targetSlot.status = 'ACTIVE';
+      targetSlot.packNumber = sourceSlot.packNumber;
+      targetSlot.gameName = sourceSlot.gameName;
+      targetSlot.gameId = sourceSlot.gameId;
+      targetSlot.price = sourceSlot.price;
+      targetSlot.packSize = sourceSlot.packSize;
+      targetSlot.startTicket = sourceSlot.startTicket;
+      targetSlot.currentTicket = sourceSlot.currentTicket;
+      targetSlot.daysActive = sourceSlot.daysActive;
+      targetSlot.activatedThisShift = sourceSlot.activatedThisShift;
+
+      // Clear source slot
+      sourceSlot.status = 'EMPTY';
+      sourceSlot.packNumber = null;
+      sourceSlot.gameName = 'Empty Slot';
+      sourceSlot.gameId = null;
+      sourceSlot.price = 0;
+      sourceSlot.currentTicket = 0;
+      sourceSlot.startTicket = 0;
+
+      saveState(state);
+      renderHeaderAndMetrics();
+      renderDispenserRack();
+      renderSlotsRibbon();
+      boxAdjustModal.close();
+      showToast(`${cleanName} moved from box ${fromBox} to box ${toBox}. Box ${fromBox} is now empty.`, 'success');
+    };
+  }
+
+  // Setup Remove Book tab
+  const rmPosInput = document.getElementById('rmPosInput');
+  if (rmPosInput) {
+    rmPosInput.value = String(currentTicket).padStart(3, '0');
+  }
+
+  let selectedRemoveReason = 'Discontinued';
+  const removeReasonChips = document.getElementById('boxRemoveReasonChips');
+  if (removeReasonChips) {
+    removeReasonChips.querySelectorAll('.chip').forEach(chip => {
+      chip.onclick = () => {
+        removeReasonChips.querySelectorAll('.chip').forEach(c => c.classList.remove('on'));
+        chip.classList.add('on');
+        selectedRemoveReason = chip.dataset.reason;
+      };
+    });
+  }
+
+  const btnExecuteRemoveBox = document.getElementById('btnExecuteRemoveBox');
+  if (btnExecuteRemoveBox) {
+    btnExecuteRemoveBox.textContent = `Remove book from box ${slot.boxNumber}`;
+    btnExecuteRemoveBox.onclick = () => {
+      if (!currentAdjustingSlot) return;
+      const boxNum = currentAdjustingSlot.boxNumber;
+      const packNum = currentAdjustingSlot.packNumber;
+      const rmTicket = rmPosInput ? (parseInt(rmPosInput.value, 10) || currentTicket) : currentTicket;
+
+      // Move pack back to in-stock / returned
+      currentAdjustingSlot.status = 'EMPTY';
+      currentAdjustingSlot.packNumber = null;
+      currentAdjustingSlot.gameName = 'Empty Slot';
+      currentAdjustingSlot.gameId = null;
+      currentAdjustingSlot.price = 0;
+      currentAdjustingSlot.currentTicket = 0;
+      currentAdjustingSlot.startTicket = 0;
+
+      saveState(state);
+      renderHeaderAndMetrics();
+      renderDispenserRack();
+      renderSlotsRibbon();
+      boxAdjustModal.close();
+      showToast(`Pack ${packNum} removed at ticket #${String(rmTicket).padStart(3, '0')} (${selectedRemoveReason}). Box ${boxNum} is now empty.`, 'warn');
+    };
+  }
+
+  // Setup Tabs: Change box vs Remove book
+  const tabBoxMove = document.getElementById('tabBoxMove');
+  const tabBoxRemove = document.getElementById('tabBoxRemove');
+  const boxMoveTabContent = document.getElementById('boxMoveTabContent');
+  const boxRemoveTabContent = document.getElementById('boxRemoveTabContent');
+
+  if (tabBoxMove && tabBoxRemove) {
+    tabBoxMove.onclick = () => {
+      tabBoxMove.classList.add('on');
+      tabBoxRemove.classList.remove('on');
+      if (boxMoveTabContent) boxMoveTabContent.style.display = 'block';
+      if (boxRemoveTabContent) boxRemoveTabContent.style.display = 'none';
+      if (btnExecuteMoveBox) btnExecuteMoveBox.style.display = 'inline-flex';
+      if (btnExecuteRemoveBox) btnExecuteRemoveBox.style.display = 'none';
+    };
+
+    tabBoxRemove.onclick = () => {
+      tabBoxRemove.classList.add('on');
+      tabBoxMove.classList.remove('on');
+      if (boxMoveTabContent) boxMoveTabContent.style.display = 'none';
+      if (boxRemoveTabContent) boxRemoveTabContent.style.display = 'block';
+      if (btnExecuteMoveBox) btnExecuteMoveBox.style.display = 'none';
+      if (btnExecuteRemoveBox) btnExecuteRemoveBox.style.display = 'inline-flex';
+    };
+
+    // Default to move tab
+    tabBoxMove.click();
   }
 
   // Legacy field fallbacks
@@ -4190,12 +3909,7 @@ function openActivationForBox(boxNumber, preselectedPack = null) {
 
 
   sfx.keypad();
-  const modernKeypad = document.getElementById('bookActivationKeypadModal');
-  if (modernKeypad) {
-    openModernActivationKeypad(boxNumber || findFirstEmptyBox(), pack);
-  } else {
-    activationModal.showModal();
-  }
+  activationModal.showModal();
 }
 
 function findFirstEmptyBox() {
@@ -4204,6 +3918,9 @@ function findFirstEmptyBox() {
 }
 
 function setupKeypad() {
+  if (_setupKeypadDone) return;
+  _setupKeypadDone = true;
+
   // Connect scanner mode label to open activation
   const scannerModeLabel = document.getElementById('scannerModeLabel');
   if (scannerModeLabel) {
@@ -4860,13 +4577,8 @@ function openEndShiftConfirmation() {
   sfx.keypad();
   const toastEndShift = document.getElementById('endShiftScanningToast');
   if (toastEndShift) toastEndShift.style.setProperty('display', 'none', 'important');
-  const checkModal = document.getElementById('closeShiftCheckModal');
-  if (checkModal) {
-    openModernCloseShiftCheckModal(activeCount, activations, emptySlots, soldOutItems);
-  } else {
-    const modal = document.getElementById('endShiftConfirmModal');
-    if (modal) modal.showModal();
-  }
+  const modal = document.getElementById('endShiftConfirmModal');
+  if (modal) modal.showModal();
 }
 
 function confirmEndShift() {
@@ -7545,6 +7257,9 @@ function printInventoryStatusReport() {
 // -------------------------------------------------------------
 
 function setupHardwareScannerListener() {
+  if (_setupHardwareScannerListenerDone) return;
+  _setupHardwareScannerListenerDone = true;
+
   let scanBuffer = '';
   let lastKeystrokeTime = 0;
   let keystrokeIntervals = [];
@@ -8773,6 +8488,9 @@ export function refreshSystem() {
 // -------------------------------------------------------------
 
 function setupEventListeners() {
+  if (_setupEventListenersDone) return;
+  _setupEventListenersDone = true;
+
   // MySQL Database Status & Diagnostics Wiring
   const mysqlStatusBadge = document.getElementById('mysqlStatusBadge');
   const mysqlStatusText = document.getElementById('mysqlStatusText');
@@ -9439,30 +9157,176 @@ function setupEventListeners() {
   inventoryDoneBtn?.addEventListener('click', () => inventoryModal.close());
   setupInventoryModalLogic();
 
-  // Summary Metric Tabs Click Handlers (02 Mockup Spec)
-  document.getElementById('tabSettlement')?.addEventListener('click', () => {
+  // -------------------------------------------------------------
+  // Modern Settlement & List Quick-View Modals (Main.dc.html)
+  // -------------------------------------------------------------
+  function openModernSettlementModal() {
+    const modal = document.getElementById('settlementModernModal');
+    if (!modal) return;
+    const isShift = state.shiftStatus === 'IN_PROGRESS' || state.shiftStatus === 'SCANNING_END_SHIFT';
+    const ownerName = state.currentUser?.name || 'Maulik';
+    const subtitle = isShift ? `Shift #${state.shiftNumber || 13} · ${ownerName} · started ${state.shiftStartTime || '7:02 AM'}` : 'No shift open';
+    const stSubtitle = document.getElementById('stSubtitle');
+    if (stSubtitle) stSubtitle.textContent = subtitle;
+
+    const totalBoxes = state.slots.length || 65;
+    const scannedCount = state.slots.filter(s => s.scannedInEndShift).length;
+    const stScannedCount = document.getElementById('stScannedCount');
+    if (stScannedCount) stScannedCount.textContent = `${scannedCount} / ${totalBoxes}`;
+    
+    const stScannedNote = document.getElementById('stScannedNote');
+    if (stScannedNote) {
+      stScannedNote.textContent = state.shiftStatus === 'SCANNING_END_SHIFT'
+        ? `${totalBoxes - scannedCount} left to scan`
+        : 'Tap End Shift to start scanning';
+    }
+
+    let tickets = 0;
+    let sales = 0;
+    state.slots.forEach(s => {
+      if (s.status === 'ACTIVE' && s.packNumber) {
+        const sold = Math.max(0, (s.currentTicket || 0) - (s.startTicket || 0));
+        tickets += sold;
+        sales += sold * (s.price || 0);
+      }
+    });
+
+    const stTicketsSold = document.getElementById('stTicketsSold');
+    if (stTicketsSold) stTicketsSold.textContent = tickets;
+    const stTicketSales = document.getElementById('stTicketSales');
+    if (stTicketSales) stTicketSales.textContent = `$${sales.toFixed(2)}`;
+
+    const lastHistory = (state.shiftHistory || [])[state.shiftHistory?.length - 1];
+    if (lastHistory) {
+      const stLastShiftNo = document.getElementById('stLastShiftNo');
+      if (stLastShiftNo) stLastShiftNo.textContent = `#${lastHistory.shiftNumber || (state.shiftNumber - 1) || 12}`;
+      const stLastShiftBy = document.getElementById('stLastShiftBy');
+      if (stLastShiftBy) stLastShiftBy.textContent = `${lastHistory.cashier || 'Daniel'} · closed ${lastHistory.closedAt || '10:05 PM'}`;
+      const stLastShiftTickets = document.getElementById('stLastShiftTickets');
+      if (stLastShiftTickets) stLastShiftTickets.textContent = lastHistory.totalTicketsSold || 251;
+      const stLastShiftSales = document.getElementById('stLastShiftSales');
+      if (stLastShiftSales) stLastShiftSales.textContent = `$${(lastHistory.totalSalesAmount || 1512).toFixed(2)}`;
+    }
+
+    const endShiftBtn = document.getElementById('stEndShiftBtn');
+    if (endShiftBtn) {
+      endShiftBtn.textContent = state.shiftStatus === 'SCANNING_END_SHIFT' ? 'Get Report' : 'End Shift';
+      endShiftBtn.onclick = () => {
+        modal.close();
+        if (state.shiftStatus === 'SCANNING_END_SHIFT') {
+          handleOpenCloseModal();
+        } else {
+          startEndShiftProcess();
+        }
+      };
+    }
+
+    const viewReportsBtn = document.getElementById('stViewAllReportsBtn');
+    if (viewReportsBtn) {
+      viewReportsBtn.onclick = () => {
+        modal.close();
+        if (typeof switchView === 'function') switchView('reports');
+      };
+    }
+
+    const closeBtn = document.getElementById('closeSettlementModalBtn');
+    if (closeBtn) closeBtn.onclick = () => modal.close();
+
     sfx.keypad();
+    modal.showModal();
+  }
+
+  function openModernListQuickView(type) {
+    const modal = document.getElementById('listQuickViewModal');
+    if (!modal) return;
+
+    const LIST_INFO = {
+      month: ['Activated this month', 'Books put in a box since Oct 1', 'Activated'],
+      week: ['Activated this week', 'Books put in a box in the last 7 days', 'Activated'],
+      today: ['Activated today', 'Books put in a box today', 'Activated'],
+      idle: ['Inactive books', 'No tickets sold for 7 days or more — think about moving or returning them', 'No sales for']
+    };
+
+    const info = LIST_INFO[type] || LIST_INFO.month;
+    const plH = document.getElementById('pl-h');
+    if (plH) plH.textContent = info[0];
+    const plSubtitle = document.getElementById('plSubtitle');
+    if (plSubtitle) plSubtitle.textContent = info[1];
+    const plColHeader = document.getElementById('plColHeader');
+    if (plColHeader) plColHeader.textContent = info[2];
+
+    const filtered = state.slots.filter(slot => {
+      if (slot.status !== 'ACTIVE' || !slot.packNumber) return false;
+      const days = slot.daysActive || 0;
+      if (type === 'today') return days === 0 || slot.activatedThisShift;
+      if (type === 'week') return days <= 7;
+      if (type === 'month') return days <= 30;
+      if (type === 'idle') return days >= 7;
+      return true;
+    }).sort((a, b) => type === 'idle' ? (b.daysActive || 0) - (a.daysActive || 0) : (a.daysActive || 0) - (b.daysActive || 0));
+
+    const plCountBadge = document.getElementById('plCountBadge');
+    if (plCountBadge) plCountBadge.textContent = filtered.length;
+
+    const tbody = document.getElementById('plTableBody');
+    if (tbody) {
+      if (filtered.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding: 28px; color: var(--ink-3);">No matching books found.</td></tr>`;
+      } else {
+        tbody.innerHTML = filtered.map(b => {
+          const cleanName = cleanGameTitle(b.gameName);
+          const tagCls = type === 'idle' ? (b.daysActive >= 21 ? 'tag-danger' : 'tag-warn') : 'tag-muted';
+          const extraText = type === 'idle' ? `${b.daysActive || 7} days` : (b.daysActive === 0 ? 'Today' : (b.daysActive === 1 ? 'Yesterday' : `${b.daysActive} days ago`));
+          return `
+            <tr style="cursor: pointer;" data-box="${b.boxNumber}">
+              <td><span class="boxn" style="display:inline-grid;place-items:center;min-width:36px;height:28px;border-radius:7px;background:var(--surface-3);font-weight:800;">${b.boxNumber}</span></td>
+              <td class="g"><b style="display:block;font-weight:700;">${cleanName}</b><span style="font-size:12px;color:var(--ink-3);font-family:var(--mono);">${b.gameId || '1421'} · ${b.packNumber}</span></td>
+              <td class="r money" style="text-align:right;font-weight:700;color:var(--money);">$${b.price}</td>
+              <td class="r mono" style="text-align:right;font-weight:700;font-size:16px;">#${String(b.currentTicket || 0).padStart(3, '0')}</td>
+              <td class="r" style="text-align:right;"><span class="tag ${tagCls}">${extraText}</span></td>
+            </tr>
+          `;
+        }).join('');
+
+        tbody.querySelectorAll('tr[data-box]').forEach(row => {
+          row.addEventListener('click', () => {
+            const bNum = Number(row.dataset.box);
+            const targetSlot = state.slots.find(s => s.boxNumber === bNum);
+            modal.close();
+            if (targetSlot) openBoxAdjustModal(targetSlot);
+          });
+        });
+      }
+    }
+
+    const closeBtn1 = document.getElementById('closeListQuickViewBtn');
+    if (closeBtn1) closeBtn1.onclick = () => modal.close();
+    const closeBtn2 = document.getElementById('closeListQuickViewBtn2');
+    if (closeBtn2) closeBtn2.onclick = () => modal.close();
+
+    sfx.keypad();
+    modal.showModal();
+  }
+
+  // Summary Metric Tabs Click Handlers (Opening Modern Main.dc.html Modals)
+  document.getElementById('tabSettlement')?.addEventListener('click', () => {
     openModernSettlementModal();
   });
 
   document.getElementById('tabToday')?.addEventListener('click', () => {
-    sfx.keypad();
-    openModernKpiListModal('today');
+    openModernListQuickView('today');
   });
 
   document.getElementById('tabThisWeek')?.addEventListener('click', () => {
-    sfx.keypad();
-    openModernKpiListModal('week');
+    openModernListQuickView('week');
   });
 
   document.getElementById('tabThisMonth')?.addEventListener('click', () => {
-    sfx.keypad();
-    openModernKpiListModal('month');
+    openModernListQuickView('month');
   });
 
   document.getElementById('tabInactive')?.addEventListener('click', () => {
-    sfx.keypad();
-    openModernKpiListModal('inactive');
+    openModernListQuickView('idle');
   });
 
 
@@ -11558,14 +11422,14 @@ function setupEventListeners() {
 
         return `
           <tr data-shift-id="${s.id}">
-            <td class="rpt-td-shift"><strong>${shiftLabel}</strong></td>
+            <td class="rpt-td-shift mono"><b>${shiftLabel}</b></td>
             <td class="rpt-td-date">${dateStr}</td>
             <td class="rpt-td-person">${person}</td>
-            <td class="rpt-td-started">${startStr}</td>
-            <td class="rpt-td-closed">${closeStr}</td>
-            <td class="rpt-td-tickets">${tickets}</td>
-            <td class="rpt-td-sales">${salesStr}</td>
-            <td class="rpt-td-email"><span class="rpt-email-sent-badge">Sent</span></td>
+            <td class="rpt-td-started muted" style="color: var(--ink-3, #66707D);">${startStr}</td>
+            <td class="rpt-td-closed muted" style="color: var(--ink-3, #66707D);">${closeStr}</td>
+            <td class="rpt-td-tickets r mono" style="font-weight: 700; text-align: right;">${tickets}</td>
+            <td class="rpt-td-sales r money mono" style="font-weight: 800; text-align: right; color: var(--money, #0A7A42);">${salesStr}</td>
+            <td class="rpt-td-email"><span class="tag tag-money">Sent</span></td>
             <td class="rpt-td-action" style="text-align: right;">
               <button type="button" class="btn-rpt-view rpt-btn-open-shift" data-shift-id="${s.id}" data-day="${dateStr}" data-shift="${shiftLabel}">View</button>
             </td>
@@ -12030,11 +11894,11 @@ function setupEventListeners() {
     }
 
     tbody.innerHTML = items.map(item => {
-      const boxDisplay = item.boxNumber ? String(item.boxNumber).padStart(2, '0') : '—';
+      const boxDisplay = item.boxNumber ? `<span class="boxn">${String(item.boxNumber).padStart(2, '0')}</span>` : `<span class="muted" style="color: var(--ink-3, #66707D);">—</span>`;
       const badgeClass = item.statusBadgeClass || (
-        item.status === 'ACTIVE' ? 'badge-active' :
-        item.status === 'COMPLETED' ? 'badge-completed' :
-        item.status === 'REMOVED' ? 'badge-removed' : 'badge-in-stock'
+        item.status === 'ACTIVE' ? 'tag tag-money' :
+        item.status === 'COMPLETED' ? 'tag tag-muted' :
+        item.status === 'REMOVED' ? 'tag tag-warn' : 'tag tag-brand'
       );
       const statusText = item.statusLabel || (
         item.status === 'ACTIVE' ? 'Active' :
@@ -12042,26 +11906,222 @@ function setupEventListeners() {
         item.status === 'REMOVED' ? 'Removed' : 'In stock'
       );
       const priceDisplay = `$${item.price}`;
-      const posDisplay = item.position !== undefined ? String(item.position) : '000';
+      const posDisplay = item.position !== undefined ? String(item.position).padStart(3, '0') : '000';
       const recDisplay = item.receivedDate || 'Oct 17';
       const sizeDisplay = item.packSize || `${item.packSizeNum || 100} tickets`;
 
       return `
-        <tr>
-          <td class="td-inv-game">
-            <div class="game-title">${item.gameName}</div>
-            <div class="game-num">${item.gameNumber}</div>
+        <tr class="inv-clickable-row" data-pack-num="${item.packNumber}" title="Click to edit book details">
+          <td class="td-inv-game g">
+            <div class="game-title"><b>${item.gameName}</b></div>
+            <div class="game-num">Game ${item.gameNumber}</div>
           </td>
-          <td class="td-inv-pack">${item.packNumber}</td>
-          <td class="td-inv-price">${priceDisplay}</td>
-          <td class="td-inv-size">${sizeDisplay}</td>
+          <td class="td-inv-pack mono" style="font-weight: 700;">${item.packNumber}</td>
+          <td class="td-inv-price r money" style="font-weight: 700;">${priceDisplay}</td>
+          <td class="td-inv-size r">${sizeDisplay}</td>
           <td class="td-inv-status"><span class="${badgeClass}">${statusText}</span></td>
           <td class="td-inv-box">${boxDisplay}</td>
-          <td class="td-inv-pos">${posDisplay}</td>
-          <td class="td-inv-rec">${recDisplay}</td>
+          <td class="td-inv-pos r mono">${posDisplay}</td>
+          <td class="td-inv-rec muted" style="color: var(--ink-3, #66707D);">${recDisplay}</td>
         </tr>
       `;
     }).join('');
+
+    tbody.querySelectorAll('.inv-clickable-row').forEach(tr => {
+      tr.addEventListener('click', () => {
+        const packNum = tr.getAttribute('data-pack-num');
+        const item = items.find(it => String(it.packNumber) === String(packNum));
+        if (item) {
+          openEditInventoryPackModal(item);
+        }
+      });
+    });
+  }
+
+  function openEditInventoryPackModal(item) {
+    if (!item) return;
+    sfx.keypad?.();
+    const modal = document.getElementById('modalEditInventoryBook');
+    if (!modal) return;
+
+    const elOrigPack = document.getElementById('editBookOriginalPack');
+    const elOrigId = document.getElementById('editBookOriginalId');
+    const elName = document.getElementById('editBookGameName');
+    const elNum = document.getElementById('editBookGameNumber');
+    const elPack = document.getElementById('editBookPackNumber');
+    const elPrice = document.getElementById('editBookPrice');
+    const elSize = document.getElementById('editBookPackSize');
+    const elStatus = document.getElementById('editBookStatus');
+    const elBox = document.getElementById('editBookBoxNumber');
+    const elPos = document.getElementById('editBookPosition');
+    const elDate = document.getElementById('editBookReceivedDate');
+
+    if (elOrigPack) elOrigPack.value = item.packNumber || '';
+    if (elOrigId) elOrigId.value = item.id || '';
+    if (elName) elName.value = item.gameName || '';
+    if (elNum) elNum.value = (item.gameNumber || '').replace('Game ', '');
+    if (elPack) elPack.value = item.packNumber || '';
+    if (elPrice) elPrice.value = item.price || 1;
+    if (elSize) elSize.value = item.packSizeNum || (item.packSize ? parseInt(item.packSize, 10) : 100);
+    if (elStatus) elStatus.value = item.status || 'IN_STOCK';
+    if (elBox) elBox.value = item.boxNumber || '';
+    if (elPos) elPos.value = item.position !== undefined ? item.position : '000';
+    if (elDate) elDate.value = item.receivedDate || 'Oct 17';
+
+    if (typeof modal.showModal === 'function') {
+      modal.showModal();
+    } else {
+      modal.style.display = 'block';
+    }
+  }
+
+  // Setup Edit Inventory Book Modal Listeners Once
+  if (!window._editInventoryBookModalSetup) {
+    window._editInventoryBookModalSetup = true;
+
+    document.getElementById('closeEditBookModalBtn')?.addEventListener('click', () => {
+      const modal = document.getElementById('modalEditInventoryBook');
+      if (modal) {
+        if (typeof modal.close === 'function') modal.close();
+        else modal.style.display = 'none';
+      }
+    });
+
+    document.getElementById('btnCancelEditBook')?.addEventListener('click', () => {
+      const modal = document.getElementById('modalEditInventoryBook');
+      if (modal) {
+        if (typeof modal.close === 'function') modal.close();
+        else modal.style.display = 'none';
+      }
+    });
+
+    document.getElementById('formEditInventoryBook')?.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const modal = document.getElementById('modalEditInventoryBook');
+      const origPack = document.getElementById('editBookOriginalPack')?.value;
+      const newGameName = document.getElementById('editBookGameName')?.value.trim() || 'Scratch-off';
+      const newGameNumber = document.getElementById('editBookGameNumber')?.value.trim() || '1401';
+      const newPackNumber = document.getElementById('editBookPackNumber')?.value.trim();
+      const newPrice = Number(document.getElementById('editBookPrice')?.value) || 1;
+      const newPackSize = Number(document.getElementById('editBookPackSize')?.value) || 100;
+      const newStatus = document.getElementById('editBookStatus')?.value || 'IN_STOCK';
+      const rawBox = document.getElementById('editBookBoxNumber')?.value.trim();
+      const newBoxNumber = rawBox && !isNaN(parseInt(rawBox, 10)) ? parseInt(rawBox, 10) : null;
+      const newPos = document.getElementById('editBookPosition')?.value.trim() || '000';
+      const newRecDate = document.getElementById('editBookReceivedDate')?.value.trim() || 'Today';
+
+      if (!newPackNumber) {
+        alert('Please enter a valid pack number.');
+        return;
+      }
+
+      // Initialize state.inStockInventory if not yet populated
+      if (!state.inStockInventory || !Array.isArray(state.inStockInventory)) {
+        state.inStockInventory = JSON.parse(JSON.stringify(REFERENCE_IN_STOCK_PACKS));
+      }
+
+      // Update inStockInventory if previously in stock
+      const stockIdx = state.inStockInventory.findIndex(p => String(p.packNumber) === String(origPack));
+      if (stockIdx !== -1) {
+        if (newStatus === 'IN_STOCK') {
+          state.inStockInventory[stockIdx].gameName = newGameName;
+          state.inStockInventory[stockIdx].gameNumber = `Game ${newGameNumber}`;
+          state.inStockInventory[stockIdx].packNumber = newPackNumber;
+          state.inStockInventory[stockIdx].price = newPrice;
+          state.inStockInventory[stockIdx].packSize = `${newPackSize} tickets`;
+          state.inStockInventory[stockIdx].packSizeNum = newPackSize;
+          state.inStockInventory[stockIdx].position = newPos;
+          state.inStockInventory[stockIdx].receivedDate = newRecDate;
+        } else {
+          state.inStockInventory.splice(stockIdx, 1);
+        }
+      } else if (newStatus === 'IN_STOCK') {
+        state.inStockInventory.push({
+          id: `stock_${Date.now()}`,
+          gameName: newGameName,
+          gameNumber: `Game ${newGameNumber}`,
+          packNumber: newPackNumber,
+          price: newPrice,
+          packSize: `${newPackSize} tickets`,
+          packSizeNum: newPackSize,
+          status: 'IN_STOCK',
+          statusLabel: 'In stock',
+          statusBadgeClass: 'badge-in-stock',
+          boxNumber: null,
+          position: newPos,
+          receivedDate: newRecDate
+        });
+      }
+
+      // Sync rack slots if ACTIVE or if removed from slot
+      if (Array.isArray(state.slots)) {
+        state.slots.forEach(slot => {
+          if (slot && String(slot.packNumber) === String(origPack)) {
+            if (newStatus !== 'ACTIVE' || (newBoxNumber && Number(slot.boxNumber) !== Number(newBoxNumber))) {
+              slot.packNumber = '';
+              slot.gameName = '';
+              slot.status = 'EMPTY';
+            }
+          }
+        });
+
+        if (newStatus === 'ACTIVE' && newBoxNumber && newBoxNumber >= 1 && newBoxNumber <= state.slots.length) {
+          const targetSlot = state.slots[newBoxNumber - 1];
+          if (targetSlot) {
+            targetSlot.gameName = newGameName;
+            targetSlot.gameCode = newGameNumber;
+            targetSlot.packNumber = newPackNumber;
+            targetSlot.price = newPrice;
+            targetSlot.packSize = newPackSize;
+            targetSlot.status = 'ACTIVE';
+            targetSlot.currentTicket = parseInt(newPos, 10) || 0;
+            targetSlot.startTicket = parseInt(newPos, 10) || 0;
+          }
+        }
+      }
+
+      saveState(state);
+      sfx.success?.();
+      if (modal) {
+        if (typeof modal.close === 'function') modal.close();
+        else modal.style.display = 'none';
+      }
+      renderInventoryView();
+      if (typeof renderDispenser === 'function') renderDispenser();
+      showToast(`✓ Book ${newPackNumber} updated successfully.`, 'success');
+    });
+
+    document.getElementById('btnDeleteInventoryBook')?.addEventListener('click', () => {
+      const origPack = document.getElementById('editBookOriginalPack')?.value;
+      if (!origPack) return;
+      if (!confirm(`Are you sure you want to remove pack ${origPack} from inventory?`)) return;
+
+      if (!state.inStockInventory || !Array.isArray(state.inStockInventory)) {
+        state.inStockInventory = JSON.parse(JSON.stringify(REFERENCE_IN_STOCK_PACKS));
+      }
+      state.inStockInventory = state.inStockInventory.filter(p => String(p.packNumber) !== String(origPack));
+
+      if (Array.isArray(state.slots)) {
+        state.slots.forEach(slot => {
+          if (slot && String(slot.packNumber) === String(origPack)) {
+            slot.packNumber = '';
+            slot.gameName = '';
+            slot.status = 'EMPTY';
+          }
+        });
+      }
+
+      saveState(state);
+      sfx.keypad?.();
+      const modal = document.getElementById('modalEditInventoryBook');
+      if (modal) {
+        if (typeof modal.close === 'function') modal.close();
+        else modal.style.display = 'none';
+      }
+      renderInventoryView();
+      if (typeof renderDispenser === 'function') renderDispenser();
+      showToast(`Pack ${origPack} removed.`, 'info');
+    });
   }
 
   function renderDayReportView() {
@@ -14811,3 +14871,34 @@ window.openManagerApprovalModal = openManagerApprovalModal;
 
 // Launch application
 initPOS();
+
+// Test hooks on window in DEV mode only (Phase 2 stability verification)
+if (import.meta.env?.DEV) {
+  window.__INIT_POS_TEST_HOOKS__ = {
+    runStep,
+    initPOS,
+    showSystemLoadErrorBanner,
+    getStepFlags: () => ({
+      setupEventListeners: _setupEventListenersDone,
+      setupKeypad: _setupKeypadDone,
+      setupHardwareScannerListener: _setupHardwareScannerListenerDone,
+      setupModernMockupDialogs: _setupModernMockupDialogsDone
+    }),
+    resetStepFlags: () => {
+      _setupEventListenersDone = false;
+      _setupKeypadDone = false;
+      _setupHardwareScannerListenerDone = false;
+      _setupModernMockupDialogsDone = false;
+    }
+  };
+  window.__SIDEBAR_TEST_HOOKS__ = {
+    setupSidebarAutoCollapse,
+    getTimer: () => _sidebarCollapseTimer,
+    triggerAutoCollapseNow: () => {
+      const sidebar = document.querySelector('.pos-sidebar');
+      if (sidebar && !sidebar.querySelector(':focus-visible')) {
+        sidebar.classList.add('collapsed');
+      }
+    }
+  };
+}

@@ -20386,8 +20386,10 @@ dialog#shiftReportModal::backdrop {
 }
 
 .dispensers-grid-wrapper {
-  max-height: 295px !important;
-  overflow-y: scroll !important;
+  max-height: none !important;
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  overflow-y: auto !important;
   overflow-x: hidden !important;
   padding: 2px 6px 2px 0 !important;
 }
@@ -20751,7 +20753,7 @@ dialog#shiftReportModal::backdrop {
   color: #ffffff !important;
   border-radius: 9999px !important;
   padding: 10px 18px 10px 14px !important;
-  display: flex !important;
+  display: flex;
   align-items: center !important;
   gap: 12px !important;
   box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3), 0 8px 10px -6px rgba(0, 0, 0, 0.2) !important;

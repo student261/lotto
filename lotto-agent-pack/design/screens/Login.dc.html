@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sign in</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="/_blob/f3ff9ff7fc8e731e1805db690f5affd2">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800&amp;family=JetBrains+Mono:wght@500;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.login{display:flex;flex-wrap:wrap;min-height:100vh}
+.login-art{flex:1 1 420px;background:var(--brand);color:var(--on-brand);padding:48px;display:flex;flex-direction:column;gap:28px;position:relative;overflow:hidden}
+.login-art .ring{position:absolute;border-radius:50%;border:2px solid rgba(255,255,255,.14)}
+.login-art h2{font-size:34px;font-weight:800;letter-spacing:-.02em;line-height:1.15;max-width:460px}
+.flow{display:flex;flex-direction:column;gap:14px;max-width:420px;position:relative}
+.flow-s{display:flex;gap:14px;align-items:center;padding:14px 16px;border-radius:14px;background:rgba(255,255,255,.1);animation:rise .4s cubic-bezier(.2,.7,.2,1) both}
+.flow-s:nth-child(2){animation-delay:.08s}.flow-s:nth-child(3){animation-delay:.16s}.flow-s:nth-child(4){animation-delay:.24s}
+.flow-s .n{width:32px;height:32px;border-radius:50%;background:rgba(255,255,255,.2);display:grid;place-items:center;font-weight:800;flex:none}
+.flow-s b{display:block;font-size:16px}
+.flow-s span{font-size:13px;opacity:.85}
+.login-form{flex:1 1 480px;display:flex;align-items:center;justify-content:center;padding:48px 24px;background:var(--bg)}
+.login-card{width:min(420px,100%);display:flex;flex-direction:column;gap:18px;animation:pop .35s cubic-bezier(.2,.7,.2,1) both}
+.login-card h1{font-size:28px;font-weight:800;letter-spacing:-.02em}
+.pw{position:relative}
+.pw .input{padding-right:52px}
+.pw .eye{position:absolute;right:4px;top:4px;width:40px;height:40px}
+.err{display:flex;gap:10px;align-items:center;padding:12px 14px;border-radius:10px;background:var(--danger-soft);color:var(--danger);font-size:14px;font-weight:600;animation:shake .35s}
+</style>
+</helmet>
+<div class="lt {{themeCls}}">
+<div class="login">
+  <section class="login-art" aria-hidden="true">
+    <span class="ring" style="width: 520px; height: 520px; right: -200px; bottom: -220px"></span>
+    <span class="ring" style="width: 320px; height: 320px; right: -60px; bottom: -80px"></span>
+    <div class="brand" style="color: inherit; padding: 0">
+      <span class="brand-mark" style="background: rgba(255,255,255,.18); color: inherit"><svg class="ic" viewBox="0 0 24 24"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"></path><path d="M13 5v2"></path><path d="M13 17v2"></path><path d="M13 11v2"></path></svg></span>
+      <span class="brand-name" style="font-size: 20px">LottoTrack</span>
+    </div>
+    <h2>Scratch-off books, boxes and shift reports — in four simple steps.</h2>
+    <div class="flow">
+      <div class="flow-s"><span class="n">1</span><div><b>Activate a book</b><span>Scan a ticket, pick the box</span></div></div>
+      <div class="flow-s"><span class="n">2</span><div><b>Start the shift</b><span>Last closing numbers load by themselves</span></div></div>
+      <div class="flow-s"><span class="n">3</span><div><b>End the shift</b><span>Scan the top ticket in each box</span></div></div>
+      <div class="flow-s"><span class="n">4</span><div><b>Get the report</b><span>Totals are worked out and emailed</span></div></div>
+    </div>
+  </section>
+
+  <section class="login-form">
+    <div class="login-card">
+      <div>
+        <h1>Sign in</h1>
+        <p class="muted" style="margin-top: 4px">Amigo Food Mart</p>
+      </div>
+      <div class="field"><label for="u">Sign-in name</label><input id="u" class="input" value="{{user}}" onChange="{{onUser}}" autocomplete="username" placeholder="e.g. rosa"></div>
+      <div class="field">
+        <label for="p">Password</label>
+        <div class="pw">
+          <input id="p" class="input" type="{{pwType}}" value="{{pw}}" onChange="{{onPw}}" onKeyDown="{{onKey}}" autocomplete="current-password">
+          <button class="btn btn-ghost icon-btn eye" onClick="{{toggleShow}}" aria-label="{{showLabel}}" title="{{showLabel}}"><svg class="ic" viewBox="0 0 24 24"><path d="M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0"></path><circle cx="12" cy="12" r="3"></circle></svg></button>
+        </div>
+      </div>
+      <sc-if value="{{hasErr}}" hint-placeholder-val="{{ false }}">
+        <div class="err" role="alert"><svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="M12 8v4"></path><path d="M12 16h.01"></path></svg>{{err}}</div>
+      </sc-if>
+      <button class="btn btn-primary btn-lg btn-block" onClick="{{signIn}}">Sign in</button>
+      <p class="muted" style="font-size: 13px; text-align: center">Forgot your password? Ask the store owner to reset it.</p>
+    </div>
+  </section>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  constructor(...args) {
+    super(...args);
+    this.state = { dark: !!(this.props && this.props.dark), user: 'rosa', pw: '', show: false, err: '' };
+  }
+  renderVals() {
+    var self = this, s = this.state;
+    var signIn = function () {
+      if (!s.user.trim() || !s.pw) { self.setState({ err: 'Enter your sign-in name and password.' }); return; }
+      if (s.pw.length < 8) { self.setState({ err: 'That password is not right. Try again.' }); return; }
+      self.setState({ err: '' });
+      try { window.location.href = 'Main.dc.html'; } catch (e) {}
+    };
+    return {
+      themeCls: s.dark ? 'dark' : '',
+      user: s.user, pw: s.pw,
+      pwType: s.show ? 'text' : 'password',
+      showLabel: s.show ? 'Hide password' : 'Show password',
+      toggleShow: function () { self.setState({ show: !s.show }); },
+      onUser: function (e) { self.setState({ user: e.target.value, err: '' }); },
+      onPw: function (e) { self.setState({ pw: e.target.value, err: '' }); },
+      onKey: function (e) { if (e.key === 'Enter') signIn(); },
+      hasErr: !!s.err, err: s.err,
+      signIn: signIn
+    };
+  }
+}
+</script>
+</body>
+</html>

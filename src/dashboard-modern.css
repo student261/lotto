@@ -1,0 +1,473 @@
+/* ==========================================================================
+   LottoTrack Pro — Modern Dashboard & Sidebar Stylesheet (Phase 4 Redesign)
+   Scoped strictly to #viewSellCounter and .pos-sidebar
+   Loaded last in cascade to cleanly apply design tokens
+   ========================================================================== */
+
+/* -------------------------------------------------------------
+   1. Design Token Variables (Figtree, JetBrains Mono, Palette)
+   ------------------------------------------------------------- */
+:root {
+  --font: "Figtree", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+
+#viewSellCounter,
+.pos-sidebar {
+  font-family: var(--font);
+  color: var(--ink);
+  box-sizing: border-box;
+}
+
+#viewSellCounter *,
+.pos-sidebar * {
+  box-sizing: border-box;
+  font-family: inherit;
+}
+
+/* -------------------------------------------------------------
+   2. Modern Sidebar Styling (.pos-sidebar)
+   ------------------------------------------------------------- */
+.pos-sidebar {
+  background: var(--surface, #ffffff);
+  border-right: 1px solid var(--line, #e2e8f0);
+  transition: width 0.22s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.pos-sidebar .brand-badge-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--brand, #1D4ED8);
+  color: var(--on-brand, #ffffff);
+  display: grid;
+  place-items: center;
+}
+
+.pos-sidebar .brand-app-name {
+  font-weight: 800;
+  font-size: 1.1rem;
+  letter-spacing: -0.01em;
+  color: var(--ink, #14171C);
+}
+
+.pos-sidebar .brand-store-name {
+  font-size: 0.8rem;
+  color: var(--ink-3, #66707D);
+}
+
+.pos-sidebar .sidebar-nav-item {
+  min-height: 44px;
+  border-radius: var(--r-sm, 8px);
+  padding: 0 12px;
+  gap: 12px;
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--ink-2, #47505C);
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.pos-sidebar .sidebar-nav-item:hover {
+  background: var(--surface-2, #F1F3F6);
+  color: var(--ink, #14171C);
+}
+
+.pos-sidebar .sidebar-nav-item.active {
+  background: var(--brand-soft, #E9EFFD);
+  color: var(--brand-ink, #1E3A8A);
+}
+
+.pos-sidebar .sidebar-nav-item.active svg {
+  color: var(--brand, #1D4ED8);
+}
+
+/* -------------------------------------------------------------
+   3. Top Action Controls & Modern Control Grid (Fixes Overlap)
+   ------------------------------------------------------------- */
+#viewSellCounter .dashboard-control-panel {
+  display: flex !important;
+  align-items: stretch !important;
+  gap: 12px !important;
+  margin-bottom: 8px !important;
+}
+
+#viewSellCounter .control-left-column {
+  flex: 1 1 auto !important;
+  display: grid !important;
+  grid-template-columns: minmax(130px, auto) 1fr 140px !important;
+  grid-template-rows: 60px 60px !important;
+  gap: 10px !important;
+  align-items: stretch !important;
+}
+
+#viewSellCounter.shift-ended-mode .control-left-column,
+.sell-counter-view.shift-ended-mode .control-left-column {
+  grid-template-rows: 60px !important;
+}
+
+#viewSellCounter #btnHeaderRefresh {
+  grid-column: 1 !important;
+  grid-row: 1 !important;
+  height: 60px !important;
+  min-height: 60px !important;
+  border-radius: var(--r-md, 12px) !important;
+  padding: 0 18px !important;
+  background: var(--surface, #FFFFFF) !important;
+  border: 2px solid var(--line-strong, #C9CFD8) !important;
+  color: var(--ink, #14171C) !important;
+  font-family: var(--font) !important;
+  font-size: 1.1rem !important;
+  font-weight: 800 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 8px !important;
+  cursor: pointer !important;
+  transition: background 0.15s ease, border-color 0.15s ease;
+  white-space: nowrap !important;
+  box-sizing: border-box !important;
+}
+
+#viewSellCounter #btnHeaderRefresh:hover {
+  background: var(--surface-2, #F1F3F6) !important;
+  border-color: var(--ink-3, #66707D) !important;
+}
+
+#viewSellCounter #mainShiftActionBtn.btn-ctrl-end-shift,
+#viewSellCounter #mainShiftActionBtn {
+  grid-column: 2 !important;
+  grid-row: 1 !important;
+  height: 60px !important;
+  min-height: 60px !important;
+  border-radius: var(--r-md, 12px) !important;
+  padding: 0 20px !important;
+  background: var(--ink, #14171C) !important;
+  border: 2px solid var(--ink, #14171C) !important;
+  color: var(--surface, #FFFFFF) !important;
+  font-family: var(--font) !important;
+  font-size: 1.15rem !important;
+  font-weight: 800 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 10px !important;
+  cursor: pointer !important;
+  transition: transform 0.08s ease, filter 0.15s ease, background 0.15s ease;
+  white-space: nowrap !important;
+  box-sizing: border-box !important;
+}
+
+#viewSellCounter #mainShiftActionBtn:hover {
+  filter: brightness(1.1) !important;
+  background: var(--ink, #14171C) !important;
+}
+
+#viewSellCounter #mainShiftActionBtn:active {
+  transform: scale(0.98) !important;
+}
+
+#viewSellCounter #btnHeaderCancel {
+  grid-column: 3 !important;
+  grid-row: 1 !important;
+  height: 60px !important;
+  min-height: 60px !important;
+  width: 100% !important;
+  border-radius: var(--r-md, 12px) !important;
+  padding: 0 16px !important;
+  background: var(--danger-soft, #FCEBE9) !important;
+  border: 1px solid rgba(192, 38, 27, 0.25) !important;
+  color: var(--danger, #C0261B) !important;
+  font-family: var(--font) !important;
+  font-size: 1.05rem !important;
+  font-weight: 700 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 6px !important;
+  cursor: pointer !important;
+  box-sizing: border-box !important;
+}
+
+#viewSellCounter #btnHeaderCancel:hover:not(:disabled) {
+  filter: brightness(0.96) !important;
+}
+
+#viewSellCounter .dashboard-scanner-input-wrap {
+  grid-column: 1 / 3 !important;
+  grid-row: 2 !important;
+  height: 60px !important;
+  min-height: 60px !important;
+  border-radius: var(--r-md, 12px) !important;
+  border: 2px solid var(--brand, #1D4ED8) !important;
+  background: var(--surface, #FFFFFF) !important;
+  box-shadow: 0 0 0 3px rgba(29, 78, 216, 0.12) !important;
+  display: flex !important;
+  align-items: center !important;
+  padding: 0 8px 0 16px !important;
+  gap: 12px !important;
+  box-sizing: border-box !important;
+}
+
+#viewSellCounter .dashboard-scanner-field {
+  height: 100% !important;
+  font-size: 1.15rem !important;
+  font-family: var(--font) !important;
+  font-weight: 600 !important;
+  color: var(--ink, #14171C) !important;
+  background: transparent !important;
+  border: none !important;
+  outline: none !important;
+  flex: 1 1 auto !important;
+}
+
+#viewSellCounter .btn-scanner-enter-pill {
+  height: 42px !important;
+  padding: 0 20px !important;
+  border-radius: 8px !important;
+  font-weight: 700 !important;
+  font-size: 0.95rem !important;
+  background: var(--surface-2, #F1F3F6) !important;
+  border: 1px solid var(--line-strong, #C9CFD8) !important;
+  color: var(--ink, #14171C) !important;
+  cursor: pointer !important;
+}
+
+#viewSellCounter #undoActionBtn {
+  grid-column: 3 !important;
+  grid-row: 2 !important;
+  height: 60px !important;
+  min-height: 60px !important;
+  width: 100% !important;
+  border-radius: var(--r-md, 12px) !important;
+  font-family: var(--font) !important;
+  font-size: 1.05rem !important;
+  font-weight: 700 !important;
+  background: var(--surface-2, #F1F3F6) !important;
+  color: var(--ink, #14171C) !important;
+  border: 1px solid var(--line, #E1E5EB) !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 6px !important;
+  cursor: pointer !important;
+  box-sizing: border-box !important;
+}
+
+#viewSellCounter .dashboard-last-scan-card {
+  height: 130px !important;
+  min-height: 130px !important;
+  border-radius: var(--r-md, 12px) !important;
+  background: var(--surface-2, #F1F3F6) !important;
+  border: 1px solid var(--line, #E1E5EB) !important;
+  padding: 12px 20px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  box-sizing: border-box !important;
+}
+
+/* -------------------------------------------------------------
+   4. Stat Chips & KPI Cluster (Rounded Rectangles --r-md)
+   ------------------------------------------------------------- */
+#viewSellCounter .dashboard-kpi-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 6px 0 10px;
+  width: 100%;
+}
+
+#viewSellCounter .dashboard-kpi-bar .kpi-metric-card,
+#viewSellCounter .dashboard-kpi-bar .kpi-royal-item,
+#viewSellCounter .dashboard-kpi-bar .kpi-chip-modern,
+#viewSellCounter .dashboard-kpi-bar > div {
+  border-radius: var(--r-md, 12px);
+  background: var(--surface, #FFFFFF);
+  border: 1px solid var(--line, #E1E5EB);
+  box-shadow: var(--sh-sm, 0 1px 3px rgba(22,32,52,.08));
+  padding: 8px 14px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+#viewSellCounter .kpi-label,
+#viewSellCounter .kpi-royal-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-3, #66707D);
+}
+
+#viewSellCounter .kpi-value,
+#viewSellCounter .kpi-royal-val {
+  font-size: 1.35rem;
+  font-weight: 800;
+  color: var(--ink, #14171C);
+  line-height: 1.2;
+}
+
+/* -------------------------------------------------------------
+   5. Modern Last-Scan Readout Card
+   ------------------------------------------------------------- */
+#viewSellCounter #lastScannedBoxCard,
+#viewSellCounter .last-scan-card,
+#viewSellCounter .last-scan-card-modern {
+  border-radius: var(--r-md, 12px);
+  background: var(--surface-2, #F1F3F6);
+  border: 1px solid var(--line, #E1E5EB);
+  padding: 10px 16px;
+  box-shadow: var(--sh-sm, 0 1px 3px rgba(22,32,52,.08));
+}
+
+#viewSellCounter .last-scan-game-title {
+  font-family: var(--font);
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: var(--ink, #14171C);
+}
+
+#viewSellCounter .last-scan-box-num,
+#viewSellCounter #largeStatReadout {
+  font-family: var(--mono);
+  font-weight: 800;
+  color: var(--brand, #1D4ED8);
+}
+
+/* -------------------------------------------------------------
+   6. Dispenser Rack Tiles & Acrylic Cards
+   ------------------------------------------------------------- */
+#viewSellCounter .dispenser-rack-container {
+  border-radius: 14px;
+  background: var(--surface, #FFFFFF);
+  border: 1px solid var(--line, #E1E5EB);
+  box-shadow: var(--sh-sm, 0 1px 3px rgba(22,32,52,.08));
+  padding: 12px;
+}
+
+#viewSellCounter .box-card {
+  border-radius: 12px;
+  background: var(--surface, #FFFFFF);
+  border: 1px solid var(--line, #E1E5EB);
+  box-shadow: var(--sh-sm, 0 1px 3px rgba(22,32,52,.08));
+  transition: transform 0.18s cubic-bezier(0.2, 0.7, 0.2, 1), box-shadow 0.18s ease;
+  position: relative;
+  cursor: pointer;
+}
+
+#viewSellCounter .box-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--sh-md, 0 4px 10px rgba(22,32,52,.08));
+}
+
+#viewSellCounter .box-card.active-slot {
+  border-top: 3px solid var(--money, #0A7A42);
+}
+
+#viewSellCounter .box-card.new-activated-slot {
+  border-top: 3px solid var(--brand, #1D4ED8);
+}
+
+#viewSellCounter .box-card .box-main-number {
+  font-family: var(--mono) !important;
+  font-size: 2.4rem;
+  font-weight: 800;
+  color: var(--ink, #14171C);
+  line-height: 1;
+}
+
+#viewSellCounter .box-card .ticket-sold-count {
+  font-family: var(--mono) !important;
+  font-size: 1.8rem;
+  font-weight: 800;
+  color: var(--brand, #1D4ED8);
+}
+
+/* -------------------------------------------------------------
+   7. Dark Mode Token Overrides ([data-theme="dark"])
+   ------------------------------------------------------------- */
+[data-theme="dark"] #viewSellCounter {
+  color: var(--ink);
+}
+
+[data-theme="dark"] #viewSellCounter #mainShiftActionBtn {
+  background: var(--surface-3, #252B34);
+  border-color: var(--line-strong, #38404B);
+  color: var(--ink, #EEF1F5);
+}
+
+[data-theme="dark"] #viewSellCounter #btnHeaderRefresh {
+  background: var(--surface, #161A20);
+  border-color: var(--line, #272D36);
+  color: var(--ink, #EEF1F5);
+}
+
+[data-theme="dark"] #viewSellCounter #btnHeaderCancel {
+  background: var(--danger-soft, #371614);
+  color: var(--danger, #FF6F63);
+}
+
+[data-theme="dark"] #viewSellCounter .dashboard-kpi-bar .kpi-metric-card,
+[data-theme="dark"] #viewSellCounter .dashboard-kpi-bar .kpi-royal-item,
+[data-theme="dark"] #viewSellCounter .dashboard-kpi-bar > div {
+  background: var(--surface, #161A20);
+  border-color: var(--line, #272D36);
+}
+
+[data-theme="dark"] #viewSellCounter .kpi-value,
+[data-theme="dark"] #viewSellCounter .kpi-royal-val {
+  color: var(--ink, #EEF1F5);
+}
+
+[data-theme="dark"] #viewSellCounter .dispenser-rack-container,
+[data-theme="dark"] #viewSellCounter .box-card {
+  background: var(--surface, #161A20);
+  border-color: var(--line, #272D36);
+}
+
+[data-theme="dark"] #viewSellCounter .box-card .box-main-number {
+  color: var(--ink, #EEF1F5);
+}
+
+[data-theme="dark"] #viewSellCounter .box-card .ticket-sold-count {
+  color: var(--brand, #6B97FF);
+}
+
+[data-theme="dark"] #viewSellCounter #undoActionBtn {
+  background: var(--surface-2, #20242B) !important;
+  border-color: var(--line, #2E3440) !important;
+  color: var(--ink, #EEF1F5) !important;
+}
+
+[data-theme="dark"] #viewSellCounter .dashboard-scanner-input-wrap {
+  background: var(--surface, #161A20) !important;
+  border-color: var(--brand, #6B97FF) !important;
+  box-shadow: 0 0 0 3px rgba(107, 151, 255, 0.15) !important;
+}
+
+[data-theme="dark"] #viewSellCounter .dashboard-scanner-field {
+  color: var(--ink, #EEF1F5) !important;
+}
+
+[data-theme="dark"] #viewSellCounter .btn-scanner-enter-pill {
+  background: var(--surface-2, #20242B) !important;
+  border-color: var(--line-strong, #3E4554) !important;
+  color: var(--ink, #EEF1F5) !important;
+}
+
+[data-theme="dark"] #viewSellCounter .dashboard-last-scan-card {
+  background: var(--surface, #161A20) !important;
+  border-color: var(--line, #272D36) !important;
+}
+
+[data-theme="dark"] #viewSellCounter .last-scan-game-title {
+  color: var(--ink, #EEF1F5) !important;
+}
+
+[data-theme="dark"] #viewSellCounter .last-scan-num-badge {
+  background: var(--surface-2, #20242B) !important;
+  color: var(--ink, #EEF1F5) !important;
+}
+

@@ -1,0 +1,128 @@
+{
+  "v": 3,
+  "attachments": {},
+  "boards": {
+    "CloseShift.dc.html": {
+      "h": 1000,
+      "w": 1440,
+      "x": 4560,
+      "y": 0
+    },
+    "History.dc.html": {
+      "expand": "fill",
+      "h": 1000,
+      "is_interactive": true,
+      "title": "05 · Reports — shift history & daily total",
+      "w": 1440,
+      "x": 1520,
+      "y": 1500
+    },
+    "Inventory.dc.html": {
+      "expand": "fill",
+      "h": 1000,
+      "is_interactive": true,
+      "title": "04 · Inventory — Receive Book & Update Inventory",
+      "w": 1440,
+      "x": 0,
+      "y": 1500
+    },
+    "Login.dc.html": {
+      "expand": "fill",
+      "h": 900,
+      "is_interactive": true,
+      "title": "01 · Sign in",
+      "w": 1440,
+      "x": 0,
+      "y": 0
+    },
+    "Main.dc.html": {
+      "expand": "fill",
+      "h": 900,
+      "is_interactive": true,
+      "title": "02 · Dashboard — activate a book · End Shift → scan → Get Report → Confirm → Report",
+      "w": 1440,
+      "x": 1520,
+      "y": 0
+    },
+    "Settings.dc.html": {
+      "expand": "fill",
+      "h": 1000,
+      "is_interactive": true,
+      "title": "06 · Settings — store, boxes, games, people",
+      "w": 1440,
+      "x": 3040,
+      "y": 1500
+    },
+    "ShiftReport.dc.html": {
+      "h": 2340,
+      "is_interactive": true,
+      "title": "03 · Shift Report — A4 printable, emailed as PDF",
+      "w": 860,
+      "x": 3040,
+      "y": 0
+    },
+    "Sidebar.dc.html": {
+      "h": 900,
+      "is_interactive": true,
+      "title": "Component · Sidebar",
+      "w": 236,
+      "x": 1520,
+      "y": 3000
+    },
+    "StyleGuide.dc.html": {
+      "expand": "fill",
+      "h": 2200,
+      "title": "Design system",
+      "w": 1440,
+      "x": 0,
+      "y": 3000
+    }
+  },
+  "createdOnFiles": {
+    "at": "2026-10-08T08:05:00Z",
+    "v": 1
+  },
+  "designSystems": [],
+  "launch": {
+    "view": "canvas"
+  },
+  "notes": {
+    "row1": {
+      "kind": "title1",
+      "maxW": 6000,
+      "text": "The shift — sign in, start, end, report",
+      "w": 240,
+      "x": 0,
+      "y": -300
+    },
+    "row2": {
+      "kind": "title1",
+      "maxW": 6000,
+      "text": "Owner — stock, reports and setup",
+      "w": 240,
+      "x": 0,
+      "y": 1200
+    },
+    "row3": {
+      "kind": "title1",
+      "maxW": 6000,
+      "text": "Design system",
+      "w": 240,
+      "x": 0,
+      "y": 2700
+    }
+  },
+  "order": [
+    "Login.dc.html",
+    "Main.dc.html",
+    "ShiftReport.dc.html",
+    "Inventory.dc.html",
+    "History.dc.html",
+    "Settings.dc.html",
+    "StyleGuide.dc.html",
+    "Sidebar.dc.html",
+    "CloseShift.dc.html"
+  ],
+  "pages": [],
+  "title": "LottoTrack Pro — UI Redesign"
+}
