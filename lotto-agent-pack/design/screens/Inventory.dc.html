@@ -1,0 +1,469 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Inventory</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="/_blob/f3ff9ff7fc8e731e1805db690f5affd2">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800&amp;family=JetBrains+Mono:wght@500;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.i-app{height:100vh;overflow:hidden}
+.i-main{height:100vh;min-height:0;overflow:hidden;display:flex;flex-direction:column}
+.i-top{display:flex;flex-wrap:wrap;align-items:center;gap:12px 16px;padding:14px 24px;background:var(--surface);border-bottom:1px solid var(--line);flex:none}
+.i-top h1{font-size:22px;font-weight:800;letter-spacing:-.01em}
+.i-top .sub{font-size:13px;color:var(--ink-3)}
+.i-top .grow{flex:1 1 auto}
+.i-bar{display:flex;flex-wrap:wrap;gap:12px;align-items:center;padding:14px 24px 0;flex:none}
+.i-bar .grow{flex:1 1 auto}
+.i-body{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;margin:14px 24px 20px;background:var(--surface);border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:var(--sh-sm)}
+.i-scroll{flex:1 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain}
+.i-scroll .tbl th{position:sticky;top:0;z-index:1}
+.tbl tr.flash td{animation:fl 1.2s cubic-bezier(.2,.7,.2,1)}
+@keyframes fl{0%{background:var(--money-soft)}100%{background:transparent}}
+/* Update inventory scan panel */
+.up{display:flex;flex-direction:column;gap:12px;margin:14px 24px 0;padding:16px;border-radius:14px;border:2px solid var(--brand);background:var(--brand-soft);flex:none;animation:rise .3s cubic-bezier(.2,.7,.2,1) both}
+.up-h{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+.up-h h2{font-size:18px;font-weight:800;color:var(--brand-ink)}
+.up-h p{font-size:14px;color:var(--brand-ink);opacity:.85}
+.up-h .grow{flex:1 1 auto}
+.up .scan-field{background:var(--surface);height:58px}
+.up-list{display:flex;flex-direction:column;gap:6px;max-height:180px;overflow-y:auto}
+.up-row{display:flex;align-items:center;gap:12px;padding:8px 12px;border-radius:10px;background:var(--surface);font-size:14px;animation:rise .25s cubic-bezier(.2,.7,.2,1) both}
+.up-row b{font-weight:700}
+.up-row .mono{font-size:13px;color:var(--ink-3)}
+.up-row .grow{flex:1 1 auto}
+.samples{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:12px;color:var(--brand-ink)}
+.samples button{all:unset;cursor:pointer;font-family:var(--mono);font-size:12px;padding:3px 8px;border-radius:6px;background:var(--surface);color:var(--ink-2)}
+.samples button:hover{background:var(--surface-3)}
+/* Receive popup */
+.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.msg{display:flex;gap:10px;align-items:flex-start;padding:12px 14px;border-radius:10px;font-size:14px;font-weight:600}
+.msg.err{background:var(--danger-soft);color:var(--danger)}
+.msg.ok{background:var(--money-soft);color:var(--money)}
+.msg.info{background:var(--brand-soft);color:var(--brand-ink)}
+.lt .btn-primary{color:#fff}
+/* Receive Book popup */
+.modal.rb{width:min(1000px,100%)}
+.rb-grid{display:grid;grid-template-columns:minmax(0,1fr) 280px;gap:22px}
+.rb-l{display:flex;flex-direction:column;gap:14px;min-width:0}
+.rb-three{display:grid;grid-template-columns:1fr 1.3fr .8fr;gap:10px}
+.input.on{border-color:var(--brand);box-shadow:0 0 0 3px var(--brand-soft)}
+.prices{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+.pc{all:unset;box-sizing:border-box;height:52px;border-radius:12px;border:1.5px solid var(--line-strong);display:grid;place-items:center;font-size:19px;font-weight:800;cursor:pointer;background:var(--surface);transition:all .12s;font-variant-numeric:tabular-nums}
+.pc:hover{border-color:var(--brand);color:var(--brand)}
+.pc:focus-visible{outline:3px solid var(--brand);outline-offset:2px}
+.pc.on{background:var(--brand);border-color:var(--brand);color:#fff}
+.pc[disabled]{cursor:default;opacity:.55}
+.pc[disabled].on{opacity:1}
+.pc-other{grid-column:span 2;display:flex;align-items:center;gap:4px;height:52px;border-radius:12px;border:1.5px solid var(--line-strong);padding:0 12px;background:var(--surface);cursor:text}
+.pc-other span{font-weight:800;color:var(--ink-3)}
+.pc-other input{all:unset;flex:1;min-width:0;font-size:18px;font-weight:800;font-family:var(--mono)}
+.pc-other.on{border-color:var(--brand);box-shadow:0 0 0 3px var(--brand-soft)}
+.pv{display:flex;align-items:center;gap:16px;padding:14px 16px;border-radius:12px;background:var(--surface-2)}
+.pv .l{display:block;font-size:12px;font-weight:700;color:var(--ink-3);text-transform:uppercase;letter-spacing:.05em}
+.pv b{font-size:26px;font-weight:800}
+.pv .eq{flex:1;font-size:15px;font-weight:600;color:var(--ink-2)}
+.pv.big b{color:var(--brand)}
+.rb-pad{display:flex;flex-direction:column;gap:10px;padding:14px;border-radius:14px;background:var(--surface-2);align-self:start}
+.rb-target{font-size:13px;color:var(--ink-3);font-weight:600}
+.rb-target b{color:var(--brand)}
+.rb-disp{height:56px;border-radius:10px;background:var(--surface);border:2px solid var(--brand);display:flex;align-items:center;justify-content:flex-end;padding:0 14px;font-size:28px;font-weight:700;overflow:hidden}
+.kgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.kk{all:unset;box-sizing:border-box;height:56px;border-radius:10px;background:var(--surface);border:1px solid var(--line);display:grid;place-items:center;font-size:22px;font-weight:700;cursor:pointer;transition:background .12s,transform .08s}
+.kk:hover{background:var(--surface-3)}
+.kk:active{transform:scale(.95);background:var(--brand-soft)}
+.kk:focus-visible{outline:3px solid var(--brand);outline-offset:2px}
+.kk.fn{font-size:16px;color:var(--ink-2)}
+@media (max-width:900px){.rb-grid{grid-template-columns:1fr}.prices{grid-template-columns:repeat(4,minmax(0,1fr))}}
+.seg{display:flex;gap:8px}
+.seg .chip{flex:1;justify-content:center;min-height:48px;font-size:15px}
+@media (max-width:820px){.i-app,.i-main{height:auto;overflow:visible}.i-scroll{overflow:visible}.two,.three{grid-template-columns:1fr}}
+</style>
+</helmet>
+<div class="lt {{themeCls}}">
+<div class="app i-app">
+  <dc-import name="Sidebar" active="inventory" dark="{{dark}}" on-toggle-theme="{{toggleTheme}}" hint-size="236px,100vh"></dc-import>
+
+  <main class="main i-main">
+    <header class="i-top">
+      <div>
+        <h1>Inventory</h1>
+        <div class="sub">Every ticket book the store has received</div>
+      </div>
+      <span class="grow"></span>
+      <button class="btn btn-lg" onClick="{{toggleUpdate}}"><svg class="ic" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h2"></path><path d="M17 3h2a2 2 0 0 1 2 2v2"></path><path d="M21 17v2a2 2 0 0 1-2 2h-2"></path><path d="M7 21H5a2 2 0 0 1-2-2v-2"></path><path d="M8 7v10"></path><path d="M12 7v10"></path><path d="M17 7v10"></path></svg>Update Inventory</button>
+      <button class="btn btn-primary btn-lg" onClick="{{openReceive}}" style="color: #ffffff"><svg class="ic" viewBox="0 0 24 24" style="fill: #ffffff"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg><span style="color: #ffffff">Add New Book</span></button>
+    </header>
+
+    <sc-if value="{{updating}}" hint-placeholder-val="{{ false }}">
+      <section class="up" aria-label="Update inventory">
+        <div class="up-h">
+          <div><h2>Update Inventory</h2><p>Scan one ticket from each pack you received. New packs are added as In Stock.</p></div>
+          <span class="grow"></span>
+          <button class="btn btn-primary" onClick="{{toggleUpdate}}"><svg class="ic" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"></path></svg>Done · {{upAdded}} added</button>
+        </div>
+        <div class="scan-field">
+          <svg class="ic ic-lg" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h2"></path><path d="M17 3h2a2 2 0 0 1 2 2v2"></path><path d="M21 17v2a2 2 0 0 1-2 2h-2"></path><path d="M7 21H5a2 2 0 0 1-2-2v-2"></path><path d="M8 7v10"></path><path d="M12 7v10"></path><path d="M17 7v10"></path></svg>
+          <label for="up-scan" class="sr">Scan one ticket from each pack</label>
+          <input id="up-scan" placeholder="Scan one ticket from each pack" value="{{upCode}}" onChange="{{onUpCode}}" onKeyDown="{{onUpKey}}" autocomplete="off">
+        </div>
+        <div class="samples">Try a scan:
+          <sc-for list="{{upSamples}}" as="sm" hint-placeholder-count="4"><button onClick="{{sm.use}}">{{sm.code}}</button></sc-for>
+        </div>
+        <sc-if value="{{hasUp}}" hint-placeholder-val="{{ false }}">
+          <div class="up-list" aria-live="polite">
+            <sc-for list="{{upRows}}" as="u" hint-placeholder-count="3">
+              <div class="up-row">
+                <span class="tag {{u.cls}}">{{u.tag}}</span>
+                <b>{{u.game}}</b><span class="mono">{{u.gid}} · {{u.pack}}</span>
+                <span class="grow"></span>
+                <span class="muted" style="font-size: 13px">{{u.note}}</span>
+                <sc-if value="{{u.needs}}" hint-placeholder-val="{{ false }}"><button class="btn btn-sm btn-primary" onClick="{{u.fix}}">Add game details</button></sc-if>
+              </div>
+            </sc-for>
+          </div>
+        </sc-if>
+      </section>
+    </sc-if>
+
+    <div class="i-bar">
+      <div class="tabs" role="tablist" aria-label="Pack status">
+        <sc-for list="{{tabs}}" as="t" hint-placeholder-count="5">
+          <button class="tab {{t.cls}}" role="tab" aria-selected="{{t.sel}}" onClick="{{t.click}}">{{t.label}} <span class="n">{{t.n}}</span></button>
+        </sc-for>
+      </div>
+      <span class="grow"></span>
+      <label class="search"><svg class="ic" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg><span class="sr">Search</span><input placeholder="Search game, pack # or box" value="{{q}}" onChange="{{onQ}}"></label>
+    </div>
+
+    <section class="i-body" aria-label="Packs">
+      <div class="i-scroll">
+        <table class="tbl">
+          <thead><tr><th>Game</th><th>Pack #</th><th class="r">Price</th><th class="r">Pack size</th><th>Status</th><th>Box</th><th class="r">Position</th><th>Received</th></tr></thead>
+          <tbody>
+            <sc-for list="{{rows}}" as="r" hint-placeholder-count="14">
+              <tr class="{{r.cls}}">
+                <td class="g"><b>{{r.game}}</b><span>Game {{r.gid}}</span></td>
+                <td class="mono" style="font-weight: 700">{{r.pack}}</td>
+                <td class="r money" style="font-weight: 700">{{r.price}}</td>
+                <td class="r">{{r.size}} tickets</td>
+                <td><span class="tag {{r.tagCls}}">{{r.status}}</span></td>
+                <td><sc-if value="{{r.hasBox}}" hint-placeholder-val="{{ false }}"><span class="boxn">{{r.box}}</span></sc-if><sc-if value="{{r.noBox}}" hint-placeholder-val="{{ true }}"><span class="muted">—</span></sc-if></td>
+                <td class="r mono">{{r.pos}}</td>
+                <td class="muted">{{r.date}}</td>
+              </tr>
+            </sc-for>
+          </tbody>
+        </table>
+        <sc-if value="{{noRows}}" hint-placeholder-val="{{ false }}">
+          <div class="empty-state"><span class="ei"><svg class="ic ic-xl" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg></span><b>No packs here</b><span>Try another tab or clear the search.</span></div>
+        </sc-if>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- Receive Book: one popup — scan or type, pick a price, pack value is automatic -->
+<sc-if value="{{showRec}}" hint-placeholder-val="{{ false }}">
+  <div class="scrim" onClick="{{closeRec}}">
+    <div class="modal rb" role="dialog" aria-modal="true" aria-labelledby="rec-h" onClick="{{stop}}">
+      <div class="modal-h">
+        <span class="icon-wrap"><svg class="ic ic-lg" viewBox="0 0 24 24"><path d="m7.5 4.27 9 5.15"></path><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"></path><path d="m3.3 7 8.7 5 8.7-5"></path><path d="M12 22V12"></path></svg></span>
+        <div><h2 id="rec-h">Receive a book</h2><p>Scan the pack barcode, or tap a box and type with the keypad.</p></div>
+        <button class="btn btn-ghost icon-btn x" onClick="{{closeRec}}" aria-label="Close"><svg class="ic" viewBox="0 0 24 24"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg></button>
+      </div>
+      <div class="modal-b">
+        <div class="rb-grid">
+          <div class="rb-l">
+            <div class="scan-field" style="height: 56px">
+              <svg class="ic" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h2"></path><path d="M17 3h2a2 2 0 0 1 2 2v2"></path><path d="M21 17v2a2 2 0 0 1-2 2h-2"></path><path d="M7 21H5a2 2 0 0 1-2-2v-2"></path><path d="M8 7v10"></path><path d="M12 7v10"></path><path d="M17 7v10"></path></svg>
+              <label for="rec-code" class="sr">Pack barcode</label>
+              <input id="rec-code" placeholder="Scan pack barcode" value="{{f.code}}" onChange="{{onCode}}" onKeyDown="{{onCodeKey}}" autocomplete="off" autofocus="">
+              <button class="btn btn-primary btn-sm" onClick="{{readCode}}">Read</button>
+            </div>
+
+            <div class="rb-three">
+              <div class="field"><label for="f-gid">Game ID</label><input id="f-gid" class="input mono {{fc.gid}}" inputmode="numeric" value="{{f.gid}}" onChange="{{onGid}}" onClick="{{focusGid}}" placeholder="4 digits"></div>
+              <div class="field"><label for="f-pack">Pack #</label><input id="f-pack" class="input mono {{fc.pack}}" inputmode="numeric" value="{{f.pack}}" onChange="{{onPack}}" onClick="{{focusPack}}" placeholder="6–7 digits"></div>
+              <div class="field"><label for="f-pos">Start ticket</label><input id="f-pos" class="input mono {{fc.pos}}" inputmode="numeric" value="{{f.pos}}" onChange="{{onPos}}" onClick="{{focusPos}}"></div>
+            </div>
+
+            <sc-if value="{{f.known}}" hint-placeholder-val="{{ false }}">
+              <div class="msg ok"><svg class="ic" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"></path></svg><span>Game {{f.gid}} recognized — name and price are filled in.</span></div>
+            </sc-if>
+            <sc-if value="{{f.isNew}}" hint-placeholder-val="{{ false }}">
+              <div class="msg info"><svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg><span>New game {{f.gid}}. Add its name and price once — next time it fills in by itself.</span></div>
+            </sc-if>
+
+            <div class="field"><label for="f-name">Game name</label><input id="f-name" class="input" value="{{f.name}}" onChange="{{onName}}" placeholder="e.g. Lucky Cash" readonly="{{f.known}}"></div>
+
+            <div class="field">
+              <label>Ticket price</label>
+              <div class="prices" role="group" aria-label="Ticket price">
+                <sc-for list="{{prices}}" as="pr" hint-placeholder-count="8"><button class="pc {{pr.cls}}" onClick="{{pr.pick}}" disabled="{{f.known}}">{{pr.label}}</button></sc-for>
+                <div class="pc-other {{fc.price}}" onClick="{{focusPrice}}"><span>$</span><input inputmode="decimal" value="{{f.price}}" onChange="{{onPrice}}" placeholder="Other" aria-label="Other price" readonly="{{f.known}}"></div>
+              </div>
+            </div>
+
+            <div class="pv {{pv.cls}}">
+              <div><span class="l">Pack value · automatic</span><b>{{pv.value}}</b></div>
+              <div class="eq">{{pv.eq}}</div>
+              <span class="tag {{pv.tagCls}}">{{pv.tag}}</span>
+            </div>
+
+            <sc-if value="{{f.hasErr}}" hint-placeholder-val="{{ false }}">
+              <div class="msg err" role="alert"><svg class="ic" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg><span>{{f.err}}</span></div>
+            </sc-if>
+          </div>
+
+          <div class="rb-pad">
+            <div class="rb-target">Typing in <b>{{fc.label}}</b></div>
+            <div class="rb-disp mono">{{fc.value}}</div>
+            <div class="kgrid" role="group" aria-label="Number pad">
+              <sc-for list="{{keys}}" as="k" hint-placeholder-count="12"><button class="kk {{k.cls}}" onClick="{{k.press}}" aria-label="{{k.aria}}">{{k.label}}</button></sc-for>
+            </div>
+            <button class="btn btn-block" onClick="{{kClear}}">Clear</button>
+          </div>
+        </div>
+      </div>
+      <div class="modal-f">
+        <button class="btn btn-lg" onClick="{{closeRec}}">Cancel</button>
+        <button class="btn btn-primary btn-lg" onClick="{{save}}" disabled="{{f.cant}}" style="color: #ffffff; min-width: 220px"><svg class="ic" viewBox="0 0 24 24"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>Add to inventory</button>
+      </div>
+    </div>
+  </div>
+</sc-if>
+
+<sc-if value="{{hasToast}}" hint-placeholder-val="{{ false }}">
+  <div class="toast {{toast.cls}}" role="status" style="animation: toastIn .3s cubic-bezier(.2,.7,.2,1) both">
+    <span class="ti"><svg class="ic ic-sm" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"></path></svg></span>
+    <span>{{toast.text}}</span>
+    <button class="btn" onClick="{{hideToast}}">OK</button>
+  </div>
+</sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"updating":{"editor":"boolean","default":false},"$preview":{"width":1440,"height":1000}}'>
+var GAMES = {
+  '1401': { name: '5X Money', price: 1 }, '1402': { name: 'Jr Jumbo', price: 1 }, '1403': { name: 'Loteria', price: 2 },
+  '1404': { name: 'Hit 100', price: 2 }, '1406': { name: 'Cross Word', price: 3 }, '1407': { name: '2026 Happy New', price: 3 },
+  '1408': { name: '50X Money', price: 10 }, '1409': { name: 'Gold $500,000', price: 5 }, '1410': { name: '25X Tra', price: 5 },
+  '1411': { name: 'Lucky 7s', price: 5 }, '1412': { name: 'Epic Riches', price: 10 }, '1413': { name: 'Jumbo Bucks Ext', price: 50 },
+  '1414': { name: 'Cash 500,000', price: 50 }, '1415': { name: 'Hit 1000', price: 20 }, '1416': { name: 'Frogger', price: 5 },
+  '1417': { name: '5X Money', price: 1 }, '1418': { name: 'Jumbo Bucks', price: 2 }, '1419': { name: '10X Money', price: 2 },
+  '1420': { name: 'Spicy Hot Cash', price: 2 }, '1421': { name: 'Jackpots', price: 2 }, '1770': { name: '500X The Money', price: 50 },
+  '1799': { name: 'Win 50 or 100', price: 10 }, '1611': { name: 'Treasure Hunt', price: 3 }
+};
+// Pack value rule: every pack is worth $300, except $50 tickets which come in $900 packs.
+function defaultPackValue(price) { return Number(price) === 50 ? 900 : 300; }
+function sizeFor(price, value) { var p = Number(price); return p > 0 ? Math.floor(value / p) : 0; }
+var SEED = [
+  ['1401', '120042', 'active', 1, 13, 'Oct 2'], ['1402', '745508', 'active', 2, 9, 'Oct 2'], ['1403', '933993', 'active', 3, 3, 'Sep 28'],
+  ['1404', '558845', 'active', 4, 11, 'Oct 6'], ['1406', '935561', 'active', 6, 4, 'Oct 9'], ['1407', '550840', 'active', 7, 4, 'Sep 30'],
+  ['1408', '403040', 'active', 14, 11, 'Oct 8'], ['1409', '176017', 'active', 17, 12, 'Oct 5'], ['1410', '190315', 'active', 18, 8, 'Oct 9'],
+  ['1411', '983287', 'active', 21, 7, 'Oct 3'], ['1412', '502822', 'active', 22, 3, 'Oct 12'], ['1413', '301956', 'active', 25, 1, 'Oct 4'],
+  ['1414', '277104', 'active', 27, 4, 'Sep 21'], ['1415', '560218', 'active', 56, 11, 'Oct 6'], ['1416', '571190', 'active', 57, 8, 'Oct 9'],
+  ['1418', '600871', 'active', 60, 8, 'Oct 1'], ['1419', '610455', 'active', 61, 10, 'Oct 7'], ['1420', '620913', 'active', 62, 9, 'Oct 4'],
+  ['1421', '631402', 'active', 63, 52, 'Sep 20'],
+  ['1417', '0670170', 'stock', null, 0, 'Oct 17'], ['1770', '1036463', 'stock', null, 0, 'Oct 17'], ['1799', '0412288', 'stock', null, 0, 'Oct 16'],
+  ['1611', '0180611', 'stock', null, 0, 'Oct 15'],
+  ['1611', '0180508', 'done', null, 100, 'Sep 12'], ['1408', '402911', 'done', null, 30, 'Sep 24'], ['1403', '933120', 'done', null, 150, 'Sep 10'],
+  ['1405', '442190', 'removed', null, 41, 'Aug 30']
+].map(function (r) {
+  var g = GAMES[r[0]] || { name: 'Mega Match', price: 5 };
+  return { gid: r[0], pack: r[1], st: r[2], box: r[3], pos: r[4], date: r[5], game: g.name, price: g.price, size: sizeFor(g.price, defaultPackValue(g.price)) };
+});
+var UP_SAMPLES = ['1415-560411-000', '1409-176233-000', '1417-0670170-000', '1888-700120-000'];
+function pad(n) { n = String(n); while (n.length < 3) n = '0' + n; return n; }
+function money(v) { return '$' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function money0(v) { return '$' + Number(v).toLocaleString('en-US'); }
+function parse(raw) {
+  var m = String(raw || '').replace(/\s/g, '').match(/^(\d{4})-?(\d{6,7})-?(\d{3})?/);
+  return m ? { gid: m[1], pack: m[2], pos: m[3] ? parseInt(m[3], 10) : 0 } : null;
+}
+function blank() { return { code: '', gid: '', pack: '', pos: '000', name: '', price: '', focus: 'gid' }; }
+var PRICES = [1, 2, 3, 5, 10, 20, 30, 50];
+var FOCUS = { gid: ['Game ID', 4], pack: ['Pack #', 7], pos: ['Start ticket', 3], price: ['Ticket price', 6] };
+var ST = { stock: ['In stock', 'tag-brand'], active: ['Active', 'tag-money'], done: ['Completed', 'tag-muted'], removed: ['Removed', 'tag-danger'] };
+
+class Component extends DCLogic {
+  constructor(...args) {
+    super(...args);
+    this.tmr = null;
+    this.state = {
+      dark: !!(this.props && this.props.dark),
+      packs: SEED.slice(),
+      games: Object.assign({}, GAMES),
+      tab: 'stock', q: '',
+      updating: !!(this.props && this.props.updating),
+      upCode: '', up: [],
+      rec: false, f: blank(),
+      flash: null,
+      toast: null
+    };
+  }
+  say(text, cls) {
+    var self = this;
+    clearTimeout(this.tmr);
+    this.setState({ toast: { text: text, cls: cls || '' } });
+    this.tmr = setTimeout(function () { self.setState({ toast: null }); }, 4000);
+  }
+  dup(gid, pack) { return this.state.packs.filter(function (p) { return p.gid === gid && p.pack === pack; })[0]; }
+  upScan(raw) {
+    var r = parse(raw), s = this.state;
+    if (!r) { this.say('That barcode could not be read. Scan it again.', 'warn'); this.setState({ upCode: '' }); return; }
+    var d = this.dup(r.gid, r.pack), g = s.games[r.gid], row;
+    if (d) {
+      row = { gid: r.gid, pack: r.pack, game: d.game, tag: 'Already here', cls: 'tag-muted', note: ST[d.st][0] + (d.box ? ' in box ' + d.box : '') + ' — not added again' };
+      this.setState({ up: [row].concat(s.up), upCode: '' });
+      return;
+    }
+    if (!g) {
+      row = { gid: r.gid, pack: r.pack, game: 'Unknown game', tag: 'New game', cls: 'tag-warn', note: 'Needs name and price', needs: true };
+      this.setState({ up: [row].concat(s.up), upCode: '' });
+      return;
+    }
+    var p = { gid: r.gid, pack: r.pack, st: 'stock', box: null, pos: r.pos, date: 'Today', game: g.name, price: g.price, size: sizeFor(g.price, defaultPackValue(g.price)) };
+    row = { gid: r.gid, pack: r.pack, game: g.name, tag: 'Added', cls: 'tag-money', note: money0(g.price) + ' · ' + p.size + ' tickets · In stock' };
+    this.setState({ packs: [p].concat(s.packs), up: [row].concat(s.up), upCode: '', flash: r.pack, tab: 'stock' });
+  }
+  fill(f) {
+    var r = parse(f.code);
+    if (r) { f.gid = r.gid; f.pack = r.pack; f.pos = pad(r.pos); }
+    var g = this.state.games[f.gid];
+    if (g) { f.name = g.name; f.price = String(g.price); f.focus = 'pos'; }
+    else if (r) f.focus = 'price';
+    return f;
+  }
+  renderVals() {
+    var self = this, s = this.state, f = s.f;
+    var counts = { stock: 0, active: 0, done: 0, removed: 0, all: s.packs.length };
+    s.packs.forEach(function (p) { counts[p.st]++; });
+    var q = s.q.trim().toLowerCase();
+    var list = s.packs.filter(function (p) {
+      if (s.tab !== 'all' && p.st !== s.tab) return false;
+      if (!q) return true;
+      return (p.game + ' ' + p.pack + ' ' + p.gid + ' ' + (p.box || '')).toLowerCase().indexOf(q) >= 0;
+    });
+    var tabDefs = [['stock', 'In stock'], ['active', 'Active'], ['done', 'Completed'], ['removed', 'Removed'], ['all', 'All']];
+
+    // Receive form state
+    var known = !!s.games[f.gid];
+    var priceN = parseFloat(String(f.price).replace(/[^0-9.]/g, ''));
+    var value = defaultPackValue(priceN);
+    var size = sizeFor(priceN, value);
+    var err = '';
+    if (f.gid && !/^\d{4}$/.test(f.gid)) err = 'Game ID is 4 digits.';
+    else if (f.pack && !/^\d{6,7}$/.test(f.pack)) err = 'Pack # is 6 or 7 digits.';
+    else if (f.gid && f.pack && this.dup(f.gid, f.pack)) { var d = this.dup(f.gid, f.pack); err = 'Pack ' + f.pack + ' is already in inventory (' + ST[d.st][0] + (d.box ? ', box ' + d.box : '') + '). The same pack cannot be added twice.'; }
+    if (!err && f.price && !(priceN > 0)) err = 'Enter a ticket price above $0.';
+    var ready = /^\d{4}$/.test(f.gid) && /^\d{6,7}$/.test(f.pack) && !err && (known || (f.name.trim() && priceN > 0));
+    var setF = function (patch) { self.setState({ f: Object.assign({}, f, patch) }); };
+
+    return {
+      themeCls: s.dark ? 'dark' : '', dark: s.dark,
+      toggleTheme: function () { self.setState({ dark: !s.dark }); },
+      tabs: tabDefs.map(function (t) {
+        return { label: t[1], n: counts[t[0]], cls: s.tab === t[0] ? 'on' : '', sel: s.tab === t[0] ? 'true' : 'false', click: function () { self.setState({ tab: t[0] }); } };
+      }),
+      q: s.q, onQ: function (e) { self.setState({ q: e.target.value }); },
+      rows: list.map(function (p) {
+        return {
+          game: p.game, gid: p.gid, pack: p.pack, price: money0(p.price), size: p.size,
+          status: ST[p.st][0], tagCls: ST[p.st][1], hasBox: !!p.box, noBox: !p.box, box: p.box || '',
+          pos: pad(p.pos), date: p.date, cls: s.flash === p.pack ? 'flash' : ''
+        };
+      }),
+      noRows: list.length === 0,
+
+      updating: s.updating,
+      toggleUpdate: function () { self.setState({ updating: !s.updating, up: s.updating ? [] : s.up }); },
+      upCode: s.upCode,
+      onUpCode: function (e) { self.setState({ upCode: e.target.value }); },
+      onUpKey: function (e) { if (e.key === 'Enter') self.upScan(e.target.value); },
+      upSamples: UP_SAMPLES.map(function (c) { return { code: c, use: function () { self.upScan(c); } }; }),
+      hasUp: s.up.length > 0,
+      upAdded: s.up.filter(function (u) { return u.tag === 'Added'; }).length,
+      upRows: s.up.map(function (u) {
+        return Object.assign({}, u, { needs: !!u.needs, fix: function () { var nf = blank(); nf.code = u.gid + '-' + u.pack + '-000'; self.setState({ rec: true, f: self.fill(nf) }); } });
+      }),
+
+      showRec: s.rec,
+      openReceive: function () { self.setState({ rec: true, f: blank() }); },
+      closeRec: function () { self.setState({ rec: false }); },
+      stop: function (e) { if (e && e.stopPropagation) e.stopPropagation(); },
+      onCode: function (e) { setF({ code: e.target.value }); },
+      onCodeKey: function (e) { if (e.key === 'Enter') self.setState({ f: self.fill(Object.assign({}, f, { code: e.target.value })) }); },
+      readCode: function () { self.setState({ f: self.fill(Object.assign({}, f)) }); },
+      onGid: function (e) { var v = e.target.value.replace(/\D/g, '').slice(0, 4); var g = s.games[v]; setF(g ? { gid: v, name: g.name, price: String(g.price) } : { gid: v }); },
+      onPack: function (e) { setF({ pack: e.target.value.replace(/\D/g, '').slice(0, 7) }); },
+      onPos: function (e) { setF({ pos: e.target.value.replace(/\D/g, '').slice(0, 3) }); },
+      onName: function (e) { if (!known) setF({ name: e.target.value }); },
+      onPrice: function (e) { if (!known) setF({ price: e.target.value.replace(/[^0-9.]/g, '').slice(0, 6) }); },
+      focusGid: function () { setF({ focus: 'gid' }); },
+      focusPack: function () { setF({ focus: 'pack' }); },
+      focusPos: function () { setF({ focus: 'pos' }); },
+      focusPrice: function () { if (!known) setF({ focus: 'price' }); },
+      fc: {
+        gid: f.focus === 'gid' ? 'on' : '', pack: f.focus === 'pack' ? 'on' : '', pos: f.focus === 'pos' ? 'on' : '', price: f.focus === 'price' ? 'on' : '',
+        label: FOCUS[f.focus][0], value: (f.focus === 'price' ? '$' : '') + (f[f.focus] || '')
+      },
+      prices: PRICES.map(function (v) {
+        return { label: '$' + v, cls: priceN === v ? 'on' : '', pick: function () { if (!known) setF({ price: String(v), focus: 'price' }); } };
+      }),
+      keys: ['7', '8', '9', '4', '5', '6', '1', '2', '3', '.', '0', 'back'].map(function (k) {
+        return {
+          label: k === 'back' ? '⌫' : k, cls: k === 'back' || k === '.' ? 'fn' : '', aria: k === 'back' ? 'Delete last digit' : k,
+          press: function () {
+            var key = f.focus, cur = String(f[key] || ''), max = FOCUS[key][1];
+            if (key === 'price' && known) return;
+            if (k === 'back') cur = cur.slice(0, -1);
+            else if (k === '.') { if (key !== 'price' || cur.indexOf('.') >= 0) return; cur = (cur || '0') + '.'; }
+            else { if (cur.length >= max) return; cur = (key === 'pos' && cur === '000') ? k : cur + k; }
+            var patch = {}; patch[key] = cur;
+            if (key === 'gid' && cur.length === 4 && s.games[cur]) { patch.name = s.games[cur].name; patch.price = String(s.games[cur].price); }
+            if (key === 'gid' && cur.length === 4) patch.focus = 'pack';
+            if (key === 'pack' && cur.length === 7) patch.focus = 'pos';
+            setF(patch);
+          }
+        };
+      }),
+      kClear: function () { var patch = {}; patch[f.focus] = ''; if (!(f.focus === 'price' && known)) setF(patch); },
+      pv: {
+        value: priceN > 0 ? money0(value) : '—',
+        eq: priceN > 0 ? money0(value) + ' ÷ ' + money(priceN) + ' = ' + sizeFor(priceN, value) + ' tickets in this pack' : 'Pick a ticket price — the pack value is set for you',
+        tag: value === 900 ? '$50 ticket → $900 pack' : 'Standard $300 pack', tagCls: value === 900 ? 'tag-brand' : 'tag-muted',
+        cls: value === 900 ? 'big' : ''
+      },
+      f: {
+        code: f.code, gid: f.gid, pack: f.pack, pos: f.pos, name: f.name, price: f.price,
+        known: known && !!f.gid, isNew: !known && /^\d{4}$/.test(f.gid),
+        hasErr: !!err, err: err, cant: !ready
+      },
+      save: function () {
+        if (!ready) return;
+        var games = Object.assign({}, s.games);
+        if (!known) games[f.gid] = { name: f.name.trim(), price: priceN };
+        var g = games[f.gid];
+        var p = { gid: f.gid, pack: f.pack, st: 'stock', box: null, pos: parseInt(f.pos || '0', 10), date: 'Today', game: g.name, price: g.price, size: sizeFor(g.price, defaultPackValue(g.price)) };
+        var up = s.up.map(function (u) { return u.gid === f.gid && u.pack === f.pack ? { gid: u.gid, pack: u.pack, game: g.name, tag: 'Added', cls: 'tag-money', note: money0(g.price) + ' · ' + p.size + ' tickets · In stock' } : u; });
+        self.setState({ games: games, packs: [p].concat(s.packs), rec: false, tab: 'stock', flash: f.pack, up: up });
+        self.say(g.name + ' pack ' + f.pack + ' added to inventory as In stock.');
+      },
+
+      hasToast: !!s.toast,
+      toast: s.toast || { text: '', cls: '' },
+      hideToast: function () { self.setState({ toast: null }); }
+    };
+  }
+}
+</script>
+</body>
+</html>

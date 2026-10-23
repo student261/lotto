@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sidebar navigation</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="/_blob/f3ff9ff7fc8e731e1805db690f5affd2">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800&amp;family=JetBrains+Mono:wght@500;700&amp;display=swap" rel="stylesheet">
+<style>body{margin:0}
+.side.mini .brand{cursor:pointer}
+.side.mini .brand-mark{transition:transform .15s}
+.side.mini .brand:hover .brand-mark{transform:scale(1.08)}</style>
+</helmet>
+<aside class="lt side {{darkCls}} {{miniCls}}" style="min-height: 100vh" onMouseEnter="{{hold}}" onMouseMove="{{hold}}" onMouseLeave="{{arm}}" onClick="{{touch}}" onFocus="{{hold}}">
+  <div class="side-top">
+    <a class="brand" href="Main.dc.html" title="{{brandTitle}}" onClick="{{brandClick}}">
+      <span class="brand-mark"><svg class="ic" viewBox="0 0 24 24"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"></path><path d="M13 5v2"></path><path d="M13 17v2"></path><path d="M13 11v2"></path></svg></span>
+      <span class="brand-name">LottoTrack<small>Amigo Food Mart</small></span>
+    </a>
+    <button class="collapse-btn" onClick="{{toggleMini}}" aria-label="{{miniLabel}}" title="{{miniLabel}}" aria-expanded="{{expanded}}"><svg class="ic" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2"></rect><path d="M9 3v18"></path><path d="m16 15-3-3 3-3"></path></svg></button>
+  </div>
+  <nav class="nav" aria-label="Main">
+    <a class="{{c.dashboard}}" href="Main.dc.html" title="Dashboard"><svg class="ic" viewBox="0 0 24 24"><rect width="7" height="7" x="3" y="3" rx="1"></rect><rect width="7" height="7" x="14" y="3" rx="1"></rect><rect width="7" height="7" x="14" y="14" rx="1"></rect><rect width="7" height="7" x="3" y="14" rx="1"></rect></svg><span class="lbl">Dashboard</span></a>
+    <sc-if value="{{isOwner}}" hint-placeholder-val="{{ true }}">
+      <a class="{{c.inventory}}" href="Inventory.dc.html" title="Inventory"><svg class="ic" viewBox="0 0 24 24"><path d="m7.5 4.27 9 5.15"></path><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"></path><path d="m3.3 7 8.7 5 8.7-5"></path><path d="M12 22V12"></path></svg><span class="lbl">Inventory</span></a>
+    </sc-if>
+    <a class="{{c.reports}}" href="History.dc.html" title="Reports"><svg class="ic" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path><path d="M10 9H8"></path><path d="M16 13H8"></path><path d="M16 17H8"></path></svg><span class="lbl">Reports</span></a>
+    <sc-if value="{{isOwner}}" hint-placeholder-val="{{ true }}">
+      <a class="{{c.settings}}" href="Settings.dc.html" title="Settings"><svg class="ic" viewBox="0 0 24 24"><path d="M21 4h-7"></path><path d="M10 4H3"></path><path d="M21 12h-9"></path><path d="M8 12H3"></path><path d="M21 20h-5"></path><path d="M12 20H3"></path><path d="M14 2v4"></path><path d="M8 10v4"></path><path d="M16 18v4"></path></svg><span class="lbl">Settings</span></a>
+    </sc-if>
+  </nav>
+  <div class="side-foot">
+    <button class="btn btn-ghost" style="justify-content: flex-start" onClick="{{toggle}}" title="{{themeLabel}}">
+      <sc-if value="{{isDark}}" hint-placeholder-val="{{ false }}"><svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2"></path><path d="M12 20v2"></path><path d="m4.93 4.93 1.41 1.41"></path><path d="m17.66 17.66 1.41 1.41"></path><path d="M2 12h2"></path><path d="M20 12h2"></path><path d="m6.34 17.66-1.41 1.41"></path><path d="m19.07 4.93-1.41 1.41"></path></svg></sc-if>
+      <sc-if value="{{isLight}}" hint-placeholder-val="{{ true }}"><svg class="ic" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"></path></svg></sc-if>
+      <span class="lbl">{{themeLabel}}</span>
+    </button>
+    <div class="who">
+      <span class="avatar">{{u.initial}}</span>
+      <div><b>{{u.name}}</b><span>{{u.role}}</span></div>
+    </div>
+    <a class="btn btn-ghost" style="justify-content: flex-start" href="Login.dc.html" title="Sign out"><svg class="ic" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><path d="m16 17 5-5-5-5"></path><path d="M21 12H9"></path></svg><span class="lbl">Sign out</span></a>
+  </div>
+</aside>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"active":{"editor":"enum","options":["dashboard","inventory","reports","settings"],"default":"dashboard"},"role":{"editor":"enum","options":["Owner","Salesperson"],"default":"Owner"},"dark":{"editor":"boolean","default":false},"onToggleTheme":{"editor":null},"collapsed":{"editor":"boolean","default":false},"autoCloseSeconds":{"editor":"number","default":5},"$preview":{"width":236,"height":900}}'>
+class Component extends DCLogic {
+  constructor(...args) {
+    super(...args);
+    this.state = { mini: !!(this.props && this.props.collapsed) };
+    this.tmr = null;
+    this.inside = false;
+    this.arm();   // the menu closes by itself after a few idle seconds
+  }
+  // Auto-close: after N seconds without the pointer on the menu, collapse it.
+  arm() {
+    var self = this;
+    clearTimeout(this.tmr);
+    var secs = Number((this.props && this.props.autoCloseSeconds) || 5);
+    if (this.state.mini || !(secs > 0)) return;
+    this.tmr = setTimeout(function () { if (!self.inside && !self.state.mini) self.setState({ mini: true }); }, secs * 1000);
+  }
+  open() { this.setState({ mini: false }); var self = this; setTimeout(function () { self.arm(); }, 0); }
+  renderVals() {
+    const a = this.props.active || 'dashboard';
+    const c = {};
+    ['dashboard', 'inventory', 'reports', 'settings'].forEach(function (k) { c[k] = k === a ? 'on' : ''; });
+    const dark = !!this.props.dark;
+    const owner = (this.props.role || 'Owner') === 'Owner';
+    const self = this;
+    return {
+      c: c,
+      isOwner: owner,
+      u: owner ? { initial: 'M', name: 'Maulik', role: 'Owner' } : { initial: 'R', name: 'Rosa', role: 'Salesperson' },
+      darkCls: dark ? 'dark' : '',
+      isDark: dark,
+      isLight: !dark,
+      themeLabel: dark ? 'Light mode' : 'Dark mode',
+      toggle: function () { if (self.props.onToggleTheme) self.props.onToggleTheme(); },
+      miniCls: self.state.mini ? 'mini' : '',
+      expanded: self.state.mini ? 'false' : 'true',
+      miniLabel: self.state.mini ? 'Open side menu' : 'Close side menu',
+      toggleMini: function (e) {
+        if (e && e.stopPropagation) e.stopPropagation();
+        if (self.state.mini) self.open(); else { clearTimeout(self.tmr); self.setState({ mini: true }); }
+      },
+      brandTitle: self.state.mini ? 'Open side menu' : 'LottoTrack · Amigo Food Mart',
+      brandClick: function (e) {
+        if (!self.state.mini) return;          // open menu: logo goes to Dashboard
+        if (e && e.preventDefault) e.preventDefault();
+        if (e && e.stopPropagation) e.stopPropagation();
+        self.open();
+      },
+      hold: function () { self.inside = true; clearTimeout(self.tmr); },
+      arm: function () { self.inside = false; self.arm(); },
+      touch: function () { if (!self.inside) self.arm(); }
+    };
+  }
+}
+</script>
+</body>
+</html>
