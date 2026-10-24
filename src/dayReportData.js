@@ -206,7 +206,9 @@ export function generateLiveDayReport(state) {
     if (isSlotActive && soldPacks.length > 0) {
       // Multi-Pack Box: e.g. Box 6 in the official PDF where a pack finished and a new pack was activated
       const openTicket = getDayOpenTicket(slot);
-      const activeSold = Math.max(0, (slot.currentTicket || 0) - openTicket);
+      const activeSold = (slot.ticketsSold !== undefined && slot.ticketsSold !== null && slot.scannedInEndShift)
+        ? slot.ticketsSold
+        : Math.abs((slot.currentTicket || 0) - openTicket);
       const activeTotal = activeSold * (slot.price || 0);
       totalScratcherSales += activeTotal;
 
@@ -223,7 +225,7 @@ export function generateLiveDayReport(state) {
       ];
 
       soldPacks.forEach(sp => {
-        const sSold = sp.ticketsSold !== undefined ? sp.ticketsSold : Math.max(0, (sp.closeTicket || 0) - (sp.startTicket || 0));
+        const sSold = sp.ticketsSold !== undefined ? sp.ticketsSold : Math.abs((sp.closeTicket || 0) - (sp.startTicket || 0));
         const sTotal = sp.salesAmount !== undefined ? sp.salesAmount : (sSold * (sp.price || 0));
         totalScratcherSales += sTotal;
         const retSuffix = sp.isReturned ? ` (Ret ${sp.ticketsReturned || 0})` : '';
@@ -246,7 +248,9 @@ export function generateLiveDayReport(state) {
     } else if (isSlotActive) {
       // Single active pack in dispenser
       const openTicket = getDayOpenTicket(slot);
-      const sold = Math.max(0, (slot.currentTicket || 0) - openTicket);
+      const sold = (slot.ticketsSold !== undefined && slot.ticketsSold !== null && slot.scannedInEndShift)
+        ? slot.ticketsSold
+        : Math.abs((slot.currentTicket || 0) - openTicket);
       const total = sold * (slot.price || 0);
       totalScratcherSales += total;
 

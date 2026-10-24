@@ -1720,18 +1720,18 @@ html, body {
    Loaded last to ensure 100% cascade override across all screen sizes
    ========================================================================== */
 
-/* 1. Left Sidebar Navigation (Expanded by default, 200px width) */
+/* 1. Left Sidebar Navigation (Expanded by default, 240px width) */
 .pos-sidebar {
-  width: 200px !important;
-  min-width: 200px !important;
-  max-width: 200px !important;
+  width: 240px !important;
+  min-width: 240px !important;
+  max-width: 240px !important;
   background: var(--surface, #ffffff) !important;
   border-right: 1px solid var(--line, #e2e8f0) !important;
   padding: 16px 12px !important;
   display: flex !important;
   flex-direction: column !important;
   box-sizing: border-box !important;
-  transition: width 0.2s ease !important;
+  transition: width 0.22s cubic-bezier(0.2, 0.7, 0.2, 1), min-width 0.22s cubic-bezier(0.2, 0.7, 0.2, 1), max-width 0.22s cubic-bezier(0.2, 0.7, 0.2, 1) !important;
 }
 
 [data-theme="dark"] .pos-sidebar {

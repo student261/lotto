@@ -221,7 +221,7 @@ export function parseLotteryBarcode(raw, customGames = []) {
     const ticketString = String(fourPartMatch[4]).padStart(3, '0');
     const securityCode = fourPartMatch[5] || null;
 
-    if (!isLotteryGame || isNaN(ticketNumber) || ticketNumber > 299) {
+    if (!isLotteryGame || isNaN(ticketNumber) || ticketNumber > 999) {
       return {
         isValid: false,
         isNonLotteryBarcode: true,
@@ -262,7 +262,7 @@ export function parseLotteryBarcode(raw, customGames = []) {
     const ticketNumber = parseInt(ticketString, 10);
     const securityCode = parenContinuousMatch[5];
 
-    if (!isLotteryGame || isNaN(ticketNumber) || ticketNumber > 299) {
+    if (!isLotteryGame || isNaN(ticketNumber) || ticketNumber > 999) {
       return {
         isValid: false,
         isNonLotteryBarcode: true,
@@ -324,7 +324,7 @@ export function parseLotteryBarcode(raw, customGames = []) {
       packNumber = packNumber.slice(0, 6);
     }
 
-    if (!isLotteryGame || isNaN(ticketNumber) || ticketNumber > 299) {
+    if (!isLotteryGame || isNaN(ticketNumber) || ticketNumber > 999) {
       return {
         isValid: false,
         isNonLotteryBarcode: true,
@@ -358,11 +358,17 @@ export function parseLotteryBarcode(raw, customGames = []) {
     const gameNumber = parenthesizedTixMatch[1];
     const gNum = parseInt(gameNumber, 10);
     const isLotteryGame = isKnownGamePrefix(gameNumber, customGames) || (gNum >= 100 && gNum <= 9999);
-    const packNumber = parenthesizedTixMatch[2];
+    let packNumber = parenthesizedTixMatch[2];
+    let checkCode = null;
+    let packCombined = packNumber;
+    if (packNumber.length === 7) {
+      checkCode = packNumber.slice(6, 7);
+      packNumber = packNumber.slice(0, 6);
+    }
     const ticketNumber = parseInt(parenthesizedTixMatch[3], 10);
     const ticketString = String(parenthesizedTixMatch[3]).padStart(3, '0');
 
-    if (!isLotteryGame || isNaN(ticketNumber) || ticketNumber > 299) {
+    if (!isLotteryGame || isNaN(ticketNumber) || ticketNumber > 999) {
       return {
         isValid: false,
         isNonLotteryBarcode: true,
@@ -376,15 +382,15 @@ export function parseLotteryBarcode(raw, customGames = []) {
       gameNumber,
       packNumber,
       packClean: packNumber.replace(/^0+/, '') || packNumber,
-      packCombined: packNumber,
+      packCombined,
       ticketNumber,
       ticketString,
-      checkCode: null,
+      checkCode,
       securityCode: sec,
-      standardBarcode: `${gameNumber}${packNumber}0${ticketString}`,
+      standardBarcode: `${gameNumber}${packNumber}${checkCode || '0'}${ticketString}`,
       canonicalId: `${gameNumber}-${packNumber}-${ticketString}`,
-      fullId: `${gameNumber}-${packNumber}-${ticketString}(${sec})`,
-      displayBarcode: `${gameNumber}-${packNumber}-${ticketString} (${sec})`,
+      fullId: `${gameNumber}-${packCombined}-${ticketString}(${sec})`,
+      displayBarcode: `${gameNumber}-${packCombined}-${ticketString} (${sec})`,
       raw
     };
   }
@@ -459,7 +465,7 @@ export function parseLotteryBarcode(raw, customGames = []) {
     const securityCode = parenMatch ? parenMatch[1] : digits.slice(14, 17);
     const standardBarcode = digits.slice(0, 14);
 
-    if (isNaN(ticketNumber) || ticketNumber > 299) {
+    if (isNaN(ticketNumber) || ticketNumber > 999) {
       return {
         isValid: false,
         isNonLotteryBarcode: true,
@@ -508,7 +514,7 @@ export function parseLotteryBarcode(raw, customGames = []) {
     const securityCode = parenMatch ? parenMatch[1] : digits.slice(13, 16);
     const standardBarcode = `${gameNumber}${packNumber}0${ticketString}`;
 
-    if (isNaN(ticketNumber) || ticketNumber > 299) {
+    if (isNaN(ticketNumber) || ticketNumber > 999) {
       return {
         isValid: false,
         isNonLotteryBarcode: true,
@@ -556,12 +562,12 @@ export function parseLotteryBarcode(raw, customGames = []) {
     const packNumber = digits.slice(4, 10); // 6-digit pack (018378, 067017)
 
     // In Georgia Lottery & Scientific Games scratch tickets, the 11th digit (index 10) is check code,
-    // and the last 3 digits (indices 11..14) are the ticket number (000..299).
+    // and the last 3 digits (indices 11..14) are the ticket number (000..999).
     const ticketNumber = parseInt(digits.slice(11, 14), 10);
     const ticketString = digits.slice(11, 14);
     const checkCode = digits.slice(10, 11);
 
-    if (isNaN(ticketNumber) || ticketNumber > 299) {
+    if (isNaN(ticketNumber) || ticketNumber > 999) {
       return {
         isValid: false,
         isRetailProduct: true,
@@ -605,7 +611,7 @@ export function parseLotteryBarcode(raw, customGames = []) {
       const ticketNumber = parseInt(digits.slice(11, 14), 10);
       const ticketString = digits.slice(11, 14);
       const standardBarcode = digits.slice(0, 14);
-      if (!isNaN(ticketNumber) && ticketNumber <= 299) {
+      if (!isNaN(ticketNumber) && ticketNumber <= 999) {
         const sec = computeLotterySeriesCode(gameNumber, ticketNumber, customGames);
         const packCombined = (packNumber.length === 6 && checkCode) ? `${packNumber}${checkCode}` : packNumber;
         return {
@@ -654,7 +660,7 @@ export function parseLotteryBarcode(raw, customGames = []) {
     const parenMatch = s.match(/\((\d{1,4})\)/);
     const securityCode = parenMatch ? parenMatch[1] : null;
 
-    if (isNaN(ticketNumber) || ticketNumber > 299) {
+    if (isNaN(ticketNumber) || ticketNumber > 999) {
       return {
         isValid: false,
         isNonLotteryBarcode: true,
@@ -692,7 +698,7 @@ export function parseLotteryBarcode(raw, customGames = []) {
       const packNumber = digits.slice(4, 10);
       const ticketNumber = parseInt(digits.slice(10, 13), 10);
       const ticketString = digits.slice(10, 13);
-      if (!isNaN(ticketNumber) && ticketNumber <= 299) {
+      if (!isNaN(ticketNumber) && ticketNumber <= 999) {
         const sec = computeLotterySeriesCode(gameNumber, ticketNumber, customGames);
         return {
           isValid: true,
@@ -727,7 +733,7 @@ export function parseLotteryBarcode(raw, customGames = []) {
       const packNumber = digits.slice(4, 10);
       const ticketNumber = parseInt(digits.slice(10, 12), 10);
       const ticketString = digits.slice(10, 12).padStart(3, '0');
-      if (!isNaN(ticketNumber) && ticketNumber <= 299) {
+      if (!isNaN(ticketNumber) && ticketNumber <= 999) {
         const sec = computeLotterySeriesCode(gameNumber, ticketNumber, customGames);
         return {
           isValid: true,
@@ -841,7 +847,7 @@ export function parseLotteryBarcode(raw, customGames = []) {
         const check = rest.length >= 7 ? rest.slice(6, 7) : null;
         const tixStr = rest.length >= 10 ? rest.slice(7, 10) : (rest.length >= 9 ? rest.slice(6, 9) : null);
         const tix = tixStr ? parseInt(tixStr, 10) : null;
-        if (tix === null || (!isNaN(tix) && tix <= 299)) {
+        if (tix === null || (!isNaN(tix) && tix <= 999)) {
           return {
             isValid: true,
             isPackBarcode: tix === null,
@@ -1149,9 +1155,44 @@ export function loadState(targetStoreId = null) {
         parsed.shiftOpeningActiveCount = (parsed.slots || []).filter(s => s.status === 'ACTIVE' && s.packNumber).length;
       }
 
-      // Auto-sanitize any active slots or storage packs that were saved with 7 digits (trailing check digit from old parser bug)
+      // Auto-sanitize and repair slots from original scannedBarcodes records
       if (parsed.slots && Array.isArray(parsed.slots)) {
         parsed.slots.forEach(s => {
+          // Remove human-readable header display strings that leaked into scannedBarcodes
+          if (Array.isArray(s.scannedBarcodes)) {
+            s.scannedBarcodes = s.scannedBarcodes.filter(b => {
+              const bStr = typeof b === 'string' ? b : b?.barcode;
+              return bStr && !bStr.includes('Box #') && !bStr.includes('·') && !bStr.includes('(');
+            });
+            s.ticketsInBox = s.scannedBarcodes.length;
+          }
+
+          // If packNumber was corrupted (e.g. into trailer digits "515284", "081068"), restore from scannedBarcodes
+          if (Array.isArray(s.scannedBarcodes) && s.scannedBarcodes.length > 0) {
+            const firstValid = s.scannedBarcodes.find(b => {
+              const bStr = typeof b === 'string' ? b : b?.barcode;
+              const p = parseLotteryBarcode(bStr, parsed.customGames);
+              return p && p.isValid && p.packNumber;
+            });
+            if (firstValid) {
+              const bStr = typeof firstValid === 'string' ? firstValid : firstValid.barcode;
+              const p = parseLotteryBarcode(bStr, parsed.customGames);
+              if (p && p.isValid) {
+                const accuratePack = p.packCombined || p.packNumber;
+                s.packNumber = accuratePack;
+                if ((s.startTicket === 0 || s.startTicket === null) && firstValid.ticketNumber > 0) {
+                  s.startTicket = firstValid.ticketNumber;
+                  s.currentTicket = firstValid.ticketNumber;
+                }
+                if (firstValid.securityCode && (!s.startSecurityCode || s.startSecurityCode === '000')) {
+                  s.startSecurityCode = firstValid.securityCode;
+                  s.securityCode = firstValid.securityCode;
+                  s.currentSecurityCode = firstValid.securityCode;
+                }
+              }
+            }
+          }
+
           if (s.packNumber && /^\d{7}$/.test(String(s.packNumber).trim())) {
             s.packNumber = String(s.packNumber).trim().slice(0, 6);
           }
