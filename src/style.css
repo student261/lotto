@@ -20511,7 +20511,44 @@ dialog#shiftReportModal::backdrop {
   width: 100% !important;
   display: flex !important;
   align-items: center !important;
-  justify-content: center !important;
+  justify-content: space-between !important;
+  min-height: 38px !important;
+}
+
+.card-footer-cluster .ticket-sold-count {
+  margin-left: auto !important;
+}
+
+.btn-card-activate {
+  background: #2563eb !important;
+  color: #ffffff !important;
+  border: none !important;
+  border-radius: 6px !important;
+  padding: 5px 12px !important;
+  font-family: var(--font, 'Figtree', sans-serif) !important;
+  font-size: 0.8rem !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.01em !important;
+  cursor: pointer !important;
+  line-height: 1.2 !important;
+  box-shadow: 0 1px 2px rgba(37, 99, 235, 0.25) !important;
+  transition: all 0.15s ease !important;
+  z-index: 5 !important;
+}
+
+.btn-card-activate:hover {
+  background: #1d4ed8 !important;
+  transform: translateY(-1px) !important;
+  box-shadow: 0 2px 5px rgba(37, 99, 235, 0.4) !important;
+}
+
+.btn-card-activate:active {
+  transform: translateY(0) !important;
+}
+
+[data-theme="dark"] .btn-card-activate {
+  background: #3b82f6 !important;
+  color: #ffffff !important;
 }
 
 .ticket-number-display.ticket-sold-count {
@@ -20525,6 +20562,211 @@ dialog#shiftReportModal::backdrop {
 [data-theme="dark"] .ticket-number-display.ticket-sold-count {
   color: #60a5fa !important;
 }
+
+/* ==========================================================================
+   UPDATING INVENTORY WORKSPACE & TERMINAL (Matching Reference Image media_1792843899698.png)
+   ========================================================================== */
+body.updating-inventory-mode #dispenserRackContainer,
+body.updating-inventory-mode .dispenser-rack-container,
+body.updating-inventory-mode #cardAllBoxesMap,
+body.updating-inventory-mode .card-all-boxes-map {
+  display: none !important;
+}
+
+body.updating-inventory-mode #inventoryScanWorkspace,
+body.updating-inventory-mode .inventory-scan-workspace {
+  display: block !important;
+}
+
+.inventory-updating-banner.active-banner {
+  display: flex !important;
+}
+
+.inventory-scan-workspace {
+  display: none;
+  margin: 8px 0 16px 0 !important;
+  width: 100% !important;
+}
+
+.inv-terminal-screen {
+  background: #ffffff !important;
+  color: #0f172a !important;
+  font-family: 'Consolas', 'Courier New', monospace !important;
+  border-radius: 6px !important;
+  padding: 16px 20px !important;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08) !important;
+  border: 1px solid #334155 !important;
+  min-height: 280px !important;
+  margin-bottom: 8px !important;
+}
+
+[data-theme="dark"] .inv-terminal-screen {
+  background: #0f172a !important;
+  color: #f8fafc !important;
+  border-color: #475569 !important;
+}
+
+.inv-terminal-summary-row {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  font-size: 1.05rem !important;
+  font-weight: 700 !important;
+  color: #0f172a !important;
+  letter-spacing: 0.02em !important;
+  padding-bottom: 4px !important;
+}
+
+[data-theme="dark"] .inv-terminal-summary-row {
+  color: #f8fafc !important;
+}
+
+.inv-term-code {
+  color: #0f172a !important;
+  flex: 0 0 auto !important;
+}
+
+[data-theme="dark"] .inv-term-code {
+  color: #f8fafc !important;
+}
+
+.inv-term-title {
+  color: #0f172a !important;
+  flex: 1 1 auto !important;
+  text-align: center !important;
+  padding: 0 16px !important;
+}
+
+[data-theme="dark"] .inv-term-title {
+  color: #f8fafc !important;
+}
+
+.inv-term-count {
+  color: #0f172a !important;
+  flex: 0 0 auto !important;
+  text-align: right !important;
+}
+
+[data-theme="dark"] .inv-term-count {
+  color: #f8fafc !important;
+}
+
+.inv-terminal-divider {
+  color: #64748b !important;
+  overflow: hidden !important;
+  white-space: nowrap !important;
+  font-size: 0.85rem !important;
+  user-select: none !important;
+  margin: 4px 0 10px 0 !important;
+  opacity: 0.8 !important;
+}
+
+.inv-terminal-log {
+  font-size: 0.95rem !important;
+  line-height: 1.6 !important;
+  color: #0f172a !important;
+}
+
+[data-theme="dark"] .inv-terminal-log {
+  color: #e2e8f0 !important;
+}
+
+.inv-term-log-line {
+  display: flex !important;
+  align-items: center !important;
+}
+
+.inv-term-prompt {
+  width: 14px !important;
+  display: inline-block !important;
+  font-weight: bold !important;
+}
+
+.inv-term-cursor {
+  color: #0f172a !important;
+  font-weight: 900 !important;
+  animation: invBlink 1s infinite !important;
+}
+
+[data-theme="dark"] .inv-term-cursor {
+  color: #f8fafc !important;
+}
+
+@keyframes invBlink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+
+.inv-terminal-footer {
+  margin-top: 8px !important;
+  padding: 10px 16px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  font-size: 12px !important;
+  color: #475569 !important;
+  flex-wrap: wrap !important;
+  gap: 12px !important;
+}
+
+.inv-legend-pills {
+  display: flex !important;
+  align-items: center !important;
+  gap: 16px !important;
+}
+
+.inv-legend-pill {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  font-size: 0.85rem !important;
+  font-weight: 600 !important;
+  color: #475569 !important;
+}
+
+[data-theme="dark"] .inv-legend-pill {
+  color: #94a3b8 !important;
+}
+
+.legend-swatch {
+  width: 16px !important;
+  height: 8px !important;
+  border-radius: 2px !important;
+  display: inline-block !important;
+}
+
+.swatch-white { background: #f8fafc !important; border: 1px solid #cbd5e1 !important; }
+.swatch-green { background: #84cc16 !important; }
+.swatch-yellow { background: #eab308 !important; }
+
+.inv-term-support {
+  background: #2563eb !important;
+  color: #ffffff !important;
+  padding: 3px 12px !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  border-radius: 3px !important;
+}
+
+.inv-term-copy {
+  font-size: 11px !important;
+  color: #64748b !important;
+}
+
+.inv-legend-dot {
+  width: 9px !important;
+  height: 9px !important;
+  border-radius: 50% !important;
+  display: inline-block !important;
+}
+
+.inv-dot-sold { background: #3b82f6 !important; }
+.inv-dot-new { background: #86efac !important; }
+.inv-dot-done { background: #15803d !important; }
+.inv-dot-return { background: #ef4444 !important; }
+.inv-dot-active { background: #60a5fa !important; }
+.inv-dot-hold { background: #f97316 !important; }
+.inv-dot-instock { background: #0f766e !important; }
 
 /* 5. All 65 Boxes Mini-Map Card */
 .card-all-boxes-map {
@@ -20973,6 +21215,20 @@ dialog.check-close-shift-dialog::backdrop {
   grid-template-columns: repeat(3, 1fr) !important;
   gap: 12px !important;
 }
+.terminal-field-col {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 4px !important;
+}
+.terminal-col-lbl {
+  font-size: 0.78rem !important;
+  font-weight: 600 !important;
+  color: #475569 !important;
+  line-height: 1.2 !important;
+}
+[data-theme="dark"] .terminal-col-lbl {
+  color: #94a3b8 !important;
+}
 .terminal-input {
   width: 100% !important;
   border: 1.5px solid #cbd5e1 !important;
@@ -21273,7 +21529,7 @@ dialog.check-close-shift-dialog::backdrop {
 }
 .rep-totals-hr {
   height: 1px !important;
-  background: #cbd5e1 !important;
+  background: #334155 !important;
   margin: 4px 0 !important;
 }
 

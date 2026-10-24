@@ -84,7 +84,12 @@ export const SAMPLE_GAMES = [
   { id: 'g124', name: 'CASH 500000 $', price: 50, bookValue: 900, packSize: 18, barcodePrefix: '1890' },
   { id: 'g125', name: 'JUMBO BUCK EXT', price: 50, bookValue: 900, packSize: 18, barcodePrefix: '1835' },
   { id: 'g1648', name: 'EPIC RICHES', price: 10, bookValue: 300, packSize: 30, barcodePrefix: '1648' },
-  { id: 'g1672', name: 'TREASURE HUNT', price: 3, bookValue: 300, packSize: 100, barcodePrefix: '1672' }
+  { id: 'g1672', name: 'TREASURE HUNT', price: 3, bookValue: 300, packSize: 100, barcodePrefix: '1672' },
+  { id: 'g1465', name: '1M CASH VAULT.', price: 10, bookValue: 300, packSize: 30, barcodePrefix: '1465' },
+  { id: 'g1466', name: 'LIMITED RELS', price: 30, bookValue: 300, packSize: 10, barcodePrefix: '1466' },
+  { id: 'g1153', name: 'HIT 100', price: 1, bookValue: 300, packSize: 300, barcodePrefix: '1153' },
+  { id: 'g1451', name: '50K EXTREME', price: 2, bookValue: 300, packSize: 150, barcodePrefix: '1451' },
+  { id: 'g1409', name: 'GOLD $500,000', price: 5, bookValue: 300, packSize: 60, barcodePrefix: '1409' }
 ];
 
 export function getStandardPackDetails(price) {

@@ -1125,7 +1125,7 @@
     }
     .rep-totals-hr {
       height: 1px !important;
-      background: #cbd5e1 !important;
+      background: #334155 !important;
       margin: 4px 0 !important;
     }
 
@@ -1670,17 +1670,29 @@
           </button>
         </div>
 
-        <!-- UPDATING INVENTORY WORKSPACE (Image 2) -->
+        <!-- UPDATING INVENTORY WORKSPACE (Matching Reference Image media_1792843899698.png) -->
         <div class="inventory-scan-workspace" id="inventoryScanWorkspace" style="display: none;">
-          <div class="inv-empty-state" id="invEmptyState">
-            <div class="inv-scan-green-icon">
-              <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/>
-                <line x1="7" x2="7" y1="8" y2="16"/><line x1="12" x2="12" y1="8" y2="16"/><line x1="17" x2="17" y1="8" y2="16"/>
-              </svg>
+          <div class="inv-terminal-screen" id="invTerminalScreen">
+            <div class="inv-terminal-summary-row" id="invTermSummaryRow">
+              <span class="inv-term-code" id="invTermLatestCode"></span>
+              <span class="inv-term-title" id="invTermLatestTitle"></span>
+              <span class="inv-term-count" id="invTermRunningCount">Count = 0</span>
             </div>
-            <h3 class="inv-empty-title">Start scanning packs</h3>
-            <p class="inv-empty-sub">Each pack appears here as you scan it.</p>
+            <div class="inv-terminal-divider">------------------------------------------------------------------------------------------------------------------------------------------------</div>
+            <div class="inv-terminal-log" id="invTerminalLog">
+              <div class="inv-term-log-line latest-scanned">
+                <span class="inv-term-prompt inv-term-cursor">_</span>
+              </div>
+            </div>
+          </div>
+          <div class="inv-terminal-footer" id="invTermFooter">
+            <div class="inv-legend-pills">
+              <span class="inv-legend-pill pill-1day"><span class="legend-swatch swatch-white"></span> 1+ Days</span>
+              <span class="inv-legend-pill pill-7day"><span class="legend-swatch swatch-green"></span> 7+ Days</span>
+              <span class="inv-legend-pill pill-21day"><span class="legend-swatch swatch-yellow"></span> 21+ Days</span>
+            </div>
+            <span class="inv-term-support">Sign up for tech support</span>
+            <span class="inv-term-copy">Copyright 2018 last update: 3/20/2019</span>
           </div>
           <div class="inv-scanned-cards-grid" id="invScannedCardsGrid" style="display: none;"></div>
         </div>
@@ -1759,35 +1771,45 @@
                 </tbody>
               </table>
 
-              <!-- Shift Report Totals Summary & Breakdown (Matching User Reference Image 2) -->
+              <!-- Shift Report Totals Summary & Breakdown (Matching User Reference Image 3) -->
               <div class="rep-doc-footer-summary">
                 <div class="rep-doc-totals-box">
                   <div class="rep-totals-line">
                     <span class="rep-totals-lbl">Total</span>
-                    <span class="rep-totals-val" id="repDocSubtotal">$1,778.00</span>
+                    <span class="rep-totals-val" id="repDocSubtotal">$242.00</span>
                   </div>
                   <div class="rep-totals-line">
-                    <span class="rep-totals-lbl">Confirm</span>
-                    <span class="rep-totals-val rep-confirm-red" id="repDocConfirm">($115.00)</span>
+                    <span class="rep-totals-lbl">Cashes</span>
+                    <span class="rep-totals-val rep-confirm-red" id="repDocCashes">$0.00</span>
                   </div>
                   <div class="rep-totals-hr"></div>
                   <div class="rep-totals-line">
                     <span class="rep-totals-lbl">Online</span>
-                    <span class="rep-totals-val" id="repDocOnline">1,657.00</span>
+                    <span class="rep-totals-val" id="repDocOnline">$0.00</span>
                   </div>
                   <div class="rep-totals-line">
-                    <span class="rep-totals-lbl">Online Confirm</span>
-                    <span class="rep-totals-val rep-confirm-red" id="repDocOnlineConfirm">($189.50)</span>
+                    <span class="rep-totals-lbl">Online Cashes</span>
+                    <span class="rep-totals-val rep-confirm-red" id="repDocOnlineCashes">$0.00</span>
                   </div>
                   <div class="rep-totals-hr"></div>
                   <div class="rep-totals-line rep-grand-total">
                     <span class="rep-totals-lbl">Total Sales</span>
-                    <span class="rep-totals-val" id="repDocGrandSales">$1,468.00</span>
+                    <span class="rep-totals-val" id="repDocGrandSales">$242.00</span>
                   </div>
                   <div class="rep-totals-line rep-grand-total">
-                    <span class="rep-totals-lbl">Total Confirm</span>
-                    <span class="rep-totals-val rep-confirm-red" id="repDocGrandConfirm">($304.50)</span>
+                    <span class="rep-totals-lbl">Total Cashes</span>
+                    <span class="rep-totals-val rep-confirm-red" id="repDocTotalCashes">$0.00</span>
                   </div>
+                  <div class="rep-totals-hr"></div>
+                  <div class="rep-totals-line rep-grand-total">
+                    <span class="rep-totals-lbl">Total Drop</span>
+                    <span class="rep-totals-val" id="repDocTotalDrop">$242.00</span>
+                  </div>
+                  <div class="rep-totals-line">
+                    <span class="rep-totals-lbl">Scratch Profit</span>
+                    <span class="rep-totals-val" id="repDocScratchProfit">$13.22</span>
+                  </div>
+                  <div class="rep-totals-hr"></div>
                 </div>
               </div>
 
@@ -4435,9 +4457,18 @@
       <div class="check-close-terminal-section">
         <label class="terminal-section-label">From the lottery terminal (optional &mdash; printed on the report)</label>
         <div class="terminal-inputs-row">
-          <input type="text" class="terminal-input" id="confTerminalCashes" placeholder="Cashes $">
-          <input type="text" class="terminal-input" id="confTerminalOnline" placeholder="Online $">
-          <input type="text" class="terminal-input" id="confTerminalOnlineCashes" placeholder="Online cashes $">
+          <div class="terminal-field-col">
+            <label class="terminal-col-lbl" for="confTerminalOnline">Online Sale</label>
+            <input type="text" class="terminal-input" id="confTerminalOnline" placeholder="Online Sale $" aria-label="Online Sale">
+          </div>
+          <div class="terminal-field-col">
+            <label class="terminal-col-lbl" for="confTerminalOnlineCashes">Online Cash Out</label>
+            <input type="text" class="terminal-input" id="confTerminalOnlineCashes" placeholder="Online Cash Out $" aria-label="Online Cash Out">
+          </div>
+          <div class="terminal-field-col">
+            <label class="terminal-col-lbl" for="confTerminalCashes">Scratch Off Cash</label>
+            <input type="text" class="terminal-input" id="confTerminalCashes" placeholder="Scratch Off Cash $" aria-label="Scratch Off Cash">
+          </div>
         </div>
       </div>
 
@@ -6459,9 +6490,17 @@
             <td>Total Sales</td>
             <td class="dr-val" id="drFinTotalSales">$0.00</td>
           </tr>
-          <tr class="dr-sum-row dr-double-underline" title="Total Customer Payouts = Scratcher Cashes + Online Cashes">
+          <tr class="dr-sum-row" title="Total Customer Payouts = Scratcher Cashes + Online Cashes">
             <td>Total Cashes</td>
             <td class="dr-val" id="drFinTotalCashes">$0.00</td>
+          </tr>
+          <tr class="dr-sum-row" title="Total Cash Drop = Total Sales - Total Cashes">
+            <td>Total Drop</td>
+            <td class="dr-val" id="drFinTotalDrop">$0.00</td>
+          </tr>
+          <tr title="Scratch Retailer Profit">
+            <td>Scratch Profit</td>
+            <td class="dr-val" id="drFinScratchProfit">$0.00</td>
           </tr>
         </table>
       </div>
@@ -7023,35 +7062,45 @@
             </tbody>
           </table>
 
-          <!-- Shift Report Totals Summary & Breakdown (Matching User Reference Image 2) -->
+          <!-- Shift Report Totals Summary & Breakdown (Matching User Reference Image 3) -->
           <div class="rep-doc-footer-summary">
             <div class="rep-doc-totals-box">
               <div class="rep-totals-line">
                 <span class="rep-totals-lbl">Total</span>
-                <span class="rep-totals-val" id="modalRepDocSubtotal">$1,778.00</span>
+                <span class="rep-totals-val" id="modalRepDocSubtotal">$242.00</span>
               </div>
               <div class="rep-totals-line">
-                <span class="rep-totals-lbl">Confirm</span>
-                <span class="rep-totals-val rep-confirm-red" id="modalRepDocConfirm">($115.00)</span>
+                <span class="rep-totals-lbl">Cashes</span>
+                <span class="rep-totals-val rep-confirm-red" id="modalRepDocCashes">$0.00</span>
               </div>
               <div class="rep-totals-hr"></div>
               <div class="rep-totals-line">
                 <span class="rep-totals-lbl">Online</span>
-                <span class="rep-totals-val" id="modalRepDocOnline">1,657.00</span>
+                <span class="rep-totals-val" id="modalRepDocOnline">$0.00</span>
               </div>
               <div class="rep-totals-line">
-                <span class="rep-totals-lbl">Online Confirm</span>
-                <span class="rep-totals-val rep-confirm-red" id="modalRepDocOnlineConfirm">($189.50)</span>
+                <span class="rep-totals-lbl">Online Cashes</span>
+                <span class="rep-totals-val rep-confirm-red" id="modalRepDocOnlineCashes">$0.00</span>
               </div>
               <div class="rep-totals-hr"></div>
               <div class="rep-totals-line rep-grand-total">
                 <span class="rep-totals-lbl">Total Sales</span>
-                <span class="rep-totals-val" id="modalRepDocGrandSales">$1,468.00</span>
+                <span class="rep-totals-val" id="modalRepDocGrandSales">$242.00</span>
               </div>
               <div class="rep-totals-line rep-grand-total">
-                <span class="rep-totals-lbl">Total Confirm</span>
-                <span class="rep-totals-val rep-confirm-red" id="modalRepDocGrandConfirm">($304.50)</span>
+                <span class="rep-totals-lbl">Total Cashes</span>
+                <span class="rep-totals-val rep-confirm-red" id="modalRepDocTotalCashes">$0.00</span>
               </div>
+              <div class="rep-totals-hr"></div>
+              <div class="rep-totals-line rep-grand-total">
+                <span class="rep-totals-lbl">Total Drop</span>
+                <span class="rep-totals-val" id="modalRepDocTotalDrop">$242.00</span>
+              </div>
+              <div class="rep-totals-line">
+                <span class="rep-totals-lbl">Scratch Profit</span>
+                <span class="rep-totals-val" id="modalRepDocScratchProfit">$13.22</span>
+              </div>
+              <div class="rep-totals-hr"></div>
             </div>
           </div>
 
@@ -7409,9 +7458,9 @@
           <div class="field" style="margin-top: 14px;">
             <label>From the lottery terminal <span class="muted" style="font-weight: 500">(optional — printed on the report)</span></label>
             <div class="term">
-              <input id="terminalInputCashes" class="input mono" inputmode="decimal" placeholder="Cashes $" aria-label="Cashes">
-              <input id="terminalInputOnline" class="input mono" inputmode="decimal" placeholder="Online $" aria-label="Online sales">
-              <input id="terminalInputOc" class="input mono" inputmode="decimal" placeholder="Online cashes $" aria-label="Online cashes">
+              <input id="terminalInputOnline" class="input mono" inputmode="decimal" placeholder="Online Sale $" aria-label="Online Sale">
+              <input id="terminalInputOc" class="input mono" inputmode="decimal" placeholder="Online Cash Out $" aria-label="Online Cash Out">
+              <input id="terminalInputCashes" class="input mono" inputmode="decimal" placeholder="Scratch Off Cash $" aria-label="Scratch Off Cash">
             </div>
           </div>
         </div>

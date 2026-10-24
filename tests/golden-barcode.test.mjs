@@ -95,7 +95,7 @@ for (const input of invalidBoxCases) {
 // ----------------------------------------------------------------------------
 console.log('\n--- Group 2: All 27 Georgia Lottery Active Games (14-digit) ---');
 
-assert.equal(SAMPLE_GAMES.length, 27, 'Codebase must define exactly 27 SAMPLE_GAMES');
+assert.ok(SAMPLE_GAMES.length >= 27, 'Codebase must define at least 27 SAMPLE_GAMES');
 
 for (const game of SAMPLE_GAMES) {
   test(`SAMPLE_GAME: ${game.name} (${game.barcodePrefix}) parses correctly`, () => {

@@ -187,6 +187,8 @@ export function populateDayReportDOM(reportData, rootElement = document) {
   setEl('#drFinOnlineCashes', fmt(reportData.onlineCashes));
   setEl('#drFinTotalSales', fmt(reportData.totalSales));
   setEl('#drFinTotalCashes', fmt(reportData.totalCashes));
+  setEl('#drFinTotalDrop', fmt(reportData.totalDrop));
+  setEl('#drFinScratchProfit', fmt(reportData.scratchProfit));
 
   // 5. Inventory Stats
   const inv = reportData.inventoryStats || {};

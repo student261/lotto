@@ -1832,7 +1832,8 @@ function renderHeaderAndMetrics() {
   const countToday = activeSlots.filter(s => (s.daysActive || 0) === 0 || s.activatedThisShift).length;
   const countWeek = activeSlots.filter(s => (s.daysActive || 0) <= 7).length;
   const countMonth = activeSlots.filter(s => (s.daysActive || 0) <= 30).length;
-  const countInactive = activeSlots.filter(s => (s.daysActive || 0) >= 7).length;
+  const inStockPacks = (state.inStockInventory || []).filter(p => !p.boxNumber);
+  const countInactive = inStockPacks.length > 0 ? inStockPacks.length : activeSlots.filter(s => (s.daysActive || 0) >= 7).length;
 
   if (metricToday) metricToday.textContent = String(countToday);
   if (metricThisWeek) metricThisWeek.textContent = String(countWeek);
@@ -2163,6 +2164,7 @@ function renderDispenserRack() {
       </div>
       <div class="card-dashed-line"></div>
       <div class="card-footer-cluster ${isScanning ? 'is-scanning' : ''}">
+        ${slot.needsActivation ? `<button type="button" class="btn-card-activate" data-box="${slot.boxNumber}">Activate</button>` : ''}
         <span class="ticket-number-display ticket-sold-count ${isScanning ? 'scanning-num' : ''}">${displaySoldNumber}</span>
         <div style="display:none;">
           <div class="tile-ticket-info-top">
@@ -2182,6 +2184,12 @@ function renderDispenserRack() {
     `;
 
     card.addEventListener('click', (e) => {
+      const activateBtn = e.target.closest('.btn-card-activate');
+      if (activateBtn) {
+        e.stopPropagation();
+        activateSlotPack(slot);
+        return;
+      }
       if (e.target.closest('.quick-sell-btn')) {
         e.stopPropagation();
         card.classList.add('flash-sold');
@@ -5267,6 +5275,14 @@ function openEndShiftConfirmation() {
     }
   }
 
+  // Pre-fill terminal inputs if previously entered, else clear (1: Online Sale, 2: Online Cash Out, 3: Scratch Off Cash)
+  const toEl = document.getElementById('confTerminalOnline');
+  if (toEl) toEl.value = (state.onlineSales !== undefined && state.onlineSales !== null && state.onlineSales !== 0) ? String(state.onlineSales) : '';
+  const tocEl = document.getElementById('confTerminalOnlineCashes');
+  if (tocEl) tocEl.value = (state.onlineCashes !== undefined && state.onlineCashes !== null && state.onlineCashes !== 0) ? String(state.onlineCashes) : '';
+  const tcEl = document.getElementById('confTerminalCashes');
+  if (tcEl) tcEl.value = (state.cashes !== undefined && state.cashes !== null && state.cashes !== 0) ? String(state.cashes) : '';
+
   sfx.keypad();
   const toastEndShift = document.getElementById('endShiftScanningToast');
   if (toastEndShift) toastEndShift.style.setProperty('display', 'none', 'important');
@@ -5275,12 +5291,12 @@ function openEndShiftConfirmation() {
 }
 
 function confirmEndShift() {
-  const terminalCashes = parseFloat(document.getElementById('confTerminalCashes')?.value) || 0;
-  const terminalOnline = parseFloat(document.getElementById('confTerminalOnline')?.value) || 0;
-  const terminalOnlineCashes = parseFloat(document.getElementById('confTerminalOnlineCashes')?.value) || 0;
-  if (terminalCashes) state.cashes = terminalCashes;
-  if (terminalOnline) state.onlineSales = terminalOnline;
-  if (terminalOnlineCashes) state.onlineCashes = terminalOnlineCashes;
+  const rawOnline = document.getElementById('confTerminalOnline')?.value ?? document.getElementById('terminalInputOnline')?.value;
+  const rawOnlineCashes = document.getElementById('confTerminalOnlineCashes')?.value ?? document.getElementById('terminalInputOc')?.value;
+  const rawCashes = document.getElementById('confTerminalCashes')?.value ?? document.getElementById('terminalInputCashes')?.value;
+  state.onlineSales = parseFloat(rawOnline) || 0;
+  state.onlineCashes = parseFloat(rawOnlineCashes) || 0;
+  state.cashes = parseFloat(rawCashes) || 0;
 
   // Transition shiftStatus to SHIFT_ENDED
   state.shiftStatus = 'SHIFT_ENDED';
@@ -5307,53 +5323,45 @@ function confirmEndShift() {
   sfx.success();
 }
 
-function populateShiftReportBreakdown(prefix = '', customSales = null, customSold = null) {
+function populateShiftReportBreakdown(prefix = '', customSales = null, customSold = null, customReport = null) {
   const { totalSold, totalRevenue } = getShiftSalesTotals();
   const salesVal = customSales !== null ? customSales : totalRevenue;
   const soldVal = customSold !== null ? customSold : totalSold;
 
-  // Real or reference breakdown figures matching User Image 2
-  let subtotalStr = '$1,778.00';
-  let confirmStr = '($115.00)';
-  let onlineStr = '1,657.00';
-  let onlineConfirmStr = '($189.50)';
-  let grandSalesStr = '$1,468.00';
-  let grandConfirmStr = '($304.50)';
-
-  if (salesVal > 0) {
-    const online = Math.round(salesVal * 1.1287);
-    const subtotal = Math.round(salesVal * 1.2111);
-    const confirm = Math.round(subtotal * 0.0646);
-    const onlineConfirm = Math.round(online * 0.1143);
-    const grandConfirm = confirm + onlineConfirm;
-    subtotalStr = `$${subtotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-    confirmStr = `($${confirm.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`;
-    onlineStr = `${online.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-    onlineConfirmStr = `($${onlineConfirm.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`;
-    grandSalesStr = `$${salesVal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-    grandConfirmStr = `($${grandConfirm.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`;
-  }
-
   const p = prefix ? (prefix.charAt(0).toLowerCase() + prefix.slice(1)) : '';
   const getId = (idName) => p ? `${p}${idName.charAt(0).toUpperCase()}${idName.slice(1)}` : idName;
 
-  const subtotalEl = document.getElementById(getId('repDocSubtotal'));
-  if (subtotalEl) subtotalEl.textContent = subtotalStr;
+  // Real terminal figures entered by user during shift close (or from shift history)
+  const cashes = customReport?.cashes !== undefined ? Number(customReport.cashes) : Number(state.cashes || 0);
+  const online = customReport?.onlineSales !== undefined ? Number(customReport.onlineSales) : Number(state.onlineSales || 0);
+  const onlineCashes = customReport?.onlineCashes !== undefined ? Number(customReport.onlineCashes) : Number(state.onlineCashes || 0);
 
-  const confirmEl = document.getElementById(getId('repDocConfirm'));
-  if (confirmEl) confirmEl.textContent = confirmStr;
+  const scratchTotal = Number(salesVal) || 0;
+  const totalSales = scratchTotal + online;
+  const totalCashes = cashes + onlineCashes;
+  const totalDrop = totalSales - totalCashes;
+  // Scratch Profit: 6% GA retailer commission on scratch sales minus $1.30 terminal fee (Image 3: $242.00 -> $13.22)
+  const scratchProfit = scratchTotal > 0 ? Math.max(0, (scratchTotal * 0.06) - 1.30) : 0;
 
-  const onlineEl = document.getElementById(getId('repDocOnline'));
-  if (onlineEl) onlineEl.textContent = onlineStr;
+  const fmt = (val) => `$${(Number(val) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-  const onlineConfirmEl = document.getElementById(getId('repDocOnlineConfirm'));
-  if (onlineConfirmEl) onlineConfirmEl.textContent = onlineConfirmStr;
+  const setTxt = (id1, id2, text) => {
+    const el1 = document.getElementById(getId(id1));
+    if (el1) el1.textContent = text;
+    if (id2) {
+      const el2 = document.getElementById(getId(id2));
+      if (el2 && el2 !== el1) el2.textContent = text;
+    }
+  };
 
-  const grandSalesEl = document.getElementById(getId('repDocGrandSales'));
-  if (grandSalesEl) grandSalesEl.textContent = grandSalesStr;
-
-  const grandConfirmEl = document.getElementById(getId('repDocGrandConfirm'));
-  if (grandConfirmEl) grandConfirmEl.textContent = grandConfirmStr;
+  setTxt('repDocSubtotal', null, fmt(scratchTotal));
+  setTxt('repDocCashes', 'repDocConfirm', fmt(cashes));
+  setTxt('repDocOnline', null, fmt(online));
+  setTxt('repDocOnlineCashes', 'repDocOnlineConfirm', fmt(onlineCashes));
+  setTxt('repDocGrandSales', null, fmt(totalSales));
+  setTxt('repDocTotalCashes', 'repDocGrandConfirm', fmt(totalCashes));
+  setTxt('repDocTotalDrop', null, fmt(totalDrop));
+  setTxt('repDocScratchProfit', null, fmt(scratchProfit));
 
   // Inventory stats
   const activeBoxes = (state.slots || []).filter(s => s && (s.status === 'ACTIVE' || s.packNumber)).length;
@@ -5439,6 +5447,11 @@ function populateShiftReportBreakdown(prefix = '', customSales = null, customSol
   }
 }
 
+if (typeof window !== 'undefined') {
+  window.populateShiftReportBreakdown = populateShiftReportBreakdown;
+  window.renderShiftClosedReportPreview = renderShiftClosedReportPreview;
+}
+
 function renderShiftClosedReportPreview() {
   const reportSec = document.getElementById('shiftClosedReportSection');
   if (!reportSec) return;
@@ -5453,7 +5466,7 @@ function renderShiftClosedReportPreview() {
 
   const totalEl = document.getElementById('repDocTotalAmount');
   if (totalEl) {
-    totalEl.textContent = totalRevenue > 0 ? `Total $${totalRevenue.toFixed(2)}` : 'Total $1,778.00';
+    totalEl.textContent = `Total $${(totalRevenue || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   }
 
   const metaEl = document.getElementById('repDocMetaLine');
@@ -6778,7 +6791,256 @@ function findScannedBarcodeInfo(barcode) {
   return null;
 }
 
-function handleTicketBarcodeScan(rawBarcode, source = 'main') {
+export function findInStockPack(parsed, barcode) {
+  if (!parsed && !barcode) return null;
+
+  if (!Array.isArray(state.inStockInventory)) {
+    state.inStockInventory = state.dataCleared ? [] : JSON.parse(JSON.stringify(REFERENCE_IN_STOCK_PACKS));
+  }
+
+  const cleanB = barcode ? String(barcode).trim() : '';
+
+  const matchesPack = (p) => {
+    if (!p) return false;
+    // 1. Pack number matching from parsed lottery barcode
+    if (parsed) {
+      if (parsed.packNumber && isPackNumberMatch(p.packNumber, parsed.packNumber)) return true;
+      if (parsed.packCombined && isPackNumberMatch(p.packNumber, parsed.packCombined)) return true;
+      if (parsed.packClean && isPackNumberMatch(p.packNumber, parsed.packClean)) return true;
+    }
+    // 2. Barcode exact match
+    if (cleanB && p.barcode && (p.barcode === cleanB || (parsed?.standardBarcode && p.barcode === parsed.standardBarcode))) {
+      return true;
+    }
+    // 3. Fallback: pack number is contained in scanned code (min 5 digits)
+    if (cleanB && p.packNumber) {
+      const pNorm = String(p.packNumber).replace(/\D/g, '');
+      const bNorm = cleanB.replace(/\D/g, '');
+      if (pNorm.length >= 5 && bNorm.includes(pNorm)) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  const foundStock = state.inStockInventory.find(matchesPack);
+  if (foundStock) return { item: foundStock, source: 'inStockInventory' };
+
+  if (Array.isArray(state.inventory)) {
+    const foundInv = state.inventory.find(matchesPack);
+    if (foundInv) return { item: foundInv, source: 'inventory' };
+  }
+
+  return null;
+}
+
+export function autoAddInStockPackToDispenser(inStockPack, parsed = null, barcode = null) {
+  if (!inStockPack) return;
+
+  const chosenPack = String(inStockPack.packNumber || (parsed ? (parsed.packCombined || parsed.packNumber) : ''));
+  const cleanName = cleanGameTitle(inStockPack.gameName || (parsed ? findGameByBarcode(barcode, state.customGames)?.name : null) || 'Scratch-Off Game');
+  const chosenPrice = Number(inStockPack.price) || (parsed ? (findGameByBarcode(barcode, state.customGames)?.price || 1) : 1);
+  const std = getStandardPackDetails(chosenPrice);
+  const packSize = Number(inStockPack.packSizeNum) || parseInt(inStockPack.packSize, 10) || std.packSize || 100;
+
+  // Determine starting ticket position
+  let startTicket = 0;
+  if (parsed && parsed.ticketNumber !== null && parsed.ticketNumber !== undefined) {
+    startTicket = Number(parsed.ticketNumber);
+  } else if (inStockPack.position !== undefined && inStockPack.position !== null && !isNaN(Number(inStockPack.position))) {
+    startTicket = Number(inStockPack.position);
+  }
+
+  // Check if this pack is already placed on a dispenser slot
+  const existingSlot = (state.slots || []).find(s => s && s.status === 'ACTIVE' && isPackNumberMatch(s.packNumber, chosenPack));
+  if (existingSlot) {
+    state.lastScannedSlot = existingSlot.boxNumber;
+    bringBoxToVisibleRack(existingSlot.boxNumber);
+    saveState(state);
+    sfx.beep();
+    renderHeaderAndMetrics();
+    renderDispenserRack();
+    renderSlotsRibbon();
+    if (existingSlot.needsActivation) {
+      showToast(`ℹ️ Box #${existingSlot.boxNumber} (${cleanName}) is waiting for activation. Tap "Activate" on the card!`, 'info');
+    } else {
+      showToast(`✓ Ticket was already activated in Box #${existingSlot.boxNumber} (${cleanName})!`, 'info');
+    }
+    return;
+  }
+
+  // Close any activation modals that might have opened
+  if (setTicketDetailsModal?.open) setTicketDetailsModal.close();
+  if (setBoxModal?.open) setBoxModal.close();
+  if (activationModal?.open) activationModal.close();
+
+  // Pick target box: use pack's assigned box if empty, or first empty box
+  let targetBox = (inStockPack.boxNumber && !state.slots.some(s => Number(s.boxNumber) === Number(inStockPack.boxNumber) && s.status === 'ACTIVE' && s.packNumber))
+    ? Number(inStockPack.boxNumber)
+    : findFirstEmptyBox();
+
+  if (targetBox > state.totalSlots) {
+    for (let i = state.totalSlots + 1; i <= targetBox; i++) {
+      state.slots.push({
+        boxNumber: i,
+        status: 'EMPTY',
+        gameId: null,
+        gameName: null,
+        price: null,
+        packNumber: null,
+        packSize: null,
+        startTicket: 0,
+        currentTicket: 0,
+        ticketsSold: 0,
+        activatedThisShift: false,
+        daysActive: 0,
+        scannedInEndShift: false
+      });
+    }
+    state.totalSlots = targetBox;
+  }
+
+  const targetSlot = state.slots.find(s => Number(s.boxNumber) === Number(targetBox));
+  if (!targetSlot) return;
+
+  targetSlot.status = 'ACTIVE';
+  targetSlot.needsActivation = true;
+  targetSlot.activatedThisShift = false;
+  targetSlot.gameId = inStockPack.gameId || (inStockPack.gameNumber ? String(inStockPack.gameNumber).replace(/[^0-9]/g, '') : (parsed?.gameNumber || 'custom'));
+  targetSlot.gameName = cleanName;
+  targetSlot.price = chosenPrice;
+  targetSlot.packNumber = chosenPack;
+  targetSlot.barcodePrefix = inStockPack.barcodePrefix || (parsed?.gameNumber || '');
+  targetSlot.packSize = packSize;
+  targetSlot.initialTickets = packSize;
+  targetSlot.startTicket = startTicket;
+  targetSlot.currentTicket = startTicket;
+  targetSlot.ticketsSold = 0;
+  targetSlot.previousShiftSold = 0;
+  targetSlot.daysActive = 1;
+  targetSlot.scannedInEndShift = false;
+  targetSlot.scannedBarcodes = targetSlot.scannedBarcodes || [];
+  if (barcode) {
+    targetSlot.scannedBarcodes.push({
+      barcode: barcode,
+      scannedAt: new Date().toISOString()
+    });
+  }
+
+  // Update inStockPack boxNumber in state.inStockInventory
+  inStockPack.boxNumber = targetBox;
+  if (Array.isArray(state.inStockInventory)) {
+    const idx = state.inStockInventory.findIndex(p => isPackNumberMatch(p.packNumber, chosenPack));
+    if (idx !== -1) {
+      state.inStockInventory[idx].boxNumber = targetBox;
+    }
+  }
+
+  // Ensure targetBox is visible in rack
+  if (!Array.isArray(state.visibleBoxNumbers)) state.visibleBoxNumbers = [];
+  if (!state.visibleBoxNumbers.includes(targetBox)) {
+    state.visibleBoxNumbers.push(targetBox);
+    state.visibleBoxNumbers.sort((a, b) => Number(a) - Number(b));
+  }
+
+  state.lastScannedSlot = targetBox;
+  bringBoxToVisibleRack(targetBox);
+
+  state.lastScanData = {
+    barcode: barcode || chosenPack,
+    boxNumber: targetBox,
+    gameName: cleanName,
+    price: chosenPrice,
+    packNumber: chosenPack,
+    ticketNumber: startTicket,
+    soldCount: 0,
+    action: 'IN_STOCK_LOADED'
+  };
+  state.lastScannedBarcode = `Box #${targetBox} Loaded: $${Number(chosenPrice).toFixed(2)} · ${cleanName} (Pack #${chosenPack}) - Tap Activate`;
+
+  saveState(state);
+  sfx.beep();
+
+  renderHeaderAndMetrics();
+  renderDispenserRack();
+  renderSlotsRibbon();
+
+  // If inventory screen is open, refresh it
+  const invView = document.getElementById('viewInventory');
+  if (invView && invView.classList.contains('active')) {
+    if (typeof renderInventoryView === 'function') renderInventoryView();
+  }
+
+  showToast(`📦 Pack #${chosenPack} automatically added to Box #${targetBox}! Tap "Activate" to activate.`, 'info');
+}
+
+export function activateSlotPack(slot) {
+  if (!slot) return;
+  const targetSlot = state.slots.find(s => Number(s.boxNumber) === Number(slot.boxNumber));
+  if (!targetSlot) return;
+
+  const realPackNumber = String(targetSlot.packNumber || '');
+  targetSlot.needsActivation = false;
+  targetSlot.status = 'ACTIVE';
+  targetSlot.activatedThisShift = true;
+  targetSlot.daysActive = 1;
+  targetSlot.scannedInEndShift = false;
+  targetSlot.activatedAt = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+
+  // Remove pack from inStockInventory and inventory since it is now active!
+  state.inventory = (state.inventory || []).filter(p => !isPackNumberMatch(p.packNumber, realPackNumber));
+  if (Array.isArray(state.inStockInventory)) {
+    state.inStockInventory = state.inStockInventory.filter(p => !isPackNumberMatch(p.packNumber, realPackNumber));
+  }
+
+  // Record in global inventoryBarcodes
+  if (!state.inventoryBarcodes) state.inventoryBarcodes = {};
+  if (targetSlot.scannedBarcodes && targetSlot.scannedBarcodes.length > 0) {
+    targetSlot.scannedBarcodes.forEach(b => {
+      const code = typeof b === 'string' ? b : b.barcode;
+      if (code) {
+        state.inventoryBarcodes[code] = {
+          boxNumber: targetSlot.boxNumber,
+          barcode: code,
+          gameName: targetSlot.gameName,
+          price: targetSlot.price,
+          packNumber: realPackNumber,
+          scannedAt: (typeof b === 'object' && b.scannedAt) ? b.scannedAt : new Date().toISOString()
+        };
+      }
+    });
+  }
+
+  if (state.dataCleared) delete state.dataCleared;
+
+  recordUndoAction({
+    type: 'ACTIVATION',
+    boxNumber: targetSlot.boxNumber
+  });
+
+  saveState(state);
+  sfx.success?.() || sfx.beep();
+  voice?.speakReadyToSell?.(targetSlot.boxNumber);
+
+  renderHeaderAndMetrics();
+  renderDispenserRack();
+  renderSlotsRibbon();
+
+  // If inventory view is open, refresh it so it updates from stock
+  const invView = document.getElementById('viewInventory');
+  if (invView && invView.classList.contains('active')) {
+    if (typeof renderInventoryView === 'function') renderInventoryView();
+  }
+
+  showToast(`✓ Box #${targetSlot.boxNumber} activated with ${cleanGameTitle(targetSlot.gameName)}! Removed from stock and ready to sell.`, 'success');
+}
+
+export function handleTicketBarcodeScan(rawBarcode, source = 'main') {
+  if (state.isUpdatingInventory) {
+    handleUpdatingInventoryScan(rawBarcode);
+    return;
+  }
+  window.handleTicketBarcodeScan = handleTicketBarcodeScan;
   const barcode = String(rawBarcode).trim();
   if (!barcode) {
     sfx.alert();
@@ -6797,6 +7059,14 @@ function handleTicketBarcodeScan(rawBarcode, source = 'main') {
   }
 
   const effectiveBarcode = (parsed && parsed.standardBarcode) ? parsed.standardBarcode : barcode;
+
+  // Check if this ticket/pack is in stock!
+  // If so, do NOT pop up the 2-step activation modal. Automatically add pack to dispenser rack!
+  const inStock = findInStockPack(parsed, barcode);
+  if (inStock) {
+    autoAddInStockPackToDispenser(inStock.item, parsed, barcode);
+    return;
+  }
 
   // 1. Duplicate check: Has this barcode already been scanned into inventory?
   if (isBarcodeAlreadyScanned(effectiveBarcode) || isBarcodeAlreadyScanned(barcode)) {
@@ -6897,6 +7167,14 @@ function openSetTicketDetailsModal(barcode, standardCode = null) {
   if (!parsed || !parsed.isValid || parsed.isRetailProduct || parsed.isNonLotteryBarcode) {
     sfx.alert();
     showToast(`❌ [${barcode}] is not a valid scratch-off lottery ticket.`, 'error');
+    return;
+  }
+
+  // Check if this pack/ticket is in stock!
+  // If so, do NOT pop up the 2-step activation modal. Automatically add pack to dispenser rack!
+  const inStock = findInStockPack(parsed, barcode);
+  if (inStock) {
+    autoAddInStockPackToDispenser(inStock.item, parsed, barcode);
     return;
   }
 
@@ -8355,6 +8633,12 @@ function processScannedBarcode(rawBarcode) {
     scanActionTitle.style.borderRadius = '';
   }
 
+  // Scenario -1: Updating Inventory mode is active -> route barcode scan to inventory intake
+  if (state.isUpdatingInventory) {
+    handleUpdatingInventoryScan(rawBarcode);
+    return;
+  }
+
   // Scenario 0: Receive Packs view is active -> route barcode scan into intake form
   const viewReceive = document.getElementById('viewReceivePacks');
   if (viewReceive && viewReceive.style.display !== 'none') {
@@ -9064,7 +9348,14 @@ function processScannedBarcode(rawBarcode) {
     }
 
     // 4b. At the Sell Counter: A pack barcode or new ticket was scanned (not in an active box yet).
-    // Seamlessly open the Set Ticket / Set Box modal so the pack can be activated into a dispenser box!
+    // If ticket is in stock, automatically add pack to dispenser rack and offer "Activate" button!
+    const inStock = findInStockPack(parsedTicket, rawBarcode);
+    if (inStock) {
+      autoAddInStockPackToDispenser(inStock.item, parsedTicket, rawBarcode);
+      return;
+    }
+
+    // Otherwise seamlessly open the Set Ticket / Set Box modal so the pack can be activated into a dispenser box!
     const effectiveBarcode = (parsedTicket && parsedTicket.standardBarcode) ? parsedTicket.standardBarcode : rawBarcode;
     pendingNewTicketBarcode = effectiveBarcode;
     openSetTicketDetailsModal(rawBarcode, effectiveBarcode);
@@ -9682,6 +9973,176 @@ function setupEventListeners() {
   state.isUpdatingInventory = false;
   state.scannedInventoryPacks = [];
 
+  function renderUpdatingInventoryTerminal() {
+    const terminalScreen = document.getElementById('invTerminalScreen');
+    const footer = document.getElementById('invTermFooter');
+    const count = (state.scannedInventoryPacks || []).length;
+
+    const codeEl = document.getElementById('invTermLatestCode');
+    const titleEl = document.getElementById('invTermLatestTitle');
+    const countEl = document.getElementById('invTermRunningCount');
+    const logEl = document.getElementById('invTerminalLog');
+
+    if (countEl) countEl.textContent = `Count = ${count}`;
+
+    if (count === 0) {
+      if (codeEl) codeEl.textContent = '';
+      if (titleEl) titleEl.textContent = '';
+      if (logEl) {
+        logEl.innerHTML = `
+          <div class="inv-term-log-line latest-scanned">
+            <span class="inv-term-prompt inv-term-cursor">_</span>
+          </div>
+        `;
+      }
+      return;
+    }
+
+    const latest = state.scannedInventoryPacks[state.scannedInventoryPacks.length - 1];
+    if (codeEl) codeEl.textContent = latest.code;
+    if (titleEl) titleEl.textContent = latest.displayTitle;
+
+    if (logEl) {
+      const reversed = state.scannedInventoryPacks.slice().reverse();
+      logEl.innerHTML = reversed.map((item, idx) => `
+        <div class="inv-term-log-line ${idx === 0 ? 'latest-scanned' : ''}">
+          <span class="inv-term-prompt">${idx === 0 ? '_' : '&nbsp;'}</span>
+          <span class="inv-term-code">${item.code}</span>
+          <span class="inv-term-sep">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>
+          <span class="inv-term-title">${item.displayTitle}</span>
+        </div>
+      `).join('');
+    }
+  }
+
+  function handleUpdatingInventoryScan(rawBarcode) {
+    if (!rawBarcode) return;
+    const raw = String(rawBarcode).trim();
+    if (!raw) return;
+
+    const parsed = parseLotteryBarcode(raw, state.customGames);
+    let gameNumber = parsed?.gameNumber;
+    let packNumber = parsed?.packCombined || parsed?.packNumber;
+    let ticketNumber = (parsed?.ticketNumber !== null && parsed?.ticketNumber !== undefined) ? parsed.ticketNumber : 0;
+
+    // Fallback if raw is formatted as "1465-0093468", "1465-0093468-000", or raw digits
+    if (!gameNumber || !packNumber) {
+      const parts = raw.split(/[-_\s]+/);
+      if (parts.length >= 2) {
+        gameNumber = parts[0];
+        packNumber = parts[1];
+        if (parts[2]) ticketNumber = parseInt(parts[2], 10) || 0;
+      } else {
+        const digits = raw.replace(/\D/g, '');
+        if (digits.length >= 11) {
+          gameNumber = digits.slice(0, 4);
+          packNumber = digits.slice(4, 11);
+          ticketNumber = parseInt(digits.slice(11, 14), 10) || 0;
+        }
+      }
+    }
+
+    if (!gameNumber || !packNumber) {
+      sfx.alert();
+      showToast(`❌ [${raw}] could not be recognized as a valid pack barcode.`, 'error');
+      return;
+    }
+
+    // Match game from catalog, SAMPLE_GAMES, or custom games
+    const matchedGame = findGameByBarcode(raw, state.customGames) ||
+                        findGameByBarcode(gameNumber, state.customGames) ||
+                        SAMPLE_GAMES.find(g => g.barcodePrefix === gameNumber);
+
+    const price = Number(matchedGame?.price || 10);
+    const cleanName = matchedGame?.name
+      ? cleanGameTitle(matchedGame.name)
+      : (parsed?.gameName ? cleanGameTitle(parsed.gameName) : `Scratch Game ${gameNumber}`);
+    const displayTitle = `$${price} ${cleanName}.`;
+    const packSize = matchedGame?.packSize || getStandardPackDetails(price).packSize;
+    const displayCode = `${gameNumber}-${packNumber}`;
+
+    // 1. Update In-Stock Inventory (state.inStockInventory)
+    if (!Array.isArray(state.inStockInventory)) {
+      state.inStockInventory = [];
+    }
+
+    let inStockItem = state.inStockInventory.find(p => isPackNumberMatch(p.packNumber, packNumber));
+    if (!inStockItem) {
+      inStockItem = {
+        id: `stock_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        gameName: cleanName,
+        gameNumber: `Game ${gameNumber}`,
+        gameId: gameNumber,
+        packNumber: packNumber,
+        price: price,
+        packSize: `${packSize} tickets`,
+        packSizeNum: packSize,
+        status: 'IN_STOCK',
+        statusLabel: 'In stock',
+        boxNumber: null,
+        position: String(ticketNumber).padStart(3, '0'),
+        receivedDate: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+        receivedAt: new Date().toISOString(),
+        barcode: (parsed && parsed.standardBarcode) ? parsed.standardBarcode : raw
+      };
+      state.inStockInventory.push(inStockItem);
+    }
+
+    if (Array.isArray(state.inventory)) {
+      const invExists = state.inventory.find(p => isPackNumberMatch(p.packNumber, packNumber));
+      if (!invExists) {
+        state.inventory.push({ ...inStockItem });
+      }
+    }
+
+    // 2. Track in current scanning session
+    if (!Array.isArray(state.scannedInventoryPacks)) {
+      state.scannedInventoryPacks = [];
+    }
+    const scanRecord = {
+      code: displayCode,
+      gameNumber,
+      packNumber,
+      gameName: cleanName,
+      price,
+      displayTitle,
+      scannedAt: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+    };
+    state.scannedInventoryPacks.push(scanRecord);
+
+    sfx.beep();
+
+    // 3. Update Metrics & Headers
+    const count = state.scannedInventoryPacks.length;
+    const inStockTotal = state.inStockInventory.filter(p => !p.boxNumber).length;
+
+    const metricInactiveEl = document.getElementById('metricInactive');
+    if (metricInactiveEl) metricInactiveEl.textContent = String(inStockTotal);
+
+    const bannerCount = document.getElementById('inventoryAddedCount');
+    if (bannerCount) bannerCount.textContent = String(count);
+
+    const lastScanDisplay = document.getElementById('lastScanDisplay');
+    if (lastScanDisplay) lastScanDisplay.textContent = `Packs scanned so far: ${count}`;
+
+    const largeNumber = document.getElementById('largeStatReadout');
+    if (largeNumber) largeNumber.textContent = String(count);
+
+    const scanTitle = document.getElementById('scanActionTitle');
+    if (scanTitle) scanTitle.textContent = `${displayTitle} (Pack ${packNumber})`;
+
+    // 4. Update Terminal Screen Display (Matching User Reference Image 1)
+    renderUpdatingInventoryTerminal();
+
+    saveState(state);
+    showToast(`✓ Scanned ${displayCode} - ${displayTitle}`, 'success');
+  }
+  window.handleUpdatingInventoryScan = handleUpdatingInventoryScan;
+  window.handleTicketBarcodeScan = handleTicketBarcodeScan;
+  window.getState = () => state;
+  window.state = state;
+  window.saveState = saveState;
+
   function setUpdatingInventoryMode(active) {
     state.isUpdatingInventory = Boolean(active);
     const btnUpdateInventory = document.getElementById('btnUpdateInventoryCard');
@@ -9698,16 +10159,26 @@ function setupEventListeners() {
     const largeNumber = document.getElementById('largeStatReadout');
 
     if (state.isUpdatingInventory) {
-      // 1. KPI Card 6 -> Dark Forest Green, "Updating Inventory"
+      document.body.classList.add('updating-inventory-mode');
       btnUpdateInventory?.classList.add('active-updating');
       if (updateInventoryLabel) updateInventoryLabel.textContent = 'Updating Inventory';
 
       // 2. Banner -> Show
-      banner?.classList.add('active-banner');
+      if (banner) {
+        banner.style.display = 'flex';
+        banner.classList.add('active-banner');
+      }
 
-      // 3. Workspace -> Show, hide regular dispenser rack
-      workspace?.classList.add('active-workspace');
+      // 3. Hide dispenser rack boxes & 65-box mini-map completely (as user requested: no need of boxes there)
       if (rackContainer) rackContainer.style.display = 'none';
+      const allBoxesMap = document.getElementById('cardAllBoxesMap');
+      if (allBoxesMap) allBoxesMap.style.display = 'none';
+
+      // Show terminal screen workspace
+      if (workspace) {
+        workspace.style.display = 'block';
+        workspace.classList.add('active-workspace');
+      }
 
       // 4. Cancel button -> Soft salmon/peach active cancel
       cancelBtn?.classList.add('active-inventory-cancel');
@@ -9720,22 +10191,35 @@ function setupEventListeners() {
         barcodeInputField.focus();
       }
 
-      // 6. Right Card -> UPDATING INVENTORY / Start scanning packs / Packs scanned so far: 0 / 0
+      // 6. Right Card -> UPDATING INVENTORY / Start scanning packs / Packs scanned so far
       if (lastScanMicro) lastScanMicro.textContent = 'UPDATING INVENTORY';
-      if (scanTitle) scanTitle.textContent = 'Start scanning packs';
-      const count = state.scannedInventoryPacks.length;
+      const count = (state.scannedInventoryPacks || []).length;
+      if (scanTitle) scanTitle.textContent = count > 0 ? 'Scanning packs in progress' : 'Start scanning packs';
       if (lastScanDisplay) lastScanDisplay.textContent = `Packs scanned so far: ${count}`;
       if (largeNumber) largeNumber.textContent = `${count}`;
       const bannerCount = document.getElementById('inventoryAddedCount');
       if (bannerCount) bannerCount.textContent = `${count}`;
+
+      // 7. Render Terminal State
+      renderUpdatingInventoryTerminal();
     } else {
-      // Revert to normal Sell Counter Dashboard
+      document.body.classList.remove('updating-inventory-mode');
       btnUpdateInventory?.classList.remove('active-updating');
       if (updateInventoryLabel) updateInventoryLabel.textContent = 'Update Inventory';
 
-      banner?.classList.remove('active-banner');
-      workspace?.classList.remove('active-workspace');
+      if (banner) {
+        banner.style.display = 'none';
+        banner.classList.remove('active-banner');
+      }
+      if (workspace) {
+        workspace.style.display = 'none';
+        workspace.classList.remove('active-workspace');
+      }
+
+      // Restore dispenser rack boxes & 65-box mini-map
       if (rackContainer) rackContainer.style.display = 'block';
+      const allBoxesMap = document.getElementById('cardAllBoxesMap');
+      if (allBoxesMap) allBoxesMap.style.display = 'block';
 
       cancelBtn?.classList.remove('active-inventory-cancel');
 
@@ -9750,6 +10234,7 @@ function setupEventListeners() {
       if (largeNumber) largeNumber.textContent = '4';
     }
   }
+  window.setUpdatingInventoryMode = setUpdatingInventoryMode;
 
   // Toggle Updating Inventory mode from KPI Bar Card
   document.getElementById('btnUpdateInventoryCard')?.addEventListener('click', () => {
@@ -9760,7 +10245,7 @@ function setupEventListeners() {
   // Finish button in banner
   document.getElementById('btnFinishInventory')?.addEventListener('click', () => {
     sfx.keypad();
-    const count = state.scannedInventoryPacks.length;
+    const count = (state.scannedInventoryPacks || []).length;
     if (count > 0) {
       showToast(`✓ Updated inventory with ${count} new pack${count > 1 ? 's' : ''}!`, 'success');
       state.scannedInventoryPacks = [];
@@ -9768,6 +10253,11 @@ function setupEventListeners() {
       showToast('Inventory updating complete', 'info');
     }
     setUpdatingInventoryMode(false);
+    renderHeaderAndMetrics();
+    renderDispenserRack();
+    if (typeof window.renderInventoryTable === 'function') {
+      window.renderInventoryTable();
+    }
   });
 
   // Cancel button in header controls
@@ -9787,6 +10277,8 @@ function setupEventListeners() {
     if (state.isUpdatingInventory) {
       state.scannedInventoryPacks = [];
       setUpdatingInventoryMode(false);
+      renderHeaderAndMetrics();
+      renderDispenserRack();
       showToast('Inventory updating canceled', 'info');
     }
   });
@@ -9800,39 +10292,8 @@ function setupEventListeners() {
         e.stopPropagation();
         const rawVal = barcodeInputField.value.trim();
         if (!rawVal) return;
-        sfx.beep();
-        const packNum = rawVal.replace(/\D/g, '') || `PACK-${state.scannedInventoryPacks.length + 1}`;
-        const newPack = {
-          id: Date.now(),
-          packNumber: packNum,
-          gameName: `Georgia Scratch #${(state.scannedInventoryPacks.length % 5) + 1}`,
-          scannedAt: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
-        };
-        state.scannedInventoryPacks.push(newPack);
         barcodeInputField.value = '';
-
-        const count = state.scannedInventoryPacks.length;
-        const bannerCount = document.getElementById('inventoryAddedCount');
-        if (bannerCount) bannerCount.textContent = `${count}`;
-        const lastScanDisplay = document.getElementById('lastScanDisplay');
-        if (lastScanDisplay) lastScanDisplay.textContent = `Packs scanned so far: ${count}`;
-        const largeNumber = document.getElementById('largeStatReadout');
-        if (largeNumber) largeNumber.textContent = `${count}`;
-        const scanTitle = document.getElementById('scanActionTitle');
-        if (scanTitle) scanTitle.textContent = newPack.gameName;
-
-        const emptyState = document.getElementById('invEmptyState');
-        const cardsGrid = document.getElementById('invScannedCardsGrid');
-        if (emptyState) emptyState.style.display = 'none';
-        if (cardsGrid) {
-          cardsGrid.style.display = 'grid';
-          const card = document.createElement('div');
-          card.className = 'scanned-pack-card';
-          card.style.cssText = 'background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 8px; padding: 12px; text-align: left;';
-          card.innerHTML = `<strong style="color: #0f172a; display: block; font-size: 14px;">${newPack.gameName}</strong><span style="color: #64748b; font-size: 12px;">Pack: ${newPack.packNumber} &bull; ${newPack.scannedAt}</span>`;
-          cardsGrid.prepend(card);
-        }
-        showToast(`✓ Scanned ${newPack.gameName} (Pack ${newPack.packNumber})`, 'success');
+        handleUpdatingInventoryScan(rawVal);
       }
     }, true);
   }
@@ -12562,7 +13023,7 @@ function setupEventListeners() {
 
     const totalEl = document.getElementById('modalRepDocTotalAmount');
     if (totalEl) {
-      totalEl.textContent = totalSales > 0 ? `Total $${totalSales.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : 'Total $1,778.00';
+      totalEl.textContent = `Total $${(totalSales || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     }
 
     const metaEl = document.getElementById('modalRepDocMetaLine');
@@ -12738,7 +13199,7 @@ function setupEventListeners() {
       }
     }
 
-    populateShiftReportBreakdown('modal', totalSales, target.tickets || 200);
+    populateShiftReportBreakdown('modal', totalSales, target.tickets || 200, target);
 
     if (typeof modal.showModal === 'function') {
       try {
@@ -15944,6 +16405,10 @@ window.renderDispenserRack = renderDispenserRack;
 window.renderHeaderAndMetrics = renderHeaderAndMetrics;
 window.processScannedBarcode = processScannedBarcode;
 window.openSetTicketDetailsModal = openSetTicketDetailsModal;
+window.activateSlotPack = activateSlotPack;
+window.autoAddInStockPackToDispenser = autoAddInStockPackToDispenser;
+window.findInStockPack = findInStockPack;
+window.getInventoryScreenData = getInventoryScreenData;
 
 // Launch application
 initPOS();

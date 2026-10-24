@@ -90,13 +90,15 @@ async function run() {
         const repSec = document.getElementById('shiftClosedReportSection');
         const repSecVisible = repSec ? window.getComputedStyle(repSec).display === 'block' : false;
 
-        // Totals block
+        // Totals block (Image 3 structure)
         const subtotal = document.getElementById('repDocSubtotal')?.textContent.trim();
-        const confirm = document.getElementById('repDocConfirm')?.textContent.trim();
+        const cashes = (document.getElementById('repDocCashes') || document.getElementById('repDocConfirm'))?.textContent.trim();
         const online = document.getElementById('repDocOnline')?.textContent.trim();
-        const onlineConfirm = document.getElementById('repDocOnlineConfirm')?.textContent.trim();
+        const onlineCashes = (document.getElementById('repDocOnlineCashes') || document.getElementById('repDocOnlineConfirm'))?.textContent.trim();
         const grandSales = document.getElementById('repDocGrandSales')?.textContent.trim();
-        const grandConfirm = document.getElementById('repDocGrandConfirm')?.textContent.trim();
+        const totalCashes = (document.getElementById('repDocTotalCashes') || document.getElementById('repDocGrandConfirm'))?.textContent.trim();
+        const totalDrop = document.getElementById('repDocTotalDrop')?.textContent.trim();
+        const scratchProfit = document.getElementById('repDocScratchProfit')?.textContent.trim();
 
         // Inventory Stats
         const opCount = document.getElementById('repStatOpeningCount')?.textContent.trim();
@@ -122,11 +124,13 @@ async function run() {
           undoHidden,
           repSecVisible,
           subtotal,
-          confirm,
+          cashes,
           online,
-          onlineConfirm,
+          onlineCashes,
           grandSales,
-          grandConfirm,
+          totalCashes,
+          totalDrop,
+          scratchProfit,
           opCount,
           clCount,
           actCount,

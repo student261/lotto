@@ -331,6 +331,8 @@ export function generateLiveDayReport(state) {
   const onlineCashes = Number(state?.onlineCashes || 0) + pastOnlineCashes;
   const totalSales = totalScratcherSales + onlineSales;
   const totalCashes = cashes + onlineCashes;
+  const totalDrop = totalSales - totalCashes;
+  const scratchProfit = totalScratcherSales > 0 ? Math.max(0, (totalScratcherSales * 0.06) - 1.30) : 0;
 
   // Dynamic Inventory Statistics
   const activeSlots = (state?.slots || []).filter(s => s.status === 'ACTIVE' && s.packNumber);
@@ -417,6 +419,8 @@ export function generateLiveDayReport(state) {
     onlineCashes,
     totalSales,
     totalCashes,
+    totalDrop,
+    scratchProfit,
     inventoryStats: {
       openingCount,
       endingCount,

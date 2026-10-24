@@ -432,8 +432,48 @@
 #viewSellCounter .box-card .card-footer-cluster {
   width: 100% !important;
   display: flex !important;
-  align-items: flex-end !important;
-  justify-content: flex-end !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  min-height: 40px !important;
+}
+
+#viewSellCounter .box-card .card-footer-cluster .ticket-sold-count {
+  margin-left: auto !important;
+}
+
+#viewSellCounter .box-card .btn-card-activate {
+  background: #2563eb !important;
+  color: #ffffff !important;
+  border: none !important;
+  border-radius: 6px !important;
+  padding: 6px 14px !important;
+  font-family: var(--font, 'Figtree', sans-serif) !important;
+  font-size: 0.82rem !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.01em !important;
+  cursor: pointer !important;
+  line-height: 1.2 !important;
+  box-shadow: 0 1px 3px rgba(37, 99, 235, 0.3) !important;
+  transition: all 0.15s ease !important;
+  z-index: 5 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+#viewSellCounter .box-card .btn-card-activate:hover {
+  background: #1d4ed8 !important;
+  transform: translateY(-1px) !important;
+  box-shadow: 0 3px 6px rgba(37, 99, 235, 0.45) !important;
+}
+
+#viewSellCounter .box-card .btn-card-activate:active {
+  transform: translateY(0) !important;
+}
+
+[data-theme="dark"] #viewSellCounter .box-card .btn-card-activate {
+  background: #3b82f6 !important;
+  color: #ffffff !important;
 }
 
 #viewSellCounter .box-card .ticket-sold-count {

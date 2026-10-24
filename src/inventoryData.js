@@ -456,11 +456,11 @@ export function getInventoryScreenData(state, activeTab = 'in_stock', searchQuer
 
   // 2. Active Items on the Rack (19 items from state.slots or reference)
   let activeItems = [];
-  const hasLiveSlots = state && Array.isArray(state.slots) && state.slots.some(s => s && s.status === 'ACTIVE' && s.packNumber);
+  const hasLiveSlots = state && Array.isArray(state.slots) && state.slots.some(s => s && s.status === 'ACTIVE' && s.packNumber && !s.needsActivation);
   
   if (hasLiveSlots) {
     state.slots.forEach(s => {
-      if (s && s.status === 'ACTIVE' && s.packNumber) {
+      if (s && s.status === 'ACTIVE' && s.packNumber && !s.needsActivation) {
         const sizeNum = s.packSize || (s.price ? (s.price >= 50 ? 18 : Math.max(1, Math.floor(300 / s.price))) : 100);
         const cur = typeof s.currentTicket === 'number' ? s.currentTicket : (s.startTicket || 0);
         activeItems.push({
