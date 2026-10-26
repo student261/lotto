@@ -10,7 +10,7 @@ import { getInventoryScreenData, REFERENCE_IN_STOCK_PACKS } from './inventoryDat
 import { getHistoryScreenData, getDailyReportData } from './historyData.js';
 import { getSettingsGamesList, REFERENCE_MODERN_SETTINGS_GAMES } from './gamesData.js';
 import { getSettingsPeopleList, getSettingsRolesPeopleList, REFERENCE_MODERN_SETTINGS_PEOPLE, findUserByCredentials, lookupUserAssignedStore, getAllAuthUsers, isCurrentAdmin, verifyAdminCredentials } from './clerksData.js';
-import { initDatabaseSync, checkMySQLStatus, saveShiftReportToDB, syncHistoricalShiftsToDB, logTicketScanToDB } from './dbSync.js';
+import { initDatabaseSync, checkMySQLStatus, saveShiftReportToDB, syncHistoricalShiftsToDB, logTicketScanToDB, loadPOSStateFromDB } from './dbSync.js';
 import { openDaySettlementModal, openPastDaysModal } from './settlementHistoryModals.js';
 
 const BUILD_ID = '2026-10-22-phase0';
@@ -20,12 +20,6 @@ if (typeof document !== 'undefined' && document.documentElement) {
 console.info(`[LottoTrack Pro] Build ID: ${BUILD_ID}`);
 
 let state = loadState();
-if (state && !state.dataCleared && (state.cashierName !== 'Maulik' || state.shiftNumber !== 13 || state.shiftStatus !== 'IN_PROGRESS')) {
-  state.cashierName = 'Maulik';
-  state.shiftNumber = 13;
-  state.shiftStatus = 'IN_PROGRESS';
-  saveState(state);
-}
 window.state = state;
 let undoHistory = [];
 
@@ -1481,6 +1475,21 @@ function initPOS() {
   runStep('setupModernMockupDialogs', setupModernMockupDialogs);
   runStep('setupSidebarAutoCollapse', setupSidebarAutoCollapse);
   _eventListenersInitialized = true;
+
+  // Multi-device synchronization: fetch latest active state from backend server
+  loadPOSStateFromDB().then(serverState => {
+    if (serverState && Array.isArray(serverState.slots)) {
+      const localActive = (state.slots || []).filter(s => s.status === 'ACTIVE' && s.packNumber).length;
+      const serverActive = (serverState.slots || []).filter(s => s.status === 'ACTIVE' && s.packNumber).length;
+      if (serverActive > localActive || (!state.dataCleared && (serverState.shiftNumber || 0) > (state.shiftNumber || 0))) {
+        Object.assign(state, serverState);
+        saveState(state);
+        renderHeaderAndMetrics();
+        renderDispenserRack();
+        renderSlotsRibbon();
+      }
+    }
+  }).catch(() => {});
 }
 
 // -------------------------------------------------------------
@@ -11567,6 +11576,22 @@ function setupEventListeners() {
       state.cashierName = user.name || username;
       saveState(state, currentSid);
     }
+
+    // Multi-device sync: fetch latest active state from server upon login
+    loadPOSStateFromDB().then(serverState => {
+      if (serverState && Array.isArray(serverState.slots)) {
+        const localActive = (state.slots || []).filter(s => s.status === 'ACTIVE' && s.packNumber).length;
+        const serverActive = (serverState.slots || []).filter(s => s.status === 'ACTIVE' && s.packNumber).length;
+        if (serverActive > localActive || (!state.dataCleared && (serverState.shiftNumber || 0) > (state.shiftNumber || 0))) {
+          Object.assign(state, serverState);
+          state.cashierName = user.name || username;
+          saveState(state, currentSid);
+          renderHeaderAndMetrics();
+          renderDispenserRack();
+          renderSlotsRibbon();
+        }
+      }
+    }).catch(() => {});
 
     // Update UI headers, roles, avatar, and store brand
     updateStoreBrandDisplay();

@@ -528,42 +528,99 @@ app.get('/api/shift-report/:id/boxes', async (req, res) => {
   }
 });
 
+// Persistent storage paths for multi-client state & users synchronization
+const DATA_DIR = path.join(__dirname, 'server_data');
+if (!fs.existsSync(DATA_DIR)) {
+  try { fs.mkdirSync(DATA_DIR, { recursive: true }); } catch (_) {}
+}
+const POS_STATE_FILE = path.join(DATA_DIR, 'pos_state.json');
+const USERS_FILE = path.join(DATA_DIR, 'registered_users.json');
+
 // 8. Full POS State Sync (Synchronizes active loaded boxes with Date)
 app.post('/api/sync-pos-state', async (req, res) => {
-  if (!isDbConnected || !pool) return res.status(503).json({ success: false, message: 'MySQL is offline.' });
-
   try {
     const stateObj = req.body;
+    if (!stateObj) return res.status(400).json({ success: false, message: 'Missing state payload' });
     const stateJson = JSON.stringify(stateObj);
 
-    // 1. Raw backup
-    await pool.query(
-      `INSERT INTO pos_state (id, state_data) VALUES (1, ?)
-       ON DUPLICATE KEY UPDATE state_data = VALUES(state_data)`,
-      [stateJson]
-    );
+    // Always persist to local file store so all clients stay synchronized even when MySQL is offline
+    try {
+      fs.writeFileSync(POS_STATE_FILE, stateJson, 'utf8');
+    } catch (fsErr) {
+      console.warn('Warning writing pos_state.json:', fsErr.message);
+    }
 
-    // 2. Real tabular synchronization of active boxes
-    await syncStateToNormalizedTables(stateObj, pool);
+    if (isDbConnected && pool) {
+      try {
+        await pool.query(
+          `INSERT INTO pos_state (id, state_data) VALUES (1, ?)
+           ON DUPLICATE KEY UPDATE state_data = VALUES(state_data)`,
+          [stateJson]
+        );
+        await syncStateToNormalizedTables(stateObj, pool);
+      } catch (dbErr) {
+        console.warn('MySQL state sync warning:', dbErr.message);
+      }
+    }
 
-    res.json({ success: true, message: 'Active dispensers and state synchronized to MySQL!' });
+    res.json({ success: true, message: 'Active dispensers and state synchronized!' });
   } catch (err) {
-    console.error('Error synchronizing POS state to MySQL:', err);
+    console.error('Error synchronizing POS state:', err);
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// 9. Load POS State from MySQL
+// 9. Load POS State from MySQL or fallback JSON store
 app.get('/api/load-pos-state', async (req, res) => {
-  if (!isDbConnected || !pool) return res.status(503).json({ success: false, message: 'MySQL is offline.' });
   try {
-    const [rows] = await pool.query('SELECT state_data, updated_at FROM pos_state WHERE id = 1');
-    if (rows.length > 0 && rows[0].state_data) {
-      const stateObj = JSON.parse(rows[0].state_data);
-      res.json({ success: true, state: stateObj, updatedAt: rows[0].updated_at });
-    } else {
-      res.json({ success: false, message: 'No stored state found in MySQL.' });
+    // 1. Try MySQL first if connected
+    if (isDbConnected && pool) {
+      try {
+        const [rows] = await pool.query('SELECT state_data, updated_at FROM pos_state WHERE id = 1');
+        if (rows.length > 0 && rows[0].state_data) {
+          const stateObj = JSON.parse(rows[0].state_data);
+          return res.json({ success: true, state: stateObj, updatedAt: rows[0].updated_at });
+        }
+      } catch (dbErr) {
+        console.warn('MySQL read error, falling back to JSON file:', dbErr.message);
+      }
     }
+
+    // 2. Fallback to file persistence
+    if (fs.existsSync(POS_STATE_FILE)) {
+      const raw = fs.readFileSync(POS_STATE_FILE, 'utf8');
+      const stat = fs.statSync(POS_STATE_FILE);
+      const stateObj = JSON.parse(raw);
+      return res.json({ success: true, state: stateObj, updatedAt: stat.mtime });
+    }
+
+    res.json({ success: false, message: 'No stored state found in backend.' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 9b. Multi-client User Accounts Sync
+app.post('/api/sync-users', (req, res) => {
+  try {
+    const users = req.body;
+    if (Array.isArray(users)) {
+      fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2), 'utf8');
+      return res.json({ success: true });
+    }
+    res.status(400).json({ success: false, message: 'Expected array of users' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get('/api/load-users', (req, res) => {
+  try {
+    if (fs.existsSync(USERS_FILE)) {
+      const raw = fs.readFileSync(USERS_FILE, 'utf8');
+      return res.json({ success: true, users: JSON.parse(raw) });
+    }
+    res.json({ success: false, message: 'No users file found' });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }

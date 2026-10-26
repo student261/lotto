@@ -157,6 +157,21 @@ export async function logTicketScanToDB(scanData) {
   }
 }
 
+export async function loadPOSStateFromDB() {
+  try {
+    const res = await fetch('/api/load-pos-state', { signal: AbortSignal.timeout(3000) });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.success && data.state) {
+        return data.state;
+      }
+    }
+  } catch (err) {
+    // Silently continue
+  }
+  return null;
+}
+
 /**
  * Periodically monitor database status
  */
