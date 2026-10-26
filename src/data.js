@@ -89,7 +89,8 @@ export const SAMPLE_GAMES = [
   { id: 'g1466', name: 'LIMITED RELS', price: 30, bookValue: 300, packSize: 10, barcodePrefix: '1466' },
   { id: 'g1153', name: 'HIT 100', price: 1, bookValue: 300, packSize: 300, barcodePrefix: '1153' },
   { id: 'g1451', name: '50K EXTREME', price: 2, bookValue: 300, packSize: 150, barcodePrefix: '1451' },
-  { id: 'g1409', name: 'GOLD $500,000', price: 5, bookValue: 300, packSize: 60, barcodePrefix: '1409' }
+  { id: 'g1409', name: 'GOLD $500,000', price: 5, bookValue: 300, packSize: 60, barcodePrefix: '1409' },
+  { id: 'g1917', name: '50X MERRY MONEY', price: 10, bookValue: 300, packSize: 30, barcodePrefix: '1917' }
 ];
 
 export function getStandardPackDetails(price) {
@@ -247,7 +248,7 @@ export function parseLotteryBarcode(raw, customGames = []) {
       checkCode,
       securityCode: sec,
       standardBarcode: `${gameNumber}${packNumber}${checkCode || '0'}${ticketString}`,
-      canonicalId: `${gameNumber}-${packNumber}-${ticketString}`,
+      canonicalId: `${gameNumber}-${packCombined}-${ticketString}`,
       fullId: `${gameNumber}-${packCombined}-${ticketString}(${sec})`,
       displayBarcode: `${gameNumber}-${packCombined}-${ticketString} (${sec})`,
       raw
@@ -288,7 +289,7 @@ export function parseLotteryBarcode(raw, customGames = []) {
       checkCode,
       securityCode: sec,
       standardBarcode: `${gameNumber}${packNumber}${checkCode || '0'}${ticketString}`,
-      canonicalId: `${gameNumber}-${packNumber}-${ticketString}`,
+      canonicalId: `${gameNumber}-${packCombined}-${ticketString}`,
       fullId: `${gameNumber}-${packCombined}-${ticketString}(${sec})`,
       displayBarcode: `${gameNumber}-${packCombined}-${ticketString} (${sec})`,
       raw
@@ -350,7 +351,7 @@ export function parseLotteryBarcode(raw, customGames = []) {
       checkCode,
       securityCode: sec,
       standardBarcode: `${gameNumber}${packNumber}${checkCode || '0'}${ticketString}`,
-      canonicalId: `${gameNumber}-${packNumber}-${ticketString}`,
+      canonicalId: `${gameNumber}-${packCombined}-${ticketString}`,
       fullId: `${gameNumber}-${packCombined}-${ticketString}(${sec})`,
       displayBarcode: `${gameNumber}-${packCombined}-${ticketString} (${sec})`,
       raw
@@ -393,7 +394,7 @@ export function parseLotteryBarcode(raw, customGames = []) {
       checkCode,
       securityCode: sec,
       standardBarcode: `${gameNumber}${packNumber}${checkCode || '0'}${ticketString}`,
-      canonicalId: `${gameNumber}-${packNumber}-${ticketString}`,
+      canonicalId: `${gameNumber}-${packCombined}-${ticketString}`,
       fullId: `${gameNumber}-${packCombined}-${ticketString}(${sec})`,
       displayBarcode: `${gameNumber}-${packCombined}-${ticketString} (${sec})`,
       raw
@@ -426,7 +427,7 @@ export function parseLotteryBarcode(raw, customGames = []) {
         ticketString: null,
         checkCode,
         standardBarcode: `${gameNumber}${packCombined}`,
-        canonicalId: `${gameNumber}-${packNumber}`,
+        canonicalId: `${gameNumber}-${packCombined || packNumber}`,
         fullId: `${gameNumber}-${packNumber}${checkCode ? '-' + checkCode : ''}`,
         raw
       };
@@ -491,7 +492,7 @@ export function parseLotteryBarcode(raw, customGames = []) {
       checkCode,
       securityCode: sec,
       standardBarcode,
-      canonicalId: `${gameNumber}-${packNumber}-${ticketString}`,
+      canonicalId: `${gameNumber}-${packCombined}-${ticketString}`,
       fullId: `${gameNumber}-${packCombined}-${ticketString}(${sec})`,
       displayBarcode: `${gameNumber}-${packCombined}-${ticketString} (${sec})`,
       raw
@@ -598,7 +599,7 @@ export function parseLotteryBarcode(raw, customGames = []) {
       checkCode,
       securityCode: sec,
       standardBarcode: digits,
-      canonicalId: `${gameNumber}-${packNumber}-${ticketString}`,
+      canonicalId: `${gameNumber}-${packCombined}-${ticketString}`,
       fullId: `${gameNumber}-${packCombined}-${ticketString}(${sec})`,
       displayBarcode: `${gameNumber}-${packCombined}-${ticketString} (${sec})`,
       raw
@@ -630,7 +631,7 @@ export function parseLotteryBarcode(raw, customGames = []) {
           checkCode,
           securityCode: sec,
           standardBarcode,
-          canonicalId: `${gameNumber}-${packNumber}-${ticketString}`,
+          canonicalId: `${gameNumber}-${packCombined}-${ticketString}`,
           fullId: `${gameNumber}-${packCombined}-${ticketString}(${sec})`,
           displayBarcode: `${gameNumber}-${packCombined}-${ticketString} (${sec})`,
           raw
@@ -686,7 +687,7 @@ export function parseLotteryBarcode(raw, customGames = []) {
       checkCode,
       securityCode: sec,
       standardBarcode,
-      canonicalId: `${gameNumber}-${packNumber}-${ticketString}`,
+      canonicalId: `${gameNumber}-${packCombined}-${ticketString}`,
       fullId: `${gameNumber}-${packCombined}-${ticketString}(${sec})`,
       displayBarcode: `${gameNumber}-${packCombined}-${ticketString} (${sec})`,
       raw
@@ -794,7 +795,7 @@ export function parseLotteryBarcode(raw, customGames = []) {
         ticketString: '000',
         checkCode,
         securityCode: sec,
-        canonicalId: `${gameNumber}-${packNumber}`,
+        canonicalId: `${gameNumber}-${digits.slice(4, 11)}`,
         fullId: `${gameNumber}-${packNumber}-${checkCode}`,
         standardBarcode: digits,
         displayBarcode: `${gameNumber}-${digits.slice(4, 11)}-000 (${sec})`,
@@ -862,7 +863,7 @@ export function parseLotteryBarcode(raw, customGames = []) {
             ticketNumber: (tix !== null && !isNaN(tix)) ? tix : null,
             ticketString: tixStr,
             checkCode: check,
-            canonicalId: tixStr ? `${g.barcodePrefix}-${pack}-${tixStr}` : `${g.barcodePrefix}-${pack}`,
+            canonicalId: tixStr ? `${g.barcodePrefix}-${(pack && check) ? pack + check : pack}-${tixStr}` : `${g.barcodePrefix}-${(pack && check) ? pack + check : pack}`,
             fullId: check && tixStr ? `${g.barcodePrefix}-${pack}-${check}-${tixStr}` : `${g.barcodePrefix}-${pack}`,
             standardBarcode: tixStr ? `${g.barcodePrefix}${pack}${check || '0'}${tixStr}` : `${g.barcodePrefix}${pack}`,
             raw
@@ -1090,6 +1091,12 @@ export function getInitialState() {
       s.startTicket = rb.startTicket;
       s.ticketsInBox = Math.max(0, rb.packSize - rb.currentTicket);
       s.daysActive = rb.daysActive;
+      const cleanRbName = cleanGameTitle(rb.gameName).toLowerCase();
+      const matchedGame = SAMPLE_GAMES.find(g => cleanGameTitle(g.name).toLowerCase() === cleanRbName);
+      if (matchedGame) {
+        s.gameId = matchedGame.id;
+        s.barcodePrefix = matchedGame.barcodePrefix;
+      }
     }
   });
 
@@ -1198,22 +1205,29 @@ export function loadState(targetStoreId = null) {
             }
           }
 
-          if (s.packNumber && /^\d{7}$/.test(String(s.packNumber).trim())) {
-            s.packNumber = String(s.packNumber).trim().slice(0, 6);
+          // Auto-link barcodePrefix and gameId if missing from legacy saves
+          if (!s.barcodePrefix && s.gameName) {
+            const cleanName = cleanGameTitle(s.gameName).toLowerCase();
+            const matched = SAMPLE_GAMES.find(g => cleanGameTitle(g.name).toLowerCase() === cleanName) ||
+                            (parsed.customGames || []).find(cg => cleanGameTitle(cg.name).toLowerCase() === cleanName);
+            if (matched && matched.barcodePrefix) {
+              s.barcodePrefix = matched.barcodePrefix;
+              if (!s.gameId) s.gameId = matched.id;
+            }
           }
         });
       }
       if (parsed.partialTakeOuts && Array.isArray(parsed.partialTakeOuts)) {
         parsed.partialTakeOuts.forEach(pto => {
-          if (pto.packNumber && /^\d{7}$/.test(String(pto.packNumber).trim())) {
-            pto.packNumber = String(pto.packNumber).trim().slice(0, 6);
+          if (pto.packNumber) {
+            pto.packNumber = String(pto.packNumber).trim();
           }
         });
       }
       if (parsed.soldOutThisShift && Array.isArray(parsed.soldOutThisShift)) {
         parsed.soldOutThisShift.forEach(so => {
-          if (so.packNumber && /^\d{7}$/.test(String(so.packNumber).trim())) {
-            so.packNumber = String(so.packNumber).trim().slice(0, 6);
+          if (so.packNumber) {
+            so.packNumber = String(so.packNumber).trim();
           }
         });
       }

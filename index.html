@@ -3966,7 +3966,7 @@
       <div class="modal-f">
         <button type="button" class="btn" id="cancelBoxAdjustBtn">Close</button>
         <button type="button" class="btn btn-primary" id="btnExecuteMoveBox" style="color: #ffffff;" disabled>Move to box —</button>
-        <button type="button" class="btn btn-danger" id="btnExecuteRemoveBox" style="display: none;">Remove book from box</button>
+        <button type="button" class="btn btn-danger" id="btnExecuteRemoveBox" style="display: none !important;">Remove book from box</button>
       </div>
 
       <!-- Hidden compatibility hooks for existing script lookups -->
@@ -4028,15 +4028,15 @@
         </div>
         <span class="group-l">Last closed shift</span>
         <div class="stats">
-          <div class="stat"><span class="l">Shift</span><span class="v" id="stLastShiftNo">#12</span><span class="s" id="stLastShiftBy">Daniel · closed 10:05 PM</span></div>
-          <div class="stat"><span class="l">Tickets sold</span><span class="v" id="stLastShiftTickets">251</span><span class="s">19 boxes</span></div>
-          <div class="stat"><span class="l">Ticket sales</span><span class="v money" id="stLastShiftSales">$1,512.00</span><span class="s">Email sent</span></div>
+          <div class="stat"><span class="l">Shift</span><span class="v" id="stLastShiftNo">None</span><span class="s" id="stLastShiftBy">No closed shifts yet</span></div>
+          <div class="stat"><span class="l">Tickets sold</span><span class="v" id="stLastShiftTickets">0</span><span class="s" id="stLastShiftBoxes">0 boxes</span></div>
+          <div class="stat"><span class="l">Ticket sales</span><span class="v money" id="stLastShiftSales">$0.00</span><span class="s" id="stLastShiftMail">—</span></div>
         </div>
       </div>
       <div class="modal-f">
         <button type="button" class="btn" id="stViewAllReportsBtn">All reports</button>
         <span class="grow"></span>
-        <button type="button" class="btn btn-dark" id="stEndShiftBtn" style="color: #ffffff;">End Shift</button>
+        <button type="button" class="btn btn-dark" id="stEndShiftBtn" style="background: #0f172a !important; color: #ffffff !important; border: 1px solid #0f172a !important; font-weight: 700 !important; cursor: pointer !important;">End Shift</button>
       </div>
     </div>
   </dialog>
@@ -7235,44 +7235,7 @@
     </div>
   </dialog>
 
-  <!-- 2. Settlement Modal (Matches 02 lines 474-505) -->
-  <dialog id="settlementModernModal" class="lt-modal-dialog">
-    <div class="scrim modal-scrim-wrap" id="settlementModalScrim">
-      <div class="modal" role="dialog" aria-modal="true" onclick="event.stopPropagation()">
-        <div class="modal-h">
-          <span class="icon-wrap" style="background: var(--brand-soft); color: var(--brand);">
-            <svg class="ic ic-lg" viewBox="0 0 24 24"><rect width="20" height="14" x="2" y="5" rx="2"></rect><path d="M2 10h20"></path></svg>
-          </span>
-          <div>
-            <h2>Settlement</h2>
-            <p id="settleModernSub">Shift #13 in progress</p>
-          </div>
-          <button type="button" class="btn btn-ghost icon-btn x" id="closeSettleModernBtn" aria-label="Close" style="margin-left: auto;">
-            <svg class="ic" viewBox="0 0 24 24"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
-          </button>
-        </div>
-        <div class="modal-b">
-          <span class="group-l">This shift</span>
-          <div class="stats">
-            <div class="stat"><span class="l">Boxes scanned</span><span class="v" id="settleThisBoxes">0</span><span class="s" id="settleThisScanNote">of 19 active</span></div>
-            <div class="stat"><span class="l">Tickets sold</span><span class="v" id="settleThisTickets">0</span><span class="s">from scanned boxes</span></div>
-            <div class="stat"><span class="l">Ticket sales</span><span class="v money" id="settleThisSales">$0.00</span><span class="s">final after Get Report</span></div>
-          </div>
-          <span class="group-l" style="margin-top: 6px;">Last closed shift</span>
-          <div class="stats">
-            <div class="stat"><span class="l">Shift</span><span class="v" id="settleLastShiftNo">#12</span><span class="s" id="settleLastShiftMeta">Daniel · closed 10:05 PM</span></div>
-            <div class="stat"><span class="l">Tickets sold</span><span class="v" id="settleLastTickets">251</span><span class="s" id="settleLastBoxes">19 boxes</span></div>
-            <div class="stat"><span class="l">Ticket sales</span><span class="v money" id="settleLastSales">$1,512.00</span><span class="s">Email sent</span></div>
-          </div>
-        </div>
-        <div class="modal-f">
-          <button type="button" class="btn" id="settleAllReportsBtn">All reports</button>
-          <span class="grow"></span>
-          <button type="button" class="btn btn-dark" id="settleEndShiftActionBtn" style="color: #ffffff">End Shift</button>
-        </div>
-      </div>
-    </div>
-  </dialog>
+
 
   <!-- 3. Modern Box Details Modal (Matches 02 lines 540-586) -->
   <dialog id="boxModernDetailsModal" class="lt-modal-dialog">

@@ -467,7 +467,7 @@ dialog::backdrop {
 .ic-xl { width: 32px !important; height: 32px !important; }
 
 .btn {
-  display: inline-flex !important;
+  display: inline-flex;
   align-items: center !important;
   justify-content: center !important;
   gap: 8px !important;
@@ -478,6 +478,10 @@ dialog::backdrop {
   background: var(--surface, #FFFFFF) !important;
   color: var(--ink, #14171C) !important;
   font-weight: 700 !important;
+}
+.btn[style*="display: none"], button[style*="display: none"], .btn[hidden], button[hidden], .is-hidden {
+  display: none !important;
+}
   font-size: 15px !important;
   cursor: pointer !important;
   text-decoration: none !important;
@@ -503,6 +507,55 @@ dialog::backdrop {
 }
 .btn-dark:hover {
   opacity: 0.9 !important;
+}
+#stEndShiftBtn {
+  background: #0f172a !important;
+  border: 1px solid #0f172a !important;
+  color: #ffffff !important;
+  font-weight: 700 !important;
+  cursor: pointer !important;
+}
+#stEndShiftBtn:hover {
+  background: #1e293b !important;
+  border-color: #1e293b !important;
+}
+#stViewAllReportsBtn {
+  background: var(--surface, #FFFFFF) !important;
+  border: 1px solid var(--line-strong, #C9CFD8) !important;
+  color: var(--ink, #14171C) !important;
+  font-weight: 700 !important;
+  cursor: pointer !important;
+}
+#stViewAllReportsBtn:hover {
+  background: var(--surface-2, #F1F3F6) !important;
+}
+#btnExecuteMoveBox {
+  background: var(--brand, #1D4ED8) !important;
+  border: 1px solid var(--brand, #1D4ED8) !important;
+  color: #ffffff !important;
+  font-weight: 700 !important;
+  cursor: pointer !important;
+}
+#btnExecuteMoveBox:hover:not(:disabled) {
+  background: var(--brand-hover, #1A43BC) !important;
+  border-color: var(--brand-hover, #1A43BC) !important;
+}
+#btnExecuteMoveBox:disabled {
+  background: #94a3b8 !important;
+  border-color: #94a3b8 !important;
+  cursor: not-allowed !important;
+  opacity: 0.7 !important;
+}
+#btnExecuteRemoveBox {
+  background: #dc2626 !important;
+  border: 1px solid #dc2626 !important;
+  color: #ffffff !important;
+  font-weight: 700 !important;
+  cursor: pointer !important;
+}
+#btnExecuteRemoveBox:hover {
+  background: #b91c1c !important;
+  border-color: #b91c1c !important;
 }
 .btn-danger {
   background: var(--surface, #FFFFFF) !important;
@@ -1386,6 +1439,24 @@ dialog textarea:focus {
   background: var(--surface-2, #20242B) !important;
   border-color: var(--line, #272D36) !important;
   color: var(--ink-2, #B7BFCA) !important;
+}
+
+[data-theme="dark"] #stEndShiftBtn {
+  background: #2563eb !important;
+  border-color: #2563eb !important;
+  color: #ffffff !important;
+}
+[data-theme="dark"] #stEndShiftBtn:hover {
+  background: #1d4ed8 !important;
+  border-color: #1d4ed8 !important;
+}
+[data-theme="dark"] #stViewAllReportsBtn {
+  background: #20242B !important;
+  border-color: #3E4554 !important;
+  color: #EEF1F5 !important;
+}
+[data-theme="dark"] #stViewAllReportsBtn:hover {
+  background: #272D36 !important;
 }
 
 /* ==========================================================================
