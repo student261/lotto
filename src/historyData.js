@@ -338,10 +338,9 @@ export const REFERENCE_CLOSED_SHIFTS = [
 ];
 
 export function getHistoryScreenData(state) {
-  const isDataCleared = Boolean(state?.dataCleared);
-  const hasLiveHistory = state && Array.isArray(state.shiftHistory) && state.shiftHistory.length > 0;
+  const rawHistory = Array.isArray(state?.shiftHistory) ? state.shiftHistory : [];
 
-  if (isDataCleared && !hasLiveHistory) {
+  if (rawHistory.length === 0) {
     return {
       kpis: {
         totalSales: 0,
@@ -364,62 +363,76 @@ export function getHistoryScreenData(state) {
     };
   }
 
-  let days = hasLiveHistory ? [] : JSON.parse(JSON.stringify(REFERENCE_HISTORY_DAYS));
-
-  if (hasLiveHistory) {
-    const liveHistory = (state.shiftHistory || []).map((h, i) => ({
-      id: h.id || `live_day_${i}`,
-      date: h.date || new Date(h.endedAt || h.startedAt).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }),
-      dateShort: h.dateShort || new Date(h.endedAt || h.startedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-      openClose: h.openClose || `${h.startedAt ? new Date(h.startedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '7:00 AM'} — ${h.endedAt ? new Date(h.endedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '9:40 PM'}`,
-      closedBy: h.cashier || h.closedBy || 'master',
-      tickets: Number(h.totalTicketsSold || h.tickets || 0),
-      sales: Number(h.totalSalesRevenue || h.totalSales || h.sales || 0),
-      isToday: i === 0,
-      soldOutCount: Array.isArray(h.soldOutSnapshot) ? h.soldOutSnapshot.length : 0,
-      newPacksCount: 0
-    }));
-    if (liveHistory.length > 0) {
-      days = liveHistory;
-    }
-  }
-
-  // Live shifts from state prepended
-  const liveShifts = (state?.shiftHistory || []).map((h, i) => {
-    const shiftNum = h.shiftNumber || (14 + i);
+  // Map real shift history records
+  const shifts = rawHistory.map((h, i) => {
+    const shiftNum = h.shiftNumber !== undefined ? h.shiftNumber : (rawHistory.length - i);
     const d = new Date(h.endedAt || h.startedAt || Date.now());
-    const dateStr = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-    const startStr = h.startedAt ? new Date(h.startedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '7:02 AM';
-    const closeStr = h.endedAt ? new Date(h.endedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '1:39 PM';
+    const dateStr = h.date || d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    const startStr = h.startedAt ? new Date(h.startedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '7:00 AM';
+    const closeStr = h.endedAt ? new Date(h.endedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '3:00 PM';
+    const person = h.cashier || h.employee || state?.cashierName || 'Clerk';
+    const tickets = Number(h.totalTicketsSold !== undefined ? h.totalTicketsSold : (h.tickets || 0));
+    const sales = Number(h.totalSalesRevenue !== undefined ? h.totalSalesRevenue : (h.sales || 0));
+
     return {
-      id: `live_shift_${shiftNum}`,
+      id: h.id || `live_shift_${shiftNum}`,
       shift: `#${shiftNum}`,
       shiftNumber: shiftNum,
       date: dateStr,
       day: dateStr,
-      salesperson: h.cashier || 'Maulik',
-      employee: h.cashier || 'Maulik',
+      salesperson: person,
+      employee: person,
       started: startStr,
       closed: closeStr,
-      openClose: `${startStr} — ${closeStr}`,
-      tickets: Number(h.totalTicketsSold || h.tickets || 0),
-      sales: Number(h.totalSalesRevenue || h.totalSales || h.sales || 0),
-      email: 'Sent',
-      emailStatus: 'sent',
-      version: 'Final v1',
-      versionBadge: 'final'
+      openClose: h.openClose || `${startStr} — ${closeStr}`,
+      tickets,
+      sales,
+      email: h.emailStatus === 'pending' ? 'Pending' : 'Sent',
+      emailStatus: h.emailStatus || 'sent',
+      version: h.version || 'Final v1',
+      versionBadge: h.versionBadge || 'final'
     };
   });
 
-  const shifts = hasLiveHistory ? liveShifts : [...liveShifts, ...REFERENCE_CLOSED_SHIFTS];
+  const totalSales = shifts.reduce((acc, s) => acc + (Number(s.sales) || 0), 0);
+  const ticketsSold = shifts.reduce((acc, s) => acc + (Number(s.tickets) || 0), 0);
+  const closedShiftsCount = shifts.length;
 
-  // Calculate metrics
-  const totalSales = 9474.00;
-  const ticketsSold = 2204;
-  const daysCount = 7;
-  const dailyAverage = 14;
-  const bestDayAmount = 1;
-  const bestDayDate = 'original kept';
+  // Group by day for charts and day metrics
+  const dayMap = new Map();
+  shifts.forEach(s => {
+    const dKey = s.date || s.day;
+    if (!dayMap.has(dKey)) {
+      dayMap.set(dKey, {
+        id: `day_${dKey}`,
+        date: dKey,
+        dateShort: dKey,
+        openClose: s.openClose || `${s.started} — ${s.closed}`,
+        closedBy: s.salesperson,
+        tickets: 0,
+        sales: 0,
+        isToday: false,
+        soldOutCount: 0,
+        newPacksCount: 0
+      });
+    }
+    const dayObj = dayMap.get(dKey);
+    dayObj.tickets += s.tickets;
+    dayObj.sales += s.sales;
+  });
+
+  const days = Array.from(dayMap.values());
+  const daysCount = days.length;
+  const dailyAverage = daysCount > 0 ? (totalSales / daysCount) : 0;
+
+  let bestDayAmount = 0;
+  let bestDayDate = '—';
+  days.forEach(d => {
+    if (d.sales > bestDayAmount) {
+      bestDayAmount = d.sales;
+      bestDayDate = d.date;
+    }
+  });
 
   const chartDays = [...days].reverse();
   const maxSales = Math.max(1, ...chartDays.map(d => d.sales || 0));
@@ -429,13 +442,13 @@ export function getHistoryScreenData(state) {
       totalSales,
       daysCount,
       ticketsSold,
-      dailyAverage,
+      dailyAverage: Math.round(dailyAverage),
       bestDayAmount,
       bestDayDate,
-      closedShiftsCount: 14,
-      closedShiftsDays: '7 days',
-      correctedReportsCount: 1,
-      correctedReportsSub: 'original kept'
+      closedShiftsCount,
+      closedShiftsDays: `${daysCount} day${daysCount === 1 ? '' : 's'}`,
+      correctedReportsCount: 0,
+      correctedReportsSub: 'none'
     },
     chart: {
       days: chartDays,
@@ -446,14 +459,15 @@ export function getHistoryScreenData(state) {
   };
 }
 
-export function getDailyReportData(state, selectedDate = 'Oct 17') {
+export function getDailyReportData(state, selectedDate = 'Today') {
   const { shifts } = getHistoryScreenData(state);
-  const normDate = (selectedDate || 'Oct 17').trim().toLowerCase();
+  const normDate = (selectedDate || 'Today').trim().toLowerCase();
 
   const filtered = shifts.filter(s => {
     const sDate = (s.date || s.day || '').toLowerCase();
     if (normDate === 'today') {
-      return sDate.includes('today') || sDate.includes('oct 18') || (s.id && s.id.startsWith('live_'));
+      const todayShort = new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }).toLowerCase();
+      return sDate.includes('today') || sDate === todayShort || (s.id && s.id.startsWith('live_'));
     }
     return sDate.includes(normDate);
   });
@@ -464,7 +478,7 @@ export function getDailyReportData(state, selectedDate = 'Oct 17') {
 
   return {
     date: selectedDate,
-    dateLabel: selectedDate === 'Today' ? 'Today' : selectedDate,
+    dateLabel: selectedDate,
     totalSales,
     totalTickets,
     closedCount,

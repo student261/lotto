@@ -536,50 +536,70 @@ if (!fs.existsSync(DATA_DIR)) {
 const POS_STATE_FILE = path.join(DATA_DIR, 'pos_state.json');
 const USERS_FILE = path.join(DATA_DIR, 'registered_users.json');
 
+function getPosStateFilePath(storeId = 'store_amigo') {
+  const cleanId = String(storeId || 'store_amigo').replace(/[^a-zA-Z0-9_-]/g, '_');
+  if (cleanId === 'store_amigo') {
+    return POS_STATE_FILE;
+  }
+  return path.join(DATA_DIR, `pos_state_${cleanId}.json`);
+}
+
 // 8. Full POS State Sync (Synchronizes active loaded boxes with Date)
 app.post('/api/sync-pos-state', async (req, res) => {
   try {
-    const stateObj = req.body;
-    if (!stateObj) return res.status(400).json({ success: false, message: 'Missing state payload' });
+    const raw = req.body;
+    if (!raw) return res.status(400).json({ success: false, message: 'Missing state payload' });
+    const stateObj = (raw && raw.state) ? raw.state : raw;
+    const storeId = req.query.storeId || raw.storeId || stateObj.storeId || 'store_amigo';
+    stateObj.storeId = storeId;
     const stateJson = JSON.stringify(stateObj);
 
-    // Always persist to local file store so all clients stay synchronized even when MySQL is offline
+    const targetFile = getPosStateFilePath(storeId);
     try {
-      fs.writeFileSync(POS_STATE_FILE, stateJson, 'utf8');
+      fs.writeFileSync(targetFile, stateJson, 'utf8');
+      if (storeId === 'store_amigo') {
+        fs.writeFileSync(POS_STATE_FILE, stateJson, 'utf8');
+      }
     } catch (fsErr) {
-      console.warn('Warning writing pos_state.json:', fsErr.message);
+      console.warn(`Warning writing ${targetFile}:`, fsErr.message);
     }
 
     if (isDbConnected && pool) {
       try {
-        await pool.query(
-          `INSERT INTO pos_state (id, state_data) VALUES (1, ?)
-           ON DUPLICATE KEY UPDATE state_data = VALUES(state_data)`,
-          [stateJson]
-        );
-        await syncStateToNormalizedTables(stateObj, pool);
+        if (storeId === 'store_amigo') {
+          await pool.query(
+            `INSERT INTO pos_state (id, state_data) VALUES (1, ?)
+             ON DUPLICATE KEY UPDATE state_data = VALUES(state_data)`,
+            [stateJson]
+          );
+          await syncStateToNormalizedTables(stateObj, pool);
+        }
       } catch (dbErr) {
         console.warn('MySQL state sync warning:', dbErr.message);
       }
     }
 
-    res.json({ success: true, message: 'Active dispensers and state synchronized!' });
+    res.json({ success: true, storeId, message: `Active dispensers and state synchronized for store ${storeId}!` });
   } catch (err) {
     console.error('Error synchronizing POS state:', err);
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// 9. Load POS State from MySQL or fallback JSON store
+// 9. Load POS State from MySQL or fallback JSON store (Isolated per storeId)
 app.get('/api/load-pos-state', async (req, res) => {
   try {
-    // 1. Try MySQL first if connected
-    if (isDbConnected && pool) {
+    const storeId = req.query.storeId || 'store_amigo';
+    const targetFile = getPosStateFilePath(storeId);
+
+    // 1. Try MySQL first if store_amigo and connected
+    if (storeId === 'store_amigo' && isDbConnected && pool) {
       try {
         const [rows] = await pool.query('SELECT state_data, updated_at FROM pos_state WHERE id = 1');
         if (rows.length > 0 && rows[0].state_data) {
           const stateObj = JSON.parse(rows[0].state_data);
-          return res.json({ success: true, state: stateObj, updatedAt: rows[0].updated_at });
+          stateObj.storeId = 'store_amigo';
+          return res.json({ success: true, storeId: 'store_amigo', state: stateObj, updatedAt: rows[0].updated_at });
         }
       } catch (dbErr) {
         console.warn('MySQL read error, falling back to JSON file:', dbErr.message);
@@ -587,14 +607,42 @@ app.get('/api/load-pos-state', async (req, res) => {
     }
 
     // 2. Fallback to file persistence
-    if (fs.existsSync(POS_STATE_FILE)) {
-      const raw = fs.readFileSync(POS_STATE_FILE, 'utf8');
-      const stat = fs.statSync(POS_STATE_FILE);
+    if (fs.existsSync(targetFile)) {
+      const raw = fs.readFileSync(targetFile, 'utf8');
+      const stat = fs.statSync(targetFile);
       const stateObj = JSON.parse(raw);
-      return res.json({ success: true, state: stateObj, updatedAt: stat.mtime });
+      stateObj.storeId = storeId;
+      return res.json({ success: true, storeId, state: stateObj, updatedAt: stat.mtime });
     }
 
-    res.json({ success: false, message: 'No stored state found in backend.' });
+    res.json({ success: false, storeId, message: `No stored state found in backend for store ${storeId}.` });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 9a. Clear POS State across server & database (Isolated per storeId)
+app.post('/api/clear-pos-state', async (req, res) => {
+  try {
+    const storeId = req.query.storeId || req.body?.storeId || 'store_amigo';
+    const targetFile = getPosStateFilePath(storeId);
+    if (fs.existsSync(targetFile)) {
+      try { fs.unlinkSync(targetFile); } catch (_) {}
+    }
+    if (storeId === 'store_amigo') {
+      if (fs.existsSync(POS_STATE_FILE)) {
+        try { fs.unlinkSync(POS_STATE_FILE); } catch (_) {}
+      }
+      if (isDbConnected && pool) {
+        try {
+          await pool.query('DELETE FROM pos_state WHERE id = 1');
+          await pool.query('DELETE FROM active_dispensers');
+        } catch (dbErr) {
+          console.warn('MySQL clear warning:', dbErr.message);
+        }
+      }
+    }
+    res.json({ success: true, storeId, message: `Server POS state cleared for store ${storeId}!` });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }

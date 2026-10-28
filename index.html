@@ -3422,12 +3422,11 @@
         <header class="settings-page-header-new">
           <div class="settings-header-titles">
             <h1 class="page-main-title">Settings</h1>
-            <p class="page-subtitle">Owner only &middot; store, boxes, games and people</p>
+            <p class="page-subtitle">Owner only &middot; store, boxes and people</p>
           </div>
           <div class="settings-top-tabs-switcher" id="settingsTopTabsSwitcher">
             <button type="button" class="btn-settings-top-tab active" data-tab="store_email">Store &amp; email</button>
             <button type="button" class="btn-settings-top-tab" data-tab="boxes">Boxes</button>
-            <button type="button" class="btn-settings-top-tab" data-tab="games">Games</button>
             <button type="button" class="btn-settings-top-tab" data-tab="people">People</button>
             <button type="button" class="btn-settings-top-tab" data-tab="cleardata">Clear data</button>
           </div>
@@ -3897,7 +3896,7 @@
       <div class="modal-h">
         <span class="icon-wrap" id="boxDetailNumBadge" style="font-size: 20px; font-weight: 800;">6</span>
         <div>
-          <h2 id="box-h">Box <span id="boxDetailBoxNumText">6</span> &middot; <span id="boxDetailGameName">Cross Word</span></h2>
+          <h2 id="box-h"><span id="boxDetailHeaderPrefix">Box </span><span id="boxDetailBoxNumText">6</span> &middot; <span id="boxDetailGameName">Cross Word</span></h2>
           <p id="boxDetailSubtitle">Pack 935561 &middot; $3 a ticket</p>
         </div>
         <button class="btn btn-ghost icon-btn x" id="closeBoxAdjustBtn" type="button" aria-label="Close">
@@ -3926,19 +3925,50 @@
 
         <div class="tabs" role="tablist">
           <button type="button" class="tab on" id="tabBoxMove" role="tab">
-            <svg class="ic ic-sm" viewBox="0 0 24 24"><path d="m16 3 4 4-4 4"></path><path d="M20 7H4"></path><path d="m8 21-4-4 4-4"></path><path d="M4 17h16"></path></svg> Change box
+            <svg class="ic ic-sm" viewBox="0 0 24 24"><path d="m16 3 4 4-4 4"></path><path d="M20 7H4"></path><path d="m8 21-4-4 4-4"></path><path d="M4 17h16"></path></svg> <span id="tabBoxMoveText">Change box</span>
+          </button>
+          <button type="button" class="tab" id="tabBoxEdit" role="tab">
+            <svg class="ic ic-sm" viewBox="0 0 24 24"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg> Edit details
           </button>
           <button type="button" class="tab" id="tabBoxRemove" role="tab">
-            <svg class="ic ic-sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="m4.9 4.9 14.2 14.2"></path></svg> Remove book
+            <svg class="ic ic-sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="m4.9 4.9 14.2 14.2"></path></svg> <span id="tabBoxRemoveText">Remove book</span>
           </button>
         </div>
 
         <!-- Move Tab -->
         <div id="boxMoveTabContent">
           <div class="field">
-            <label style="font-weight: 700; font-size: 13px; color: var(--ink-2); margin-bottom: 6px; display: block;">Move this book to an empty box</label>
+            <label id="boxMoveTabLabel" style="font-weight: 700; font-size: 13px; color: var(--ink-2); margin-bottom: 6px; display: block;">Move this book to an empty box</label>
             <div class="pick" id="boxMovePickChips" style="display: flex; flex-wrap: wrap; gap: 6px; max-height: 140px; overflow-y: auto; padding: 4px 0;">
               <!-- Empty box chips dynamically populated -->
+            </div>
+          </div>
+        </div>
+
+        <!-- Edit Tab -->
+        <div id="boxEditTabContent" style="display: none;">
+          <div class="two" style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
+            <div class="field">
+              <label for="boxEditPosInput" style="font-weight: 700; font-size: 13px; color: var(--ink-2);">Current position</label>
+              <input id="boxEditPosInput" class="input mono" placeholder="000" maxlength="3" style="font-family: var(--mono); font-weight: 700;">
+              <span class="hint" style="font-size: 12px; color: var(--ink-3);">Current top ticket number</span>
+            </div>
+            <div class="field">
+              <label for="boxEditPriceInput" style="font-weight: 700; font-size: 13px; color: var(--ink-2);">Price ($)</label>
+              <input id="boxEditPriceInput" type="number" min="1" step="1" class="input mono" placeholder="1" style="font-family: var(--mono); font-weight: 700;">
+              <span class="hint" style="font-size: 12px; color: var(--ink-3);">Ticket price</span>
+            </div>
+          </div>
+          <div class="two" style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+            <div class="field">
+              <label for="boxEditPackSizeInput" style="font-weight: 700; font-size: 13px; color: var(--ink-2);">Pack size</label>
+              <input id="boxEditPackSizeInput" type="number" min="1" step="1" class="input mono" placeholder="100" style="font-family: var(--mono); font-weight: 700;">
+              <span class="hint" style="font-size: 12px; color: var(--ink-3);">Total tickets in pack</span>
+            </div>
+            <div class="field">
+              <label for="boxEditGameNameInput" style="font-weight: 700; font-size: 13px; color: var(--ink-2);">Game name</label>
+              <input id="boxEditGameNameInput" class="input" placeholder="Game name" style="font-weight: 700;">
+              <span class="hint" style="font-size: 12px; color: var(--ink-3);">Game title</span>
             </div>
           </div>
         </div>
@@ -3946,12 +3976,12 @@
         <!-- Remove Tab -->
         <div id="boxRemoveTabContent" style="display: none;">
           <div class="two" style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
-            <div class="field">
+            <div class="field" id="boxRemovePosField">
               <label for="rmPosInput" style="font-weight: 700; font-size: 13px; color: var(--ink-2);">Current position</label>
               <input id="rmPosInput" class="input mono" placeholder="000" maxlength="3" style="font-family: var(--mono); font-weight: 700;">
               <span class="hint" style="font-size: 12px; color: var(--ink-3);">Scan the top ticket so sold tickets still count</span>
             </div>
-            <div class="field">
+            <div class="field" id="boxRemoveReasonField">
               <label style="font-weight: 700; font-size: 13px; color: var(--ink-2);">Reason</label>
               <div class="pick" id="boxRemoveReasonChips" style="display: flex; flex-wrap: wrap; gap: 6px;">
                 <button type="button" class="chip on" data-reason="Discontinued">Discontinued</button>
@@ -3966,6 +3996,7 @@
       <div class="modal-f">
         <button type="button" class="btn" id="cancelBoxAdjustBtn">Close</button>
         <button type="button" class="btn btn-primary" id="btnExecuteMoveBox" style="color: #ffffff;" disabled>Move to box —</button>
+        <button type="button" class="btn btn-primary" id="btnExecuteSaveBoxEdit" style="display: none !important; color: #ffffff;">Save changes</button>
         <button type="button" class="btn btn-danger" id="btnExecuteRemoveBox" style="display: none !important;">Remove book from box</button>
       </div>
 
@@ -5145,41 +5176,58 @@
         </div>
       </div>
 
-      <!-- Box Selection Card -->
-      <div class="lotto-box-select-card">
-        <div class="lotto-card-label" style="margin-bottom: 6px;">
-          Choose Dispenser Box #
-        </div>
-        <div class="lotto-box-input-row">
-          <span class="lotto-box-prefix">BOX #</span>
-          <div class="lotto-box-input-wrap">
-            <input 
-              type="number" 
-              id="setBoxNumberInput" 
-              class="lotto-box-num-input" 
-              min="1" 
-              max="100" 
-              value="1" 
-            >
-            <div class="lotto-stepper-arrows">
-              <button type="button" class="lotto-stepper-btn" id="setBoxStepUp" title="Increase Box Number">▲</button>
-              <button type="button" class="lotto-stepper-btn" id="setBoxStepDown" title="Decrease Box Number">▼</button>
+      <!-- Box Selection & Keypad Card (Image 3 Modern Design) -->
+      <div class="setbox-layout-container" id="setBoxSelectCard">
+        <div class="setbox-left-col">
+          <div class="setbox-input-group">
+            <span class="setbox-label">BOX #</span>
+            <div class="setbox-field-wrap">
+              <input 
+                type="text" 
+                id="setBoxNumberInput" 
+                class="setbox-input" 
+                inputmode="numeric"
+                value="1" 
+                maxlength="3"
+                autocomplete="off"
+              >
+              <div class="setbox-steppers">
+                <button type="button" class="setbox-step-btn" id="setBoxStepUp" title="Increase Box Number">▲</button>
+                <button type="button" class="setbox-step-btn" id="setBoxStepDown" title="Decrease Box Number">▼</button>
+              </div>
             </div>
           </div>
-        </div>
 
-        <!-- Quick Box Selection Shortcuts -->
-        <div class="lotto-suggestions-wrap">
-          <div class="lotto-suggestions-label">QUICK SUGGESTIONS:</div>
-          <div id="setBoxQuickSuggestions" class="lotto-suggestions-list">
-            <!-- Filled dynamically -->
+          <div class="setbox-action-btns">
+            <button type="button" class="setbox-btn-not-in-box" id="btnSetBoxNotInBox">Not In Box</button>
+            <button type="button" class="setbox-btn-add" id="btnSetBoxConfirm">Add</button>
           </div>
         </div>
 
-        <div class="lotto-scanner-subhint">
-          💡 You can also scan any Box barcode now to set instantly.
+        <div class="setbox-keypad-card">
+          <div class="setbox-keypad-top">
+            <button type="button" class="setbox-key" data-key="clear">Clear</button>
+            <button type="button" class="setbox-key" data-key="backspace">Backspace</button>
+          </div>
+          <div class="setbox-keypad-grid">
+            <button type="button" class="setbox-key" data-key="7">7</button>
+            <button type="button" class="setbox-key" data-key="8">8</button>
+            <button type="button" class="setbox-key" data-key="9">9</button>
+            <button type="button" class="setbox-key" data-key="4">4</button>
+            <button type="button" class="setbox-key" data-key="5">5</button>
+            <button type="button" class="setbox-key" data-key="6">6</button>
+            <button type="button" class="setbox-key" data-key="1">1</button>
+            <button type="button" class="setbox-key" data-key="2">2</button>
+            <button type="button" class="setbox-key" data-key="3">3</button>
+            <button type="button" class="setbox-key" data-key="0">0</button>
+            <button type="button" class="setbox-key" data-key=".">.</button>
+            <button type="button" class="setbox-key setbox-key-enter" data-key="enter">Enter</button>
+          </div>
         </div>
       </div>
+
+      <!-- Quick suggestions and scanner hint preserved for compatibility -->
+      <div id="setBoxQuickSuggestions" style="display:none !important;" aria-hidden="true"></div>
     </div>
 
     <div class="lotto-step-footer">
@@ -5187,13 +5235,7 @@
         <span>←</span>
         <span>Back</span>
       </button>
-      <div style="display: flex; gap: 8px;">
-        <button type="button" class="lotto-btn-secondary" id="btnCancelSetBox">Cancel</button>
-        <button type="button" id="btnSetBoxConfirm" class="lotto-btn-confirm">
-          <span>✓</span>
-          <span>Set into Box</span>
-        </button>
-      </div>
+      <button type="button" class="lotto-btn-secondary" id="btnCancelSetBox">Cancel</button>
     </div>
   </dialog>
 

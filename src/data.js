@@ -1,5 +1,5 @@
 // State Management & Lottery POS Data Model
-import { syncPOSStateToDB } from './dbSync.js';
+import { syncPOSStateToDB, clearPOSStateOnDB } from './dbSync.js';
 
 const STORAGE_KEY = 'lotto_track_pos_data_v3';
 
@@ -105,6 +105,46 @@ export function getStandardPackDetails(price) {
   return { bookValue, packSize };
 }
 
+export function calculateSlotSoldTickets(slot, closingTicket = null, closingSecurityCode = null) {
+  if (!slot) return 0;
+  const start = (slot.startTicket !== undefined && slot.startTicket !== null) ? Number(slot.startTicket) : 0;
+  const current = (closingTicket !== null && closingTicket !== undefined)
+    ? Number(closingTicket)
+    : ((slot.currentTicket !== undefined && slot.currentTicket !== null) ? Number(slot.currentTicket) : start);
+
+  const std = getStandardPackDetails(slot.price || 1);
+  const packSize = slot.packSize || std.packSize || 100;
+
+  // 1. If start equals current, ticket position did not change (0 sales)
+  if (start === current) {
+    const startSec = slot.startSecurityCode || slot.securityCode;
+    const currSec = closingSecurityCode || slot.currentSecurityCode;
+    if (startSec && currSec && String(startSec).trim() !== String(currSec).trim()) {
+      const numStart = parseInt(String(startSec).replace(/[^0-9]/g, ''), 10);
+      const numCurr = parseInt(String(currSec).replace(/[^0-9]/g, ''), 10);
+      if (!isNaN(numStart) && !isNaN(numCurr)) {
+        const pinDelta = Math.abs(numCurr - numStart);
+        if (pinDelta > 0 && pinDelta <= 5) {
+          return pinDelta;
+        }
+      }
+    }
+    return 0;
+  }
+
+  // 2. Fresh countdown pack started at 0, top ticket scanned at end is packSize - 1 (0 sales)
+  if (start === 0 && (current === packSize - 1 || current === 299 || current === 199 || current === 149 || current === 99 || current === 59 || current === 29)) {
+    return 0;
+  }
+
+  // 3. Fresh countdown pack started at 0, top ticket is in upper half of roll
+  if (start === 0 && current > (packSize / 2)) {
+    return Math.max(0, (packSize - 1) - current);
+  }
+
+  return Math.abs(start - current);
+}
+
 export function cleanGameTitle(name) {
   if (!name) return '';
   let s = String(name).trim();
@@ -167,10 +207,10 @@ export function computeLotterySeriesCode(gamePrefixOrNumber, ticketNumber, custo
   }
 
   if (!packSize) {
-    if (tix > 150) packSize = 300;
-    else if (tix > 100) packSize = 150;
-    else if (tix > 60) packSize = 100;
-    else if (tix > 30) packSize = 60;
+    if (tix >= 150) packSize = 300;
+    else if (tix >= 100) packSize = 150;
+    else if (tix >= 60) packSize = 100;
+    else if (tix >= 30) packSize = 60;
     else packSize = 30;
   }
 
@@ -1058,25 +1098,25 @@ export function getInitialState() {
   }
 
   const refBoxes = [
-    { boxNumber: 1, gameName: '5X Money', price: 1, packNumber: '128842', packSize: 300, currentTicket: 13, startTicket: 0, daysActive: 2 },
-    { boxNumber: 2, gameName: 'Jr Jumbo', price: 1, packNumber: '745508', packSize: 300, currentTicket: 9, startTicket: 0, daysActive: 2 },
-    { boxNumber: 3, gameName: 'Loteria', price: 2, packNumber: '933093', packSize: 150, currentTicket: 3, startTicket: 0, daysActive: 7 },
-    { boxNumber: 4, gameName: 'Hit 100', price: 2, packNumber: '558845', packSize: 150, currentTicket: 11, startTicket: 0, daysActive: 4 },
-    { boxNumber: 6, gameName: 'Cross Word', price: 3, packNumber: '935561', packSize: 100, currentTicket: 4, startTicket: 0, daysActive: 3 },
-    { boxNumber: 7, gameName: '2026 Happy New', price: 3, packNumber: '558848', packSize: 100, currentTicket: 4, startTicket: 0, daysActive: 12 },
-    { boxNumber: 14, gameName: '50X Money', price: 10, packNumber: '493848', packSize: 30, currentTicket: 11, startTicket: 0, daysActive: 3 },
-    { boxNumber: 17, gameName: 'Gold $500,000', price: 5, packNumber: '176917', packSize: 60, currentTicket: 12, startTicket: 0, daysActive: 2 },
-    { boxNumber: 18, gameName: '25X Tra', price: 5, packNumber: '196515', packSize: 60, currentTicket: 8, startTicket: 0, daysActive: 2 },
-    { boxNumber: 21, gameName: 'Lucky 7s', price: 5, packNumber: '903287', packSize: 60, currentTicket: 7, startTicket: 0, daysActive: 7 },
-    { boxNumber: 22, gameName: 'Epic Riches', price: 10, packNumber: '500022', packSize: 30, currentTicket: 3, startTicket: 0, daysActive: 1 },
-    { boxNumber: 25, gameName: 'Jumbo Bucks Ext', price: 50, packNumber: '593958', packSize: 18, currentTicket: 1, startTicket: 0, daysActive: 2 },
-    { boxNumber: 27, gameName: 'Cash 500,000', price: 50, packNumber: '277184', packSize: 20, currentTicket: 4, startTicket: 0, daysActive: 21 },
-    { boxNumber: 56, gameName: 'Hit 1000', price: 20, packNumber: '568218', packSize: 15, currentTicket: 11, startTicket: 0, daysActive: 4 },
-    { boxNumber: 57, gameName: 'Frogger', price: 5, packNumber: '572198', packSize: 60, currentTicket: 8, startTicket: 0, daysActive: 2 },
-    { boxNumber: 60, gameName: 'Jumbo Bucks', price: 2, packNumber: '600871', packSize: 150, currentTicket: 8, startTicket: 0, daysActive: 12 },
-    { boxNumber: 61, gameName: '10X Money', price: 2, packNumber: '610455', packSize: 150, currentTicket: 10, startTicket: 0, daysActive: 2 },
-    { boxNumber: 62, gameName: 'Spicy Hot Cash', price: 2, packNumber: '620913', packSize: 150, currentTicket: 9, startTicket: 0, daysActive: 7 },
-    { boxNumber: 63, gameName: 'Jackpots', price: 2, packNumber: '631482', packSize: 150, currentTicket: 52, startTicket: 40, daysActive: 21 }
+    { boxNumber: 1, gameName: '5X Money', price: 1, packNumber: '128842', packSize: 300, currentTicket: 13, startTicket: 13, daysActive: 2 },
+    { boxNumber: 2, gameName: 'Jr Jumbo', price: 1, packNumber: '745508', packSize: 300, currentTicket: 9, startTicket: 9, daysActive: 2 },
+    { boxNumber: 3, gameName: 'Loteria', price: 2, packNumber: '933093', packSize: 150, currentTicket: 3, startTicket: 3, daysActive: 7 },
+    { boxNumber: 4, gameName: 'Hit 100', price: 2, packNumber: '558845', packSize: 150, currentTicket: 11, startTicket: 11, daysActive: 4 },
+    { boxNumber: 6, gameName: 'Cross Word', price: 3, packNumber: '935561', packSize: 100, currentTicket: 4, startTicket: 4, daysActive: 3 },
+    { boxNumber: 7, gameName: '2026 Happy New', price: 3, packNumber: '558848', packSize: 100, currentTicket: 4, startTicket: 4, daysActive: 12 },
+    { boxNumber: 14, gameName: '50X Money', price: 10, packNumber: '493848', packSize: 30, currentTicket: 11, startTicket: 11, daysActive: 3 },
+    { boxNumber: 17, gameName: 'Gold $500,000', price: 5, packNumber: '176917', packSize: 60, currentTicket: 12, startTicket: 12, daysActive: 2 },
+    { boxNumber: 18, gameName: '25X Tra', price: 5, packNumber: '196515', packSize: 60, currentTicket: 8, startTicket: 8, daysActive: 2 },
+    { boxNumber: 21, gameName: 'Lucky 7s', price: 5, packNumber: '903287', packSize: 60, currentTicket: 7, startTicket: 7, daysActive: 7 },
+    { boxNumber: 22, gameName: 'Epic Riches', price: 10, packNumber: '500022', packSize: 30, currentTicket: 3, startTicket: 3, daysActive: 1 },
+    { boxNumber: 25, gameName: 'Jumbo Bucks Ext', price: 50, packNumber: '593958', packSize: 18, currentTicket: 1, startTicket: 1, daysActive: 2 },
+    { boxNumber: 27, gameName: 'Cash 500,000', price: 50, packNumber: '277184', packSize: 20, currentTicket: 4, startTicket: 4, daysActive: 21 },
+    { boxNumber: 56, gameName: 'Hit 1000', price: 20, packNumber: '568218', packSize: 15, currentTicket: 11, startTicket: 11, daysActive: 4 },
+    { boxNumber: 57, gameName: 'Frogger', price: 5, packNumber: '572198', packSize: 60, currentTicket: 8, startTicket: 8, daysActive: 2 },
+    { boxNumber: 60, gameName: 'Jumbo Bucks', price: 2, packNumber: '600871', packSize: 150, currentTicket: 8, startTicket: 8, daysActive: 12 },
+    { boxNumber: 61, gameName: '10X Money', price: 2, packNumber: '610455', packSize: 150, currentTicket: 10, startTicket: 10, daysActive: 2 },
+    { boxNumber: 62, gameName: 'Spicy Hot Cash', price: 2, packNumber: '620913', packSize: 150, currentTicket: 9, startTicket: 9, daysActive: 7 },
+    { boxNumber: 63, gameName: 'Jackpots', price: 2, packNumber: '631482', packSize: 150, currentTicket: 52, startTicket: 52, daysActive: 21 }
   ];
 
   refBoxes.forEach(rb => {
@@ -1104,7 +1144,7 @@ export function getInitialState() {
     storeName: 'AMIGO FOOD MART',
     storeAddress: '2300 MOODY RD WARNER ROBINS, GA, 31088',
     shiftNumber: 13,
-    cashierName: 'Maulik',
+    cashierName: 'Admin',
     shiftStatus: 'IN_PROGRESS', // 'IN_PROGRESS' | 'SCANNING_END_SHIFT' | 'SHIFT_ENDED'
     shiftStartedAt: new Date().toISOString(),
     totalSlots: TOTAL_SLOTS,
@@ -1192,16 +1232,24 @@ export function loadState(targetStoreId = null) {
               if (p && p.isValid) {
                 const accuratePack = p.packCombined || p.packNumber;
                 s.packNumber = accuratePack;
-                if ((s.startTicket === 0 || s.startTicket === null) && firstValid.ticketNumber > 0) {
-                  s.startTicket = firstValid.ticketNumber;
-                  s.currentTicket = firstValid.ticketNumber;
+                if ((s.startTicket === 0 || s.startTicket === null || s.startTicket === undefined) && p.ticketNumber !== null && p.ticketNumber !== undefined) {
+                  s.startTicket = p.ticketNumber;
+                  s.currentTicket = p.ticketNumber;
                 }
-                if (firstValid.securityCode && (!s.startSecurityCode || s.startSecurityCode === '000')) {
-                  s.startSecurityCode = firstValid.securityCode;
-                  s.securityCode = firstValid.securityCode;
-                  s.currentSecurityCode = firstValid.securityCode;
+                const sec = p.securityCode || (firstValid && firstValid.securityCode);
+                if (sec && (!s.startSecurityCode || s.startSecurityCode === '000')) {
+                  s.startSecurityCode = sec;
+                  s.securityCode = sec;
+                  s.currentSecurityCode = sec;
                 }
               }
+            }
+          }
+
+          // If active box has uninitialized or 0 startTicket while currentTicket > 0, align them to avoid phantom sales
+          if (s.status === 'ACTIVE' && s.packNumber) {
+            if ((s.startTicket === undefined || s.startTicket === null || s.startTicket === 0) && typeof s.currentTicket === 'number' && s.currentTicket > 0) {
+              s.startTicket = s.currentTicket;
             }
           }
 
@@ -1245,23 +1293,38 @@ export function loadState(targetStoreId = null) {
 
   // If this store doesn't have state yet:
   const stores = getStoresList();
-  const storeMeta = stores.find(st => st.id === storeId) || DEFAULT_STORES[0];
+  const cleanId = String(storeId).replace(/^store_/, '').replace(/[^a-zA-Z0-9_]/g, '_');
+  const dispName = cleanId.charAt(0).toUpperCase() + cleanId.slice(1);
+  const storeMeta = stores.find(st => st.id === storeId) || {
+    id: storeId,
+    name: (storeId === 'store_amigo') ? 'AMIGO FOOD MART' : `${dispName.toUpperCase()} STORE`,
+    address: (storeId === 'store_amigo') ? '2300 MOODY RD WARNER ROBINS, GA, 31088' : `${dispName} Location`,
+    retailerNumber: (storeId === 'store_amigo') ? 'GA-89412' : `GA-${Math.floor(10000 + Math.random() * 90000)}`,
+    phone: (storeId === 'store_amigo') ? '(478) 923-4567' : '(555) 000-0000',
+    totalBoxes: 65,
+    status: 'ACTIVE'
+  };
   const fresh = (storeId === 'store_amigo') ? getInitialState() : getCleanEmptyState({
+    storeId: storeId,
     storeName: storeMeta.name,
     storeAddress: storeMeta.address,
     retailerNumber: storeMeta.retailerNumber,
-    totalSlots: storeMeta.totalBoxes || 60
+    totalSlots: storeMeta.totalBoxes || 65
   });
+  fresh.storeId = storeId;
   saveState(fresh, storeId);
   return fresh;
 }
 
 export function saveState(state, targetStoreId = null) {
-  const storeId = targetStoreId || getCurrentStoreId();
+  const storeId = targetStoreId || (state && state.storeId) || getCurrentStoreId();
+  if (state) {
+    state.storeId = storeId;
+  }
   const key = getStoreStorageKey(storeId);
   try {
     localStorage.setItem(key, JSON.stringify(state));
-    // Asynchronously synchronize state backup to MySQL
+    // Asynchronously synchronize state backup to backend
     syncPOSStateToDB(state);
   } catch (e) {
     console.error('Failed to save state to localStorage:', e);
@@ -1292,9 +1355,12 @@ export function getCleanEmptyState(existingState = null) {
     });
   }
 
-  const storeName = existingState?.storeName || 'AMIGO FOOD MART';
-  const storeAddress = existingState?.storeAddress || '2300 MOODY RD WARNER ROBINS, GA, 31088';
-  const retailerNumber = existingState?.retailerNumber || '[YOUR RETAILER #]';
+  const storeId = existingState?.storeId || 'store_amigo';
+  const cleanId = String(storeId).replace(/^store_/, '').replace(/[^a-zA-Z0-9_]/g, '_');
+  const dispName = cleanId.charAt(0).toUpperCase() + cleanId.slice(1);
+  const storeName = existingState?.storeName || ((storeId === 'store_amigo') ? 'AMIGO FOOD MART' : `${dispName.toUpperCase()} STORE`);
+  const storeAddress = existingState?.storeAddress || ((storeId === 'store_amigo') ? '2300 MOODY RD WARNER ROBINS, GA, 31088' : `${dispName} Location`);
+  const retailerNumber = existingState?.retailerNumber || ((storeId === 'store_amigo') ? 'GA-89412' : `GA-${Math.floor(10000 + Math.random() * 90000)}`);
   const registerName = existingState?.registerName || 'Register 1';
   const cashierName = existingState?.cashierName || 'master';
   const settings = existingState?.settings ? { ...existingState.settings } : {
@@ -1311,6 +1377,7 @@ export function getCleanEmptyState(existingState = null) {
   };
 
   return {
+    storeId,
     storeName,
     storeAddress,
     retailerNumber,
@@ -1357,7 +1424,9 @@ export function resetToDefaults() {
 }
 
 export function resetToCleanState(existingState = null) {
+  const storeId = (existingState && existingState.storeId) ? existingState.storeId : getCurrentStoreId();
   const empty = getCleanEmptyState(existingState);
+  empty.storeId = storeId;
   empty.dataCleared = true;
   empty.shiftStatus = 'SHIFT_ENDED';
   empty.shiftHistory = [];
@@ -1368,18 +1437,24 @@ export function resetToCleanState(existingState = null) {
   empty.partialTakeOuts = [];
   empty.soldBarcodes = [];
   empty.shiftNumber = 1;
-  const storeId = getCurrentStoreId();
   const storeKey = getStoreStorageKey(storeId);
   try {
-    localStorage.removeItem(STORAGE_KEY);
-    localStorage.removeItem('lotto_track_pos_data_v1');
-    localStorage.removeItem('lotto_track_pos_data_v2');
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(empty));
-    localStorage.setItem(storeKey, JSON.stringify(empty));
+    if (storeId === 'store_amigo') {
+      localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem('lotto_track_pos_data_v1');
+      localStorage.removeItem('lotto_track_pos_data_v2');
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(empty));
+    } else {
+      localStorage.removeItem(storeKey);
+      localStorage.setItem(storeKey, JSON.stringify(empty));
+    }
   } catch (e) {
     console.error('Failed to clear storage:', e);
   }
-  syncPOSStateToDB(empty);
+  try {
+    clearPOSStateOnDB(storeId);
+  } catch (_) {}
+  syncPOSStateToDB(empty, true);
   return empty;
 }
 

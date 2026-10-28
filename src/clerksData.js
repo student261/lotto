@@ -3,33 +3,29 @@
 
 export const REFERENCE_SETTINGS_PEOPLE = [
   {
-    id: 'clk_master',
-    name: 'master',
-    role: 'Owner',
-    roleDesc: 'Owner · can change settings and clear data',
+    id: 'clk_admin',
+    name: 'Admin',
+    signInName: 'admin',
+    role: 'Owner / Admin',
+    roleDesc: 'Everything: rules, people, corrections, backups, all reports',
     pin: '1234'
   },
   {
-    id: 'clk_priya',
-    name: 'Priya',
-    role: 'Clerk',
-    roleDesc: 'Clerk · can sell, receive packs and end the day',
-    pin: '0000'
-  },
-  {
-    id: 'clk_carlos',
-    name: 'Carlos',
-    role: 'Clerk',
-    roleDesc: 'Clerk · can sell, receive packs and end the day',
-    pin: '0000'
+    id: 'clk_master',
+    name: 'master',
+    signInName: 'master',
+    role: 'Owner',
+    roleDesc: 'Owner · can change settings and clear data',
+    pin: '1234'
   }
 ];
 
 export const REFERENCE_SETTINGS_ROLES_PEOPLE = [
   {
-    id: 'clk_master',
-    initial: 'M',
-    name: 'master',
+    id: 'clk_admin',
+    initial: 'A',
+    name: 'Admin',
+    signInName: 'admin',
     role: 'Owner / Admin',
     roleBadgeClass: 'badge-role-admin',
     canDo: 'Everything: rules, people, corrections, backups, all reports',
@@ -39,52 +35,17 @@ export const REFERENCE_SETTINGS_ROLES_PEOPLE = [
     pin: '1234'
   },
   {
-    id: 'clk_carlos',
-    initial: 'C',
-    name: 'Carlos',
-    role: 'Shift Manager',
-    roleBadgeClass: 'badge-role-manager',
-    canDo: 'Activate, move boxes, close and start shifts, update inventory, approve overrides and corrections',
-    stores: 'Amigo Food Mart',
-    status: 'Active',
-    statusClass: 'badge-status-active',
-    pin: '0000'
-  },
-  {
-    id: 'clk_priya',
-    initial: 'P',
-    name: 'Priya',
-    role: 'Cashier',
-    roleBadgeClass: 'badge-role-cashier',
-    canDo: 'Scan and sell, activate packs, close her own shift, see her own totals',
-    stores: 'Amigo Food Mart',
-    status: 'Active',
-    statusClass: 'badge-status-active',
-    pin: '0000'
-  },
-  {
-    id: 'clk_dana',
-    initial: 'D',
-    name: 'Dana',
-    role: 'Auditor',
-    roleBadgeClass: 'badge-role-auditor',
-    canDo: 'Read-only: reports, history and audit trail, export where allowed',
+    id: 'clk_master',
+    initial: 'M',
+    name: 'master',
+    signInName: 'master',
+    role: 'Owner',
+    roleBadgeClass: 'badge-role-owner',
+    canDo: 'Owner · can change settings and clear data',
     stores: 'All stores',
     status: 'Active',
     statusClass: 'badge-status-active',
-    pin: '0000'
-  },
-  {
-    id: 'clk_luis',
-    initial: 'L',
-    name: 'Luis',
-    role: 'Cashier',
-    roleBadgeClass: 'badge-role-cashier',
-    canDo: '—',
-    stores: 'Amigo Food Mart',
-    status: 'Inactive',
-    statusClass: 'badge-status-inactive',
-    pin: '0000'
+    pin: '1234'
   }
 ];
 
@@ -104,72 +65,6 @@ export function getSettingsRolesPeopleList(state) {
 
 export const REFERENCE_MODERN_SETTINGS_PEOPLE = [
   {
-    name: 'Maulik',
-    signInName: 'maulik',
-    role: 'Owner',
-    roleBadgeClass: 'badge-role-owner',
-    canDo: 'Everything: inventory, activate and move packs, settings, all reports, retry emails.',
-    active: true,
-    pin: '1234',
-    storeId: 'store_amigo',
-    storeName: 'Amigo Food Mart'
-  },
-  {
-    name: 'Rosa',
-    signInName: 'rosa',
-    role: 'Salesperson',
-    roleBadgeClass: 'badge-role-salesperson',
-    canDo: 'Start and end their shift, scan boxes, close the shift, see reports. Cannot change prices or stock.',
-    active: true,
-    pin: '1234',
-    storeId: 'store_amigo',
-    storeName: 'Amigo Food Mart'
-  },
-  {
-    name: 'Daniel',
-    signInName: 'daniel',
-    role: 'Salesperson',
-    roleBadgeClass: 'badge-role-salesperson',
-    canDo: 'Start and end their shift, scan boxes, close the shift, see reports. Cannot change prices or stock.',
-    active: true,
-    pin: '1234',
-    storeId: 'store_amigo',
-    storeName: 'Amigo Food Mart'
-  },
-  {
-    name: 'Carlos',
-    signInName: 'carlos',
-    role: 'Shift Manager',
-    roleBadgeClass: 'badge-role-manager',
-    canDo: 'Activate, move boxes, close and start shifts, update inventory, approve overrides and corrections',
-    active: true,
-    pin: '1234',
-    storeId: 'store_amigo',
-    storeName: 'Amigo Food Mart'
-  },
-  {
-    name: 'Priya',
-    signInName: 'priya',
-    role: 'Cashier',
-    roleBadgeClass: 'badge-role-cashier',
-    canDo: 'Scan and sell, activate packs, close her own shift, see her own totals',
-    active: true,
-    pin: '1234',
-    storeId: 'store_amigo',
-    storeName: 'Amigo Food Mart'
-  },
-  {
-    name: 'Kevin',
-    signInName: 'kevin',
-    role: 'Salesperson',
-    roleBadgeClass: 'badge-role-salesperson',
-    canDo: 'Start and end their shift, scan boxes, close the shift, see reports. Cannot change prices or stock.',
-    active: true,
-    pin: '1234',
-    storeId: 'store_amigo',
-    storeName: 'Amigo Food Mart'
-  },
-  {
     name: 'Admin',
     signInName: 'admin',
     role: 'Owner / Admin',
@@ -177,6 +72,7 @@ export const REFERENCE_MODERN_SETTINGS_PEOPLE = [
     canDo: 'Everything: rules, people, corrections, backups, all reports',
     active: true,
     pin: '1234',
+    password: '1234',
     storeId: 'store_amigo',
     storeName: 'Amigo Food Mart'
   },
@@ -188,6 +84,7 @@ export const REFERENCE_MODERN_SETTINGS_PEOPLE = [
     canDo: 'Owner · can change settings and clear data',
     active: true,
     pin: '1234',
+    password: '1234',
     storeId: 'store_amigo',
     storeName: 'Amigo Food Mart'
   }
@@ -196,12 +93,30 @@ export const REFERENCE_MODERN_SETTINGS_PEOPLE = [
 const REGISTERED_USERS_KEY = 'lotto_registered_users_db';
 
 export function getRegisteredUsers() {
+  const removedDefaults = new Set(['maulik', 'rosa', 'daniel', 'carlos', 'priya', 'kevin', 'dana', 'luis']);
   try {
     const raw = localStorage.getItem(REGISTERED_USERS_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed;
+        let changed = false;
+        const cleaned = parsed.filter(u => !removedDefaults.has((u.signInName || '').toLowerCase()));
+        cleaned.forEach(u => {
+          const sName = (u.signInName || '').toLowerCase();
+          const isAmigo = sName === 'amigo' || sName === 'admin' || sName === 'master';
+          if (!isAmigo && (!u.storeId || u.storeId === 'store_amigo')) {
+            const cleanId = sName.replace(/[^a-z0-9_]/g, '_');
+            u.storeId = `store_${cleanId}`;
+            u.storeName = `${u.name || cleanId.toUpperCase()} Store`;
+            changed = true;
+          }
+        });
+        if (changed) {
+          saveRegisteredUsers(cleaned);
+        }
+        if (cleaned.length > 0) {
+          return cleaned;
+        }
       }
     }
   } catch (e) {
@@ -231,9 +146,9 @@ export function registerNewUser(username, password) {
 
   const cleanId = normUser.replace(/[^a-z0-9_]/g, '_');
   const displayName = username.trim().charAt(0).toUpperCase() + username.trim().slice(1);
-  const isExplicitTenant = normUser.includes('_owner') || normUser.startsWith('store_');
-  const storeId = isExplicitTenant ? `store_${cleanId}` : 'store_amigo';
-  const storeName = isExplicitTenant ? `${username.trim().toUpperCase()} LOTTO` : 'Amigo Food Mart';
+  const isAmigo = normUser === 'amigo' || normUser === 'admin' || normUser === 'master';
+  const storeId = isAmigo ? 'store_amigo' : `store_${cleanId}`;
+  const storeName = isAmigo ? 'Amigo Food Mart' : `${displayName} Store`;
 
   const newUser = {
     id: `usr_${Date.now()}_${cleanId}`,
@@ -241,8 +156,8 @@ export function registerNewUser(username, password) {
     signInName: normUser,
     password: normPass,
     pin: normPass,
-    role: 'Staff',
-    roleBadgeClass: 'badge-role-cashier',
+    role: isAmigo ? 'Owner' : 'Store Owner',
+    roleBadgeClass: isAmigo ? 'badge-role-owner' : 'badge-role-admin',
     canDo: 'Everything: rules, people, inventory, shifts, all reports',
     active: true,
     storeId: storeId,
@@ -254,29 +169,29 @@ export function registerNewUser(username, password) {
   users.push(newUser);
   saveRegisteredUsers(users);
 
-  // Sync store into lotto_stores_list only if explicit multi-tenant account
-  if (isExplicitTenant) {
+  // Sync new store into lotto_stores_list
+  if (!isAmigo) {
     try {
       const rawStores = localStorage.getItem('lotto_stores_list');
       let stores = rawStores ? JSON.parse(rawStores) : [];
       if (!Array.isArray(stores) || stores.length === 0) {
         stores = [
-          { id: 'store_amigo', name: 'AMIGO FOOD MART', address: '1244 RUSSELL PKWY, WARNER ROBINS, GA, 31088', retailerNumber: 'GA-94102', phone: '(478) 922-4401', totalBoxes: 60, status: 'ACTIVE' },
+          { id: 'store_amigo', name: 'AMIGO FOOD MART', address: '2300 MOODY RD WARNER ROBINS, GA, 31088', retailerNumber: 'GA-89412', phone: '(478) 923-4567', totalBoxes: 65, status: 'ACTIVE' },
           { id: 'store_downtown', name: 'DOWNTOWN QUICK MART', address: '104 N COMMERCIAL BLVD, WARNER ROBINS, GA, 31088', retailerNumber: 'GA-94103', phone: '(478) 953-8821', totalBoxes: 60, status: 'ACTIVE' }
         ];
       }
       if (!stores.some(s => s.id === storeId)) {
         stores.push({
           id: storeId,
-          name: storeName,
-          address: `${displayName} Store`,
+          name: storeName.toUpperCase(),
+          address: `${displayName} Location`,
           retailerNumber: `GA-${Math.floor(10000 + Math.random() * 90000)}`,
           phone: '(555) 000-0000',
-          totalBoxes: 60,
+          totalBoxes: 65,
           status: 'ACTIVE'
         });
+        localStorage.setItem('lotto_stores_list', JSON.stringify(stores));
       }
-      localStorage.setItem('lotto_stores_list', JSON.stringify(stores));
     } catch (e) {
       console.error('Failed to sync store to stores list:', e);
     }
@@ -359,8 +274,10 @@ export function getAllAuthUsers(state) {
       if (u.signInName) {
         const key = u.signInName.toLowerCase();
         const existing = map.get(key) || {};
-        const storeId = u.storeId || existing.storeId || (key === 'kevin' ? 'store_downtown' : 'store_amigo');
-        const storeName = u.storeName || existing.storeName || (storeId === 'store_downtown' ? 'Downtown Quick Mart' : 'Amigo Food Mart');
+        const isAmigo = key === 'amigo' || key === 'admin' || key === 'master';
+        const cleanId = key.replace(/[^a-z0-9_]/g, '_');
+        const storeId = u.storeId || existing.storeId || (isAmigo ? 'store_amigo' : `store_${cleanId}`);
+        const storeName = u.storeName || existing.storeName || (isAmigo ? 'Amigo Food Mart' : `${key.toUpperCase()} Store`);
         const pin = u.pin || existing.pin || '1234';
         map.set(key, { ...existing, ...u, storeId, storeName, pin });
       }
@@ -396,21 +313,36 @@ export function findUserByCredentials(username, password, state) {
 export function lookupUserAssignedStore(username, state) {
   if (!username) return null;
   const normUser = String(username).trim().toLowerCase();
+  const isAmigo = normUser === 'amigo' || normUser === 'admin' || normUser === 'master';
+  if (isAmigo) {
+    return {
+      storeId: 'store_amigo',
+      storeName: 'Amigo Food Mart',
+      user: { name: 'Amigo', signInName: normUser }
+    };
+  }
   const users = getAllAuthUsers(state);
   const matched = users.find(u => 
     u.signInName?.toLowerCase() === normUser || 
     u.name?.toLowerCase() === normUser
   );
   if (matched) {
-    const storeId = matched.storeId || (normUser === 'kevin' ? 'store_downtown' : 'store_amigo');
-    const storeName = matched.storeName || (storeId === 'store_downtown' ? 'Downtown Quick Mart' : 'Amigo Food Mart');
+    const cleanId = normUser.replace(/[^a-z0-9_]/g, '_');
+    const storeId = matched.storeId || `store_${cleanId}`;
+    const storeName = matched.storeName || `${matched.name || cleanId.toUpperCase()} Store`;
     return {
       storeId,
       storeName,
       user: matched
     };
   }
-  return null;
+  const cleanId = normUser.replace(/[^a-z0-9_]/g, '_');
+  const disp = username.trim().charAt(0).toUpperCase() + username.trim().slice(1);
+  return {
+    storeId: `store_${cleanId}`,
+    storeName: `${disp} Store`,
+    user: null
+  };
 }
 
 export function isCurrentAdmin(state) {

@@ -97,25 +97,56 @@ export async function saveShiftReportToDB(shiftData) {
 }
 
 /**
- * Full POS state backup sync to MySQL
+ * Full POS state backup sync to MySQL (Isolated per storeId)
  */
 let syncDebounceTimer = null;
-export function syncPOSStateToDB(state) {
+export async function syncPOSStateToDB(state, immediate = false) {
   if (!state) return;
   if (syncDebounceTimer) clearTimeout(syncDebounceTimer);
 
-  syncDebounceTimer = setTimeout(async () => {
+  const storeId = state.storeId || (typeof window !== 'undefined' && window.getCurrentStoreId ? window.getCurrentStoreId() : 'store_amigo');
+
+  const doSync = async () => {
     try {
-      await fetch('/api/sync-pos-state', {
+      await fetch(`/api/sync-pos-state?storeId=${encodeURIComponent(storeId)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(state),
+        body: JSON.stringify({ storeId, state }),
         signal: AbortSignal.timeout(4000)
       });
     } catch (e) {
       // Silently fail if DB offline
     }
-  }, 1000);
+  };
+
+  if (immediate || state.dataCleared) {
+    syncDebounceTimer = null;
+    return doSync();
+  }
+
+  syncDebounceTimer = setTimeout(doSync, 1000);
+}
+
+/**
+ * Permanently wipe server POS state file and DB tables for this store
+ */
+export async function clearPOSStateOnDB(targetStoreId = null) {
+  if (syncDebounceTimer) {
+    clearTimeout(syncDebounceTimer);
+    syncDebounceTimer = null;
+  }
+  const storeId = targetStoreId || (typeof window !== 'undefined' && window.getCurrentStoreId ? window.getCurrentStoreId() : 'store_amigo');
+  try {
+    const res = await fetch(`/api/clear-pos-state?storeId=${encodeURIComponent(storeId)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ storeId }),
+      signal: AbortSignal.timeout(3000)
+    });
+    return res.ok;
+  } catch (err) {
+    return false;
+  }
 }
 
 /**
@@ -157,13 +188,17 @@ export async function logTicketScanToDB(scanData) {
   }
 }
 
-export async function loadPOSStateFromDB() {
+export async function loadPOSStateFromDB(targetStoreId = null) {
+  const storeId = targetStoreId || (typeof window !== 'undefined' && window.getCurrentStoreId ? window.getCurrentStoreId() : 'store_amigo');
   try {
-    const res = await fetch('/api/load-pos-state', { signal: AbortSignal.timeout(3000) });
+    const res = await fetch(`/api/load-pos-state?storeId=${encodeURIComponent(storeId)}`, { signal: AbortSignal.timeout(3000) });
     if (res.ok) {
       const data = await res.json();
       if (data && data.success && data.state) {
-        return data.state;
+        // Strict guard: ensure data belongs to the requested store
+        if (!data.storeId || data.storeId === storeId) {
+          return data.state;
+        }
       }
     }
   } catch (err) {

@@ -74,15 +74,10 @@ export function openDaySettlementModal(state, onFullReport = null, onCloseDay = 
         amount: amt
       });
     });
-  } else if (state?.dataCleared) {
+  } else {
     gamesToRender = [];
     totalTickets = 0;
     totalSales = 0.00;
-  } else {
-    // Populate reference figures matching Image 1
-    gamesToRender = REFERENCE_DAY_SETTLEMENT_GAMES;
-    totalTickets = 248;
-    totalSales = 1237.00;
   }
 
   // 2. Populate 4 KPI cards
@@ -219,14 +214,14 @@ export function openPastDaysModal(state, onViewDayReport = null) {
   const pastDaysData = (state?.shiftHistory && state.shiftHistory.length > 0)
     ? state.shiftHistory.map((s, idx) => ({
         day: s.date || `Day #${s.shiftNumber || idx + 1}`,
-        cashier: s.cashierName || 'master',
-        initial: (s.cashierName || 'M').charAt(0).toUpperCase(),
-        openClose: `${s.openedTime || '7:00 AM'} — ${s.closedTime || '9:30 PM'}`,
-        tickets: s.totalTickets || 0,
-        sales: s.totalSales || 0.00,
-        activated: s.activatedPacksCount || 0
+        cashier: s.cashier || s.cashierName || 'Clerk',
+        initial: (s.cashier || s.cashierName || 'C').charAt(0).toUpperCase(),
+        openClose: s.openClose || `${s.openedTime || '7:00 AM'} — ${s.closedTime || '9:30 PM'}`,
+        tickets: Number(s.totalTicketsSold !== undefined ? s.totalTicketsSold : (s.tickets || 0)),
+        sales: Number(s.totalSalesRevenue !== undefined ? s.totalSalesRevenue : (s.sales || 0)),
+        activated: s.activationsCount || 0
       }))
-    : (state?.dataCleared ? [] : REFERENCE_PAST_DAYS);
+    : [];
 
   // Header Badge
   const badge = document.getElementById('pdDaysCountBadge');

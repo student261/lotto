@@ -10768,6 +10768,280 @@ body.dark-mode .scan-chip.chip-action.verified {
   color: #52525b;
 }
 
+#setBoxModal {
+  width: min(95vw, 560px);
+  max-width: 560px;
+}
+
+.setbox-layout-container {
+  display: grid;
+  grid-template-columns: 1fr 1.15fr;
+  gap: 16px;
+  background: #f4f5f7;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  padding: 16px;
+  margin-top: 10px;
+  box-sizing: border-box;
+}
+
+[data-theme="dark"] .setbox-layout-container {
+  background: #18181b;
+  border-color: #27272a;
+}
+
+.setbox-left-col {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.setbox-input-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.setbox-label {
+  font-size: 26px;
+  font-weight: 900;
+  color: #991b1b;
+  letter-spacing: -0.5px;
+  line-height: 1;
+}
+
+[data-theme="dark"] .setbox-label {
+  color: #ef4444;
+}
+
+.setbox-field-wrap {
+  display: flex;
+  align-items: center;
+  border: 2px solid #2563eb;
+  border-radius: 10px;
+  background: #ffffff;
+  overflow: hidden;
+  height: 56px;
+  box-shadow: 0 1px 3px rgba(37, 99, 235, 0.15);
+}
+
+[data-theme="dark"] .setbox-field-wrap {
+  background: #09090b;
+  border-color: #3b82f6;
+}
+
+.setbox-input {
+  width: 90px;
+  height: 100%;
+  border: none;
+  outline: none;
+  font-size: 28px;
+  font-weight: 900;
+  text-align: center;
+  color: #0f172a;
+  background: transparent;
+  font-family: var(--font-mono, monospace);
+  padding: 0;
+}
+
+[data-theme="dark"] .setbox-input {
+  color: #f8fafc;
+}
+
+.setbox-steppers {
+  display: flex;
+  flex-direction: column;
+  width: 36px;
+  height: 100%;
+  border-left: 1px solid #cbd5e1;
+}
+
+[data-theme="dark"] .setbox-steppers {
+  border-left-color: #3f3f46;
+}
+
+.setbox-step-btn {
+  flex: 1;
+  border: none;
+  background: #f8fafc;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  color: #334155;
+  transition: all 0.12s ease;
+  padding: 0;
+}
+
+.setbox-step-btn:first-child {
+  border-bottom: 1px solid #cbd5e1;
+}
+
+.setbox-step-btn:hover {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+[data-theme="dark"] .setbox-step-btn {
+  background: #27272a;
+  color: #e4e4e7;
+}
+
+[data-theme="dark"] .setbox-step-btn:first-child {
+  border-bottom-color: #3f3f46;
+}
+
+[data-theme="dark"] .setbox-step-btn:hover {
+  background: #3f3f46;
+}
+
+.setbox-action-btns {
+  display: flex;
+  gap: 10px;
+  margin-top: auto;
+}
+
+.setbox-btn-not-in-box {
+  flex: 1;
+  height: 46px;
+  border-radius: 8px;
+  border: 1.5px solid #cbd5e1;
+  background: #f8fafc;
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.setbox-btn-not-in-box:hover {
+  background: #e2e8f0;
+  border-color: #94a3b8;
+}
+
+[data-theme="dark"] .setbox-btn-not-in-box {
+  background: #27272a;
+  border-color: #3f3f46;
+  color: #f1f5f9;
+}
+
+[data-theme="dark"] .setbox-btn-not-in-box:hover {
+  background: #3f3f46;
+}
+
+.setbox-btn-add {
+  flex: 1;
+  height: 46px;
+  border-radius: 8px;
+  border: none;
+  background: #1d4ed8;
+  color: #ffffff;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.setbox-btn-add:hover {
+  background: #1e40af;
+}
+
+.setbox-keypad-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="dark"] .setbox-keypad-card {
+  background: #121214;
+  border-color: #27272a;
+}
+
+.setbox-keypad-top {
+  display: flex;
+  gap: 8px;
+}
+
+.setbox-keypad-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.setbox-key {
+  height: 44px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  font-size: 19px;
+  font-weight: 700;
+  color: #0f172a;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  transition: all 0.12s ease;
+  user-select: none;
+}
+
+.setbox-keypad-top .setbox-key {
+  flex: 1;
+  font-size: 14px;
+}
+
+.setbox-key:hover {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+}
+
+.setbox-key:active {
+  transform: scale(0.97);
+  background: #e2e8f0;
+}
+
+.setbox-key-enter {
+  background: #1d4ed8 !important;
+  color: #ffffff !important;
+  border: none !important;
+  font-size: 15px !important;
+  font-weight: 800 !important;
+}
+
+.setbox-key-enter:hover {
+  background: #1e40af !important;
+}
+
+[data-theme="dark"] .setbox-key {
+  background: #27272a;
+  border-color: #3f3f46;
+  color: #f1f5f9;
+}
+
+[data-theme="dark"] .setbox-key:hover {
+  background: #3f3f46;
+}
+
+@media (max-width: 520px) {
+  .setbox-layout-container {
+    grid-template-columns: 1fr;
+  }
+}
+
 .lotto-box-select-card {
   background: #f8fafc;
   border: 1px solid #e4e4e7;
