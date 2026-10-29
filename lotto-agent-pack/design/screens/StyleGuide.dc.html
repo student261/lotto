@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Design system</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="/_blob/f3ff9ff7fc8e731e1805db690f5affd2">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800&amp;family=JetBrains+Mono:wght@500;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.sg{padding:40px 48px 64px;display:flex;flex-direction:column;gap:28px;max-width:1440px}
+.sg h1{font-size:32px;font-weight:800;letter-spacing:-.02em}
+.sg h2{font-size:20px;font-weight:800;margin-bottom:12px}
+.sg .lead{color:var(--ink-3);max-width:760px;margin-top:6px}
+.row{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+.sw{width:150px;border-radius:12px;overflow:hidden;border:1px solid var(--line);background:var(--surface)}
+.sw i{display:block;height:64px}
+.sw div{padding:10px 12px;font-size:13px}
+.sw b{display:block}
+.sw span{font-family:var(--mono);font-size:12px;color:var(--ink-3)}
+.cmdx{display:flex;align-items:center;gap:14px;height:76px;padding:0 20px;border-radius:14px;border:1px solid var(--line-strong);background:var(--surface);min-width:240px}
+.cmdx .ci{width:44px;height:44px;border-radius:12px;display:grid;place-items:center;background:var(--surface-2)}
+.cmdx b{display:block;font-size:19px;font-weight:800}
+.cmdx small{font-size:12px;font-weight:600;color:var(--ink-3)}
+.cmdx.start{background:var(--brand);border-color:var(--brand);color:var(--on-brand)}
+.cmdx.start .ci{background:rgba(255,255,255,.18)} .cmdx.start small{color:inherit;opacity:.8}
+.cmdx.end{background:var(--ink);border-color:var(--ink);color:var(--surface)}
+.cmdx.end .ci{background:color-mix(in srgb,var(--surface) 14%,transparent)} .cmdx.end small{color:inherit;opacity:.7}
+.bx{width:210px;display:flex;flex-direction:column;gap:8px;padding:12px 14px 14px;border-radius:12px;border:1px solid var(--line);border-top:5px solid var(--money);background:var(--surface);box-shadow:var(--sh-sm)}
+.bx.new{border-top-color:var(--brand)}
+.bx-top{display:flex;justify-content:space-between;align-items:center}
+.bx-no small{font-size:12px;font-weight:700;color:var(--ink-3);text-transform:uppercase;margin-right:6px}
+.bx-no b{font-size:40px;font-weight:800;line-height:1;letter-spacing:-.03em}
+.bx-price{font-size:18px;font-weight:800;color:var(--money)}
+.bx-game{font-size:15px;font-weight:700}
+.bx-meta{display:flex;justify-content:space-between;font-size:12px;font-weight:600;color:var(--ink-3)}
+.bx-meta b{font-family:var(--mono);font-size:13px;color:var(--ink)}
+.eslot{width:52px;height:44px;border-radius:10px;border:1.5px dashed var(--line-strong);display:grid;place-items:center;font-weight:800;color:var(--ink-3)}
+.anat{display:flex;flex-wrap:wrap;gap:24px;align-items:flex-start}
+.notes{display:flex;flex-direction:column;gap:8px;font-size:14px;color:var(--ink-2);max-width:460px}
+.notes b{color:var(--ink)}
+.type div{display:flex;gap:20px;align-items:baseline;padding:8px 0;border-bottom:1px solid var(--line)}
+.type span.k{width:150px;font-size:12px;color:var(--ink-3);font-family:var(--mono)}
+.tagrow{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
+.tagrow div{display:flex;gap:12px;align-items:center;font-size:13px;color:var(--ink-2);padding:10px 12px;border-radius:10px;background:var(--surface);border:1px solid var(--line)}
+</style>
+</helmet>
+<div class="lt {{themeCls}}">
+<div class="sg">
+  <div>
+    <h1>LottoTrack design system</h1>
+    <p class="lead">One look for every screen: calm surfaces, green for money and active boxes, blue for the next action, red only for problems. Big targets for the four everyday taps. Figtree for text, JetBrains Mono for pack and position numbers.</p>
+  </div>
+
+  <section>
+    <h2>Colour</h2>
+    <div class="row">
+      <div class="sw"><i style="background: var(--brand)"></i><div><b>Brand · action</b><span>--brand</span></div></div>
+      <div class="sw"><i style="background: var(--money)"></i><div><b>Money · active</b><span>--money</span></div></div>
+      <div class="sw"><i style="background: var(--warn)"></i><div><b>Needs a look</b><span>--warn</span></div></div>
+      <div class="sw"><i style="background: var(--danger)"></i><div><b>Blocked</b><span>--danger</span></div></div>
+      <div class="sw"><i style="background: var(--ink)"></i><div><b>Ink · End Shift</b><span>--ink</span></div></div>
+      <div class="sw"><i style="background: var(--bg)"></i><div><b>Page</b><span>--bg</span></div></div>
+      <div class="sw"><i style="background: var(--surface-2)"></i><div><b>Panel</b><span>--surface-2</span></div></div>
+    </div>
+  </section>
+
+  <section class="type">
+    <h2>Type</h2>
+    <div><span class="k">Page title 22/800</span><span style="font-size: 22px; font-weight: 800">Dashboard</span></div>
+    <div><span class="k">Command 19/800</span><span style="font-size: 19px; font-weight: 800">End Shift</span></div>
+    <div><span class="k">Box number 40/800</span><span style="font-size: 40px; font-weight: 800; line-height: 1">14</span></div>
+    <div><span class="k">Body 15/400</span><span>Scan the top ticket in each active box.</span></div>
+    <div><span class="k">Numbers · mono</span><span class="mono" style="font-weight: 700">1408 · 403040 · 011</span></div>
+  </section>
+
+  <section>
+    <h2>Command buttons — the four everyday taps</h2>
+    <div class="row">
+      <div class="cmdx start"><span class="ci"><svg class="ic ic-lg" viewBox="0 0 24 24"><polygon points="6 3 20 12 6 21 6 3"></polygon></svg></span><span><b>Start Shift</b><small>Loads last closing positions</small></span></div>
+      <div class="cmdx"><span class="ci" style="color: var(--brand)"><svg class="ic ic-lg" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path></svg></span><span><b>Refresh</b><small>Shown while a shift is open</small></span></div>
+      <div class="cmdx end"><span class="ci"><svg class="ic ic-lg" viewBox="0 0 24 24"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"></path><path d="M4 22v-7"></path></svg></span><span><b>End Shift</b><small>Scan boxes &amp; get report</small></span></div>
+      <div class="cmdx"><span class="ci" style="background: var(--money-soft); color: var(--money)"><svg class="ic ic-lg" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h2"></path><path d="M17 3h2a2 2 0 0 1 2 2v2"></path><path d="M21 17v2a2 2 0 0 1-2 2h-2"></path><path d="M7 21H5a2 2 0 0 1-2-2v-2"></path><path d="M8 7v10"></path><path d="M12 7v10"></path><path d="M17 7v10"></path></svg></span><span><b>Activate Book</b><small>Owner only</small></span></div>
+    </div>
+    <div class="row" style="margin-top: 14px">
+      <button class="btn btn-primary btn-lg">Primary</button>
+      <button class="btn btn-money btn-lg">Confirm</button>
+      <button class="btn">Secondary</button>
+      <button class="btn btn-danger">Remove</button>
+      <button class="btn btn-ghost">Ghost</button>
+      <button class="btn btn-primary" disabled style="opacity: .45">Disabled until fixed</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>Box tile</h2>
+    <div class="anat">
+      <div class="bx"><span class="bx-top"><span class="bx-no"><small>Box</small><b>14</b></span><span class="bx-price">$10</span></span><span class="bx-game">50X Money</span><span class="bx-meta"><span>Pack</span><b>403040</b></span><span class="bx-meta"><span>Opening position</span><b>011 / 30</b></span></div>
+      <div class="bx new"><span class="bx-top"><span class="bx-no"><small>Box</small><b>9</b></span><span class="bx-price">$1</span></span><span class="bx-game">5X Money</span><span class="bx-meta"><span>Pack</span><b>0670170</b></span><span class="bx-meta"><span>Activated at</span><b>000 / 300</b></span></div>
+      <div style="display: flex; flex-direction: column; gap: 8px; align-items: center"><span class="eslot">5</span><span class="muted" style="font-size: 12px">Empty box</span></div>
+      <div class="notes">
+        <span><b>Green top edge</b> = a pack is active in this box. Staff count “boxes that aren't green” at End Shift.</span>
+        <span><b>Blue top edge</b> = activated during this shift; its sales count from the activation position.</span>
+        <span><b>Box number is the biggest thing</b> — it matches the label on the dispenser.</span>
+        <span>No sale buttons on tiles. Sales are worked out from positions at End Shift only.</span>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>End Shift statuses</h2>
+    <div class="tagrow">
+      <div><span class="tag tag-money">Scanned</span>Closing position accepted</div>
+      <div><span class="tag tag-warn">Not scanned</span>Scan it, or mark No change / Sold out</div>
+      <div><span class="tag tag-warn">Same as opening</span>Needs “Confirm no change”</div>
+      <div><span class="tag tag-muted">No change</span>Confirmed · $0.00</div>
+      <div><span class="tag tag-brand">Sold out</span>Pack completed · box clears after close</div>
+      <div><span class="tag tag-warn">Scanned twice</span>Two numbers · keep the right one</div>
+      <div><span class="tag tag-danger">Lower than opening</span>Blocked · rescan</div>
+      <div><span class="tag tag-danger">Out of range</span>Blocked · rescan</div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Pack and email statuses</h2>
+    <div class="row">
+      <span class="tag tag-brand">In stock</span><span class="tag tag-money">Active</span><span class="tag tag-muted">Completed</span><span class="tag tag-danger">Removed</span>
+      <span style="width: 24px"></span>
+      <span class="tag tag-muted">Sending…</span><span class="tag tag-money">Sent</span><span class="tag tag-danger">Failed</span><button class="btn btn-sm">Retry</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>Motion</h2>
+    <p class="muted" style="max-width: 760px">Only three moves: tiles and rows rise in gently (0.3s), an accepted scan flashes its row green once, and popups pop up (0.24s). Everything stops when the device asks for reduced motion.</p>
+  </section>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"$preview":{"width":1440,"height":2200}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return { themeCls: this.props && this.props.dark ? 'dark' : '' };
+  }
+}
+</script>
+</body>
+</html>

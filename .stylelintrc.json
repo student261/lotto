@@ -1,0 +1,7 @@
+{
+  "rules": {
+    "declaration-no-important": null,
+    "unit-disallowed-list": ["vh"],
+    "property-disallowed-list": []
+  }
+}

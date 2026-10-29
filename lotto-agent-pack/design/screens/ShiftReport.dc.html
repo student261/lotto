@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Shift Report (A4)</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+/* A4 printable shift report — also the PDF attached to the report email */
+.rp{font-family:"Figtree",Arial,Helvetica,sans-serif;color:#111;background:#E5E7EB;padding:24px 0;display:flex;flex-direction:column;align-items:center;gap:24px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.rp.bare{background:transparent;padding:0}
+.pg{width:210mm;min-height:297mm;background:#fff;box-shadow:0 6px 24px rgba(0,0,0,.14);padding:12mm 13mm 10mm;box-sizing:border-box;display:flex;flex-direction:column;position:relative}
+.pg-foot{margin-top:auto;text-align:center;font-size:10px;color:#444;padding-top:8px}
+.hd{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}
+.hd h1{margin:0;font-size:22px;font-weight:800;letter-spacing:-.01em}
+.hd .tt{font-size:19px;font-weight:800;margin:0}
+.hd .store{font-size:17px;font-weight:800;margin-top:2px}
+.hd .addr{font-size:11px;color:#333;margin-top:1px}
+.hd .meta{font-size:11px;margin-top:10px;display:flex;gap:28px}
+.hd .right{text-align:right;font-size:11px;color:#333;line-height:1.6}
+.hd .right b{display:block;font-size:22px;color:#111}
+table.t{width:100%;border-collapse:collapse;font-size:10px;margin-top:12px;table-layout:fixed}
+table.t th{background:#D1D5DB;border:1px solid #6B7280;font-weight:800;font-size:11px;padding:3px 4px}
+table.t td{border:1px solid #9CA3AF;padding:1.5px 4px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;height:15px}
+table.t tr.act td{background:#A7E3A1}
+table.t tr.sold td{background:#F7B4B4}
+table.t tr.em td{color:#9CA3AF;letter-spacing:.5em;font-size:9px}
+.cols col.c1{width:7%}.cols col.c2{width:20%}.cols col.c3{width:23%}.cols col.c4{width:12%}.cols col.c5{width:12%}.cols col.c6{width:12%}.cols col.c7{width:14%}
+.sum{display:flex;justify-content:flex-end;margin-top:14px}
+.sum table{border-collapse:collapse;font-size:12px;width:62%}
+.sum td{padding:2px 6px}
+.sum td.v{text-align:right;font-variant-numeric:tabular-nums}
+.sum tr.b td{font-weight:800;border-top:1.5px solid #111}
+.sum tr.red td.v{color:#DC2626}
+.sec{font-size:17px;font-weight:800;margin:18px 0 8px}
+.stats{border-collapse:collapse;font-size:12px;width:62%}
+.stats td{padding:2px 6px}
+.stats td.v{text-align:center;font-variant-numeric:tabular-nums}
+.stats tr.ln td{border-bottom:1px solid #111}
+.mini{margin-top:16px}
+.mini .cap{display:inline-block;background:#D1D5DB;border:1px solid #6B7280;border-bottom:0;font-weight:800;font-size:13px;padding:2px 28px}
+.mini table{width:100%;border-collapse:collapse;font-size:11px}
+.mini th{background:#D1D5DB;border:1px solid #6B7280;padding:2px 4px;font-weight:800}
+.mini td{border:1px solid #9CA3AF;padding:2px 4px;text-align:center}
+.none{font-size:11px;color:#666;padding:4px 0}
+@media print{
+  @page{size:A4;margin:0}
+  .rp{background:none;padding:0;gap:0}
+  .pg{box-shadow:none;page-break-after:always;break-after:page}
+  .pg:last-child{page-break-after:auto;break-after:auto}
+}
+</style>
+</helmet>
+<div class="rp {{bareCls}}">
+  <!-- Page 1 -->
+  <section class="pg">
+    <div class="hd">
+      <div>
+        <h1>Total {{d.total}}</h1>
+        <div class="store">{{d.store}}</div>
+        <div class="addr">{{d.address}}</div>
+        <div class="meta"><span>User ID: {{d.user}}</span><span>{{d.shift}}</span><span>{{d.date}} &nbsp; {{d.time}}</span></div>
+      </div>
+      <div class="right"><p class="tt">{{d.title}}</p>{{d.range}}</div>
+    </div>
+    <table class="t cols">
+      <colgroup><col class="c1"><col class="c2"><col class="c3"><col class="c4"><col class="c5"><col class="c6"><col class="c7"></colgroup>
+      <thead><tr><th>Box</th><th>Pack Number</th><th>Name</th><th>Open</th><th>Close</th><th>Price</th><th>Total</th></tr></thead>
+      <tbody>
+        <sc-for list="{{rows1}}" as="r" hint-placeholder-count="46">
+          <tr class="{{r.cls}}"><td>{{r.box}}</td><td>{{r.pack}}</td><td>{{r.name}}</td><td>{{r.open}}</td><td>{{r.close}}</td><td>{{r.price}}</td><td>{{r.total}}</td></tr>
+        </sc-for>
+      </tbody>
+    </table>
+    <div class="pg-foot">Page: 1</div>
+  </section>
+
+  <!-- Page 2 -->
+  <section class="pg">
+    <sc-if value="{{hasRows2}}" hint-placeholder-val="{{ true }}">
+      <table class="t cols" style="margin-top: 0">
+        <colgroup><col class="c1"><col class="c2"><col class="c3"><col class="c4"><col class="c5"><col class="c6"><col class="c7"></colgroup>
+        <thead><tr><th>Box</th><th>Pack Number</th><th>Name</th><th>Open</th><th>Close</th><th>Price</th><th>Total</th></tr></thead>
+        <tbody>
+          <sc-for list="{{rows2}}" as="r" hint-placeholder-count="20">
+            <tr class="{{r.cls}}"><td>{{r.box}}</td><td>{{r.pack}}</td><td>{{r.name}}</td><td>{{r.open}}</td><td>{{r.close}}</td><td>{{r.price}}</td><td>{{r.total}}</td></tr>
+          </sc-for>
+        </tbody>
+      </table>
+    </sc-if>
+
+    <div class="sum">
+      <table>
+        <tbody>
+          <sc-for list="{{d.totals}}" as="x" hint-placeholder-count="6">
+            <tr class="{{x.cls}}"><td>{{x.l}}</td><td class="v">{{x.v}}</td></tr>
+          </sc-for>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="sec">Inventory Stats</div>
+    <table class="stats">
+      <tbody>
+        <sc-for list="{{d.stats}}" as="x" hint-placeholder-count="9">
+          <tr class="{{x.cls}}"><td>{{x.l}}</td><td class="v">{{x.v}}</td></tr>
+        </sc-for>
+      </tbody>
+    </table>
+
+    <div class="mini">
+      <span class="cap">Activations</span>
+      <table>
+        <thead><tr><th>Box</th><th>Time</th><th>Pack Number</th><th>Price</th><th>Name</th></tr></thead>
+        <tbody>
+          <sc-for list="{{d.acts}}" as="x" hint-placeholder-count="1">
+            <tr><td>{{x.box}}</td><td>{{x.time}}</td><td>{{x.pack}}</td><td>{{x.price}}</td><td>{{x.name}}</td></tr>
+          </sc-for>
+        </tbody>
+      </table>
+      <sc-if value="{{noActs}}" hint-placeholder-val="{{ false }}"><div class="none">No books activated this shift.</div></sc-if>
+    </div>
+
+    <div class="mini">
+      <span class="cap">Sold</span>
+      <table>
+        <thead><tr><th>Box</th><th>Pack Number</th><th>Price</th><th>Name</th></tr></thead>
+        <tbody>
+          <sc-for list="{{d.sold}}" as="x" hint-placeholder-count="3">
+            <tr><td>{{x.box}}</td><td>{{x.pack}}</td><td>{{x.price}}</td><td>{{x.name}}</td></tr>
+          </sc-for>
+        </tbody>
+      </table>
+      <sc-if value="{{noSold}}" hint-placeholder-val="{{ false }}"><div class="none">No books sold out this shift.</div></sc-if>
+    </div>
+    <div class="pg-foot">Page: 2</div>
+  </section>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"data":{"editor":null},"bare":{"editor":"boolean","default":false},"$preview":{"width":860,"height":2340}}'>
+// Sample = the store's current paper sheet. The Dashboard passes the real shift through the "data" prop.
+var SAMPLE_ROWS = [
+  [1,'1417-0618145','5X MONEY',215,219,1],[2,'1410-0759558','JR JUMBO',141,145,1],[3,'1891-0009799','HIT 100',127,137,2],
+  [4,'1853-0016571','SPICY HOT CASH',52,52,2],[5,'1883-0015129','JACKPOTS',73,73,2],[6,'1322-0796097','LOTERIA',0,30,2,'act'],
+  [6,'1322-0795142','LOTERIA',135,150,2,'sold'],[7,'1418-0996564','10X MONEY',11,17,2],[8,'1411-1834806','JUMBO BUCKS',63,76,2],
+  [9,'1877-0011999','LUCKY LOVE',112,114,2],[10,'1902-0011837','KICKN CASH',123,127,2],[11,'1856-0024330','JUMBO BOO BUCK',61,66,2],
+  [12,'1828-0038562','XTREME BUCKS',82,83,2],[13,'1904-0011707','15 X TRA',45,45,2],[14,'1857-0024257','10X BONUS',107,107,2],
+  [15,'1904-0025565','15 X TRA',7,8,2],[16,'1898-0004627','CROSS WORD',60,60,3],[17,'1898-0019425','CROSS WORD',45,46,3],[18],
+  [19,'1874-0015175','2026 HAPPY NEW',49,50,3],[20],[21],[22,'1899-0023797','LUCKY 7S',38,40,5],[23,'1905-0021962','25X TRA',12,19,5],
+  [24,'1892-0033027','HIT 250',15,16,5],[25,'1870-0033700','GOLD $500000',40,44,5],[26,'1899-0041770','LUCKY 7S',25,26,5],
+  [27,'1905-0039276','25X TRA',12,12,5],[28],[29,'1848-0016857','LUCKY 7 DOUBLE',20,22,5],[30,'1833-0037659','FROGGER',0,0,5],[31],
+  [32,'1833-0018784','FROGGER',36,37,5],[33,'1841-0032676','LUCKY ROLL',48,49,5],[34,'1421-1992159','20X MONEY',33,40,5],
+  [35,'1826-0147929','VIP PLATINUM',17,17,10],[36,'1876-0058427','1500000 MAX',10,10,10],[37,'1799-0462392','$50 OR $100',2,3,10],
+  [38,'1422-4358988','50X MONEY',28,30,10,'sold'],[39,'1759-0552440','JUMBO JU BUCKS',19,21,10],[40,'1855-0140860','TRIPLE MATCH',22,22,10],
+  [41,'1897-0027822','BONUS STAR MIL',28,28,10],[42,'1906-0055484','50 X TRA',9,9,10],[43,'1893-0059721','HIT 500',28,30,10,'sold'],
+  [44,'1900-0052268','MYSTERY BOX GI',13,13,10],[45,'1871-0155971','PLATINUM',17,23,10],[46,'1906-0032389','50 X TRA',2,2,10],
+  [47,'1886-0035940','JACKPOTS $10',26,26,10],[48,'1876-0058428','1500000 MAX',15,15,10],[49,'1838-0138571','$2000 OVERLOAD',25,25,10],
+  [50,'1423-4203608','100X MONEY',8,9,20],[51,'1894-0053773','HIT 1000',8,9,20],[52,'1839-0041121','$3000 OVERLOAD',4,4,20],
+  [53,'1888-0181660','MILLIONAIRE JU',11,11,20],[54,'1850-0040596','LUCKY 7 TRIPLE',3,4,20],[55,'1715-0047272','$2MILLION DOLL',12,12,20],
+  [56,'1831-0265711','XTREAM MONEY 2',12,12,20],[57,'1822-0045389','CASH $100$200',8,8,20],[58,'1901-0053391','DOUBLE LUCK',4,5,20],
+  [59,'1907-0045935','100 X TRA',5,5,20],[60,'1780-0237355','2000 CASH CRAZ',4,4,20],[61,'1860-0361352','200X MONEY',1,1,25],
+  [62,'1881-0161461','GRANT 50',4,4,30],[63,'1843-0510699','MILLIONAIRE MA',2,2,30],[64,'1890-0169038','CASH 500000 $',2,2,50],
+  [65,'1890-0169040','CASH 500000 $',1,10,50],[66,'1812-0547856','$3000 FESTIVE',9,9,30],[67,'1770-1056896','500X THE MONEY',2,3,50],
+  [68,'1770-1056897','500X THE MONEY',1,1,50],[69,'1835-0464079','JUMBO BUCK EXT',3,4,50],[70,'1835-0464078','JUMBO BUCK EXT',2,2,50]
+];
+function money(v) { return '$' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function sample() {
+  var rows = SAMPLE_ROWS.map(function (r) {
+    if (r.length === 1) return { box: r[0], pack: '', name: 'EMPTY', open: 'SLOT', close: '', price: '', total: '', cls: 'em' };
+    return { box: r[0], pack: r[1], name: r[2], open: r[3], close: r[4], price: r[5], total: (r[4] - r[3]) * r[5], cls: r[6] || '' };
+  });
+  return {
+    title: 'Shift Report', total: '$1,078.00', store: 'AMIGO FOOD MART', address: '2300 MOODY RD WARNER ROBINS, GA, 31088',
+    user: 'master', shift: 'Shift #13', date: '08/04/2026', time: '10:10 AM', range: 'Opened 2:02 AM · Closed 10:10 AM',
+    rows: rows,
+    totals: [
+      { l: 'Total', v: '$1,078.00', cls: 'b' }, { l: 'Cashes', v: '$316.00', cls: 'red' },
+      { l: 'Online', v: '$167.00', cls: 'b' }, { l: 'Online Cashes', v: '$330.00', cls: 'red' },
+      { l: 'Total Sales', v: '$1,245.00', cls: 'b' }, { l: 'Total Cashes', v: '$646.00', cls: 'red' }
+    ],
+    stats: [
+      { l: 'Opening Count', v: 66 }, { l: 'Ending Count', v: 63, cls: 'ln' }, { l: 'Activations', v: 1 }, { l: 'Sold', v: 3, cls: 'ln' },
+      { l: 'Discontinued', v: 0 }, { l: 'Removed', v: '-', cls: 'ln' }, { l: 'Back Inventory', v: 89 }, { l: 'Total Inventory', v: 152 },
+      { l: 'Active Value', v: '$12,898.00', cls: 'ln' }
+    ],
+    acts: [{ box: 6, time: '11:27 PM', pack: '1322-0796097', price: 2, name: 'LOTERIA' }],
+    sold: [{ box: 6, pack: '1322-0795142', price: 2, name: 'LOTERIA' }, { box: 38, pack: '1422-4358988', price: 10, name: '50X MONEY' }, { box: 43, pack: '1893-0059721', price: 10, name: 'HIT 500' }]
+  };
+}
+var PAGE1 = 48;
+
+class Component extends DCLogic {
+  renderVals() {
+    var d = (this.props && this.props.data && this.props.data.rows) ? this.props.data : sample();
+    var rows = d.rows || [];
+    return {
+      d: d,
+      bareCls: this.props && this.props.bare ? 'bare' : '',
+      rows1: rows.slice(0, PAGE1),
+      rows2: rows.slice(PAGE1),
+      hasRows2: rows.length > PAGE1,
+      noActs: !(d.acts && d.acts.length),
+      noSold: !(d.sold && d.sold.length)
+    };
+  }
+}
+</script>
+</body>
+</html>

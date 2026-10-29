@@ -1,0 +1,1198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Dashboard</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="/_blob/f3ff9ff7fc8e731e1805db690f5affd2">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800&amp;family=JetBrains+Mono:wght@500;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.d-app{height:100vh;overflow:hidden}
+.d-main{height:100vh;min-height:0;overflow:hidden;display:flex;flex-direction:column}
+.d-top{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;padding:12px 24px;background:var(--surface);border-bottom:1px solid var(--line);flex:none}
+.d-top h1{font-size:22px;font-weight:800;letter-spacing:-.01em}
+.d-top .sub{font-size:13px;color:var(--ink-3)}
+.d-top .grow{flex:1 1 auto}
+.d-shift{display:flex;align-items:center;gap:10px;padding:8px 14px;border-radius:12px;font-weight:700;font-size:14px}
+.d-shift.open{background:var(--money-soft);color:var(--money)}
+.d-shift.none{background:var(--surface-3);color:var(--ink-2)}
+.d-shift small{display:block;font-size:12px;font-weight:600;opacity:.85}
+/* Controls: [Refresh][smart shift button] over the scan bar · tall Last scan on the right */
+.ctl{display:grid;grid-template-columns:minmax(0,1fr) 150px minmax(0,.9fr);gap:12px;padding:12px 24px;background:var(--surface);border-bottom:1px solid var(--line);flex:none}
+.ctl-l{display:flex;flex-direction:column;gap:10px;min-width:0}
+.ctl-btns{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.6fr);gap:10px}
+.cbtn{all:unset;box-sizing:border-box;display:flex;align-items:center;justify-content:center;gap:12px;height:60px;padding:0 18px;border-radius:var(--r-md);cursor:pointer;border:2px solid var(--line-strong);background:var(--surface);color:var(--ink);font-size:20px;font-weight:800;transition:transform .08s,filter .15s,background .15s;white-space:nowrap}
+.cbtn small{font-size:13px;font-weight:600;opacity:.75}
+.cbtn:hover{background:var(--surface-2)}
+.cbtn:active{transform:scale(.98)}
+.cbtn:focus-visible{outline:3px solid var(--brand);outline-offset:2px}
+.cbtn.ref .ic{color:var(--brand)}
+.cbtn.start{background:var(--brand);border-color:var(--brand);color:var(--on-brand)}
+.cbtn.end{background:var(--ink);border-color:var(--ink);color:var(--surface)}
+.cbtn.rep{background:var(--money);border-color:var(--money);color:#fff;animation:pop .3s cubic-bezier(.2,.7,.2,1) both}
+.lt.dark .cbtn.rep{color:#06200F}
+.cbtn.start:hover,.cbtn.end:hover,.cbtn.rep:hover{filter:brightness(1.1)}
+.cbtn.start:hover{background:var(--brand)}.cbtn.end:hover{background:var(--ink)}.cbtn.rep:hover{background:var(--money)}
+.ctl .scan-field{height:60px;animation:none;min-width:0}
+.ctl .scan-field.hot{animation:scanGlow 1.6s var(--ease) infinite;border-color:var(--money)}
+.ctl .scan-field.hot .ic{color:var(--money)}
+.ctl .scan-field.closing{border-color:var(--ink)}
+.ctl .scan-field.closing .ic{color:var(--ink)}
+.lastscan{display:flex;align-items:center;gap:20px;padding:12px 12px 12px 24px;border-radius:var(--r-md);background:var(--surface-2);min-width:0}
+.lastscan .t{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;line-height:1.25}
+.lastscan .l{font-size:14px;font-weight:700;color:var(--ink-3);text-transform:uppercase;letter-spacing:.06em}
+.lastscan b{font-size:26px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lastscan .note{font-size:16px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lastscan .n{min-width:120px;height:106px;padding:0 14px;border-radius:14px;background:var(--surface);display:grid;place-items:center;font-size:76px;font-weight:800;letter-spacing:-.04em;font-variant-numeric:tabular-nums;box-shadow:var(--sh-sm)}
+.lastscan.err .n{color:var(--danger)}
+.lastscan.new .n{background:var(--money);color:#fff}
+.lastscan.closed .n{color:var(--brand)}
+/* Rack */
+.d-rack{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;margin:12px 24px 0;background:var(--surface);border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:var(--sh-sm)}
+.d-rack-h{display:flex;flex-wrap:wrap;gap:8px 20px;align-items:center;padding:10px 18px;border-bottom:1px solid var(--line);flex:none}
+.d-rack-h h2{font-size:17px;font-weight:800;margin-right:auto}
+.d-scroll{flex:1 1 auto;min-height:0;overflow-y:auto;padding:14px 18px;overscroll-behavior:contain}
+.boxes{display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:10px}
+.tl{all:unset;box-sizing:border-box;position:relative;display:flex;flex-direction:column;padding:8px 12px 10px;border-radius:10px;border:1px solid var(--line);background:var(--surface);box-shadow:var(--sh-sm);cursor:pointer;transition:transform .18s cubic-bezier(.2,.7,.2,1),box-shadow .18s,background .2s;animation:rise .35s cubic-bezier(.2,.7,.2,1) both}
+.tl:hover{transform:translateY(-2px);box-shadow:var(--sh-md)}
+.tl:focus-visible{outline:3px solid var(--brand);outline-offset:2px}
+.tl-p{font-size:17px;font-weight:800;color:var(--money);line-height:1}
+.tl-n{font-size:56px;font-weight:800;line-height:1;letter-spacing:-.04em;font-variant-numeric:tabular-nums;margin-top:2px}
+.tl-d{height:0;border-top:2px dashed var(--line-strong);margin:8px 2px}
+.tl-v{align-self:flex-end;font-size:40px;font-weight:700;line-height:1;color:var(--brand);font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.tl.just{box-shadow:0 0 0 4px var(--money-soft),0 0 0 6px var(--money),var(--sh-md);animation:pop .4s cubic-bezier(.2,.7,.2,1) both}
+.tl.flash{animation:flashA .9s var(--ease)}
+.tl.moved .tl-v{animation:numIn .9s cubic-bezier(.2,.7,.2,1) both}
+@keyframes numIn{0%{opacity:0;transform:translateY(-10px)}60%{color:var(--money)}100%{opacity:1;transform:none}}
+.tl.done{background:var(--money-soft);border-color:var(--money)}
+.tl.done .tl-v{color:var(--money)}
+.tl .newtag{position:absolute;top:-10px;right:8px}
+.tl .ck{position:absolute;top:8px;right:8px;width:22px;height:22px;border-radius:50%;background:var(--money);color:#fff;display:grid;place-items:center}
+.ctl-mid{display:flex;flex-direction:column;gap:10px}
+.cbtn.cx,.cbtn.ud{font-size:17px;gap:8px;padding:0 10px;background:var(--danger-soft);border-color:transparent;color:var(--danger)}
+.cbtn.cx:hover,.cbtn.ud:hover{filter:brightness(.97);background:var(--danger-soft)}
+.cbtn[disabled]{opacity:.4;cursor:not-allowed;filter:grayscale(.6)}
+.cbtn[disabled]:active{transform:none}
+.d-rack-h{padding:10px 12px}
+.fgrid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;width:100%}
+.fb{all:unset;box-sizing:border-box;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;height:56px;padding:0 10px;border-radius:10px;border:1px solid var(--line-strong);background:var(--surface);color:var(--ink);font-size:14px;font-weight:700;line-height:1.15;cursor:pointer;text-align:center;transition:background .15s,border-color .15s,transform .08s;min-width:0}
+.fb b{font-size:20px;font-weight:800;font-variant-numeric:tabular-nums}
+.fb:hover{background:var(--surface-2);border-color:var(--ink-3)}
+.fb:active{transform:scale(.97)}
+.fb:focus-visible{outline:3px solid var(--brand);outline-offset:2px}
+.fb .ic{color:var(--brand)}
+.fb.inv{background:var(--brand);border-color:var(--brand);color:var(--on-brand)}
+.fb.inv .ic{color:inherit}
+.fb.inv:hover{background:var(--brand-hover)}
+.fb.warn b{color:var(--warn)}
+/* End shift: confirmation, calculating, report */
+.lt .btn-primary{color:#fff}
+.cbtn.wait{background:var(--ink);border-color:var(--ink);color:var(--surface);opacity:.6;cursor:progress}
+.cbtn.newsh{background:var(--ink);border-color:var(--ink);color:var(--surface)}
+.cbtn.newsh:hover{filter:brightness(1.15);background:var(--ink)}
+.lastscan.total .n{font-size:44px;min-width:180px;color:var(--money)}
+.cf{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px}
+.cf-l{display:flex;flex-direction:column;gap:12px}
+.cf-c{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 20px;border-radius:14px;background:var(--surface-2)}
+.cf-c .l{font-size:20px;font-weight:800}
+.cf-c .s{display:block;font-size:13px;font-weight:600;color:var(--ink-3)}
+.cf-c .v{font-size:56px;font-weight:800;line-height:1;font-variant-numeric:tabular-nums}
+.cf-c.act .v{color:var(--brand)}
+.cf-tot{display:flex;justify-content:space-between;font-size:17px;font-weight:700;padding:4px 6px}
+.cf-r{border-radius:14px;border:1px solid var(--line);display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.cf-r .h{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--danger-soft);color:var(--danger);font-weight:800;font-size:14px}
+.cf-r .list{max-height:240px;overflow-y:auto;display:flex;flex-direction:column}
+.cf-r .row{display:flex;align-items:center;gap:10px;padding:8px 14px;border-top:1px solid var(--line);font-size:14px}
+.cf-r .row:first-child{border-top:0}
+.cf-r .row .grow{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cf-r .row .boxn{display:inline-grid;place-items:center;min-width:36px;height:28px;border-radius:7px;background:var(--surface-3);font-weight:800}
+.cf-r .empty{padding:18px 14px;font-size:14px;color:var(--ink-3)}
+.term{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.term .input{height:44px}
+.calc{flex:1 1 auto;display:grid;place-items:center;margin:12px 24px 0;border-radius:14px;background:var(--surface);border:1px solid var(--line)}
+.calc-in{display:flex;flex-direction:column;align-items:center;gap:16px;font-size:18px;font-weight:700;color:var(--ink-2)}
+.ring{width:120px;height:120px;border-radius:50%;border:12px solid var(--surface-3);border-top-color:var(--brand);animation:spin 1s linear infinite}
+.rpt{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;margin:12px 24px 0;background:var(--surface);border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:var(--sh-sm)}
+.rpt-h{display:flex;flex-wrap:wrap;align-items:center;gap:10px 12px;padding:10px 14px;border-bottom:1px solid var(--line);flex:none}
+.rpt-h h2{font-size:17px;font-weight:800;margin-right:auto}
+.mailchip{display:flex;align-items:center;gap:8px;padding:4px 6px 4px 10px;border-radius:999px;background:var(--surface-2);font-size:13px;font-weight:600}
+.mailchip .btn{min-height:28px;padding:0 10px;font-size:12px}
+.rpt-scroll{flex:1 1 auto;min-height:0;overflow:auto;background:#E5E7EB}
+@media print{
+  .lt .d-app *{visibility:hidden}
+  .lt .print-area,.lt .print-area *{visibility:visible}
+  .lt .print-area{position:absolute;left:0;top:0;overflow:visible;height:auto;background:none}
+  .d-app,.d-main,.rpt{height:auto;overflow:visible}
+}
+/* Update inventory mode */
+.lt .fb.inv,.lt .fb.inv .ic{color:#fff}
+.lt .fb.inv{font-size:16px}
+.lt .ul-h .btn.fin{color:#fff;background:var(--money);border-color:var(--money);min-width:120px;font-weight:800}
+.lt .ul-h .btn.fin:hover{filter:brightness(1.1)}
+.fb.inv.on{background:var(--money)!important;border-color:var(--money);box-shadow:0 0 0 3px var(--money-soft)}
+.fb.inv.on .ic{animation:pulse 1.6s ease-in-out infinite}
+.ctl .scan-field.upd{border-color:var(--money);animation:scanGlow 1.6s var(--ease) infinite}
+.ctl .scan-field.upd .ic{color:var(--money)}
+.ul{display:flex;flex-direction:column;min-height:100%}
+.ul-h{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;padding:12px 16px;border-radius:12px;background:var(--money-soft);color:var(--money);margin-bottom:12px}
+.ul-h b{font-size:17px;font-weight:800}
+.ul-h .hint{font-size:14px;font-weight:600;color:var(--ink-2);flex:1 1 300px}
+.ul-tbl{width:100%;border-collapse:collapse;font-size:15px}
+.ul-tbl th{text-align:left;font-size:12px;font-weight:700;color:var(--ink-3);text-transform:uppercase;letter-spacing:.05em;padding:8px 12px;border-bottom:1px solid var(--line)}
+.ul-tbl td{padding:10px 12px;border-bottom:1px solid var(--line)}
+.ul-tbl td.mono{font-weight:700}
+.ul-tbl td.n{color:var(--ink-3);font-variant-numeric:tabular-nums;width:48px}
+.ul-tbl tr.top td{background:var(--money-soft);animation:rise .3s cubic-bezier(.2,.7,.2,1) both}
+.ul-empty{flex:1;display:grid;place-items:center;text-align:center;color:var(--ink-3);padding:40px 16px}
+.ul-empty b{display:block;color:var(--ink);font-size:18px;margin:10px 0 4px}
+/* list popups */
+.pl-tbl td.big{font-weight:800;font-size:16px;font-variant-numeric:tabular-nums}
+.up-list{display:flex;flex-direction:column;gap:6px}
+.up-row{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;background:var(--surface-2);font-size:14px;animation:rise .25s cubic-bezier(.2,.7,.2,1) both}
+.up-row .grow{flex:1}
+.up-row .mono{font-size:13px;color:var(--ink-3)}
+/* Box strip — every box, green = active */
+.strip{flex:none;padding:10px 24px 12px;background:var(--surface);border-top:1px solid var(--line);margin-top:12px}
+.strip-h{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:6px;font-size:13px}
+.strip-h b{font-size:14px}
+.slots{display:grid;grid-template-columns:repeat(33,minmax(0,1fr));gap:4px}
+.sl{all:unset;box-sizing:border-box;height:30px;border-radius:6px;display:grid;place-items:center;font-size:12px;font-weight:800;font-variant-numeric:tabular-nums;cursor:pointer;border:1.5px dashed var(--line-strong);color:var(--ink-3);background:var(--surface);transition:background .2s,transform .1s}
+.sl:hover{border-color:var(--brand);color:var(--brand)}
+.sl:focus-visible{outline:3px solid var(--brand);outline-offset:1px}
+.sl.full{border:0;background:var(--money);color:#fff}
+.lt.dark .sl.full{color:#06200F}
+.sl.full:hover{filter:brightness(1.1);color:#fff}
+.sl.pick{border:2px solid var(--brand);color:var(--brand);background:var(--brand-soft)}
+.sl.just{animation:slotIn 1.2s cubic-bezier(.2,.7,.2,1) 2}
+@keyframes slotIn{0%{transform:scale(1)}30%{transform:scale(1.35);box-shadow:0 0 0 4px var(--money-soft)}100%{transform:scale(1)}}
+/* Box number popup (keypad) */
+.kmodal{width:min(900px,100%)}
+.kwrap{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:24px}
+.kleft{display:flex;flex-direction:column;gap:14px;min-width:0}
+.pk{display:flex;gap:14px;align-items:center;padding:14px 16px;border-radius:14px;background:var(--surface-2)}
+.pk .pr{font-size:28px;font-weight:800;color:var(--money);min-width:64px}
+.pk b{display:block;font-size:20px;font-weight:800;line-height:1.2}
+.pk span{font-size:13px;color:var(--ink-3)}
+.pk span.mono{font-size:13px}
+.boxrow{display:flex;align-items:center;gap:12px}
+.boxrow label{font-size:30px;font-weight:800;color:var(--brand);letter-spacing:-.01em;white-space:nowrap}
+.boxin{flex:1;min-width:0;height:84px;border:2px solid var(--brand);border-radius:14px;background:var(--surface);font-size:48px;font-weight:800;text-align:center;font-family:var(--font);font-variant-numeric:tabular-nums;letter-spacing:-.02em;outline:0}
+.boxin:focus{box-shadow:0 0 0 4px var(--brand-soft)}
+.boxin.err{border-color:var(--danger);animation:shake .35s}
+.arrows{display:flex;flex-direction:column;gap:6px}
+.arrows button{all:unset;box-sizing:border-box;width:56px;height:39px;border-radius:10px;border:1px solid var(--line-strong);display:grid;place-items:center;cursor:pointer;background:var(--surface);color:var(--ink-2)}
+.arrows button:hover{background:var(--surface-2);color:var(--ink)}
+.arrows button:active{transform:scale(.95)}
+.arrows button:focus-visible{outline:3px solid var(--brand);outline-offset:2px}
+.kmsg{min-height:22px;font-size:14px;font-weight:700;display:flex;gap:8px;align-items:center}
+.kmsg.err{color:var(--danger)}
+.kmsg.ok{color:var(--money)}
+.near{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:12px;color:var(--ink-3);font-weight:600}
+.near .chip{min-height:34px;min-width:44px;justify-content:center;padding:0 10px;font-variant-numeric:tabular-nums}
+.posrow{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--ink-3);font-weight:600}
+.posrow .input{width:96px;height:40px;font-family:var(--mono);font-weight:700;text-align:center}
+.kbtns{display:grid;grid-template-columns:1fr 1.4fr;gap:10px;margin-top:auto}
+.kbtns .btn{min-height:60px;font-size:17px}
+.kpad{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.kk{all:unset;box-sizing:border-box;height:64px;border-radius:12px;background:var(--surface-2);border:1px solid var(--line);display:grid;place-items:center;font-size:24px;font-weight:700;cursor:pointer;transition:background .12s,transform .08s;font-variant-numeric:tabular-nums}
+.kk:hover{background:var(--surface-3)}
+.kk:active{transform:scale(.95);background:var(--brand-soft)}
+.kk:focus-visible{outline:3px solid var(--brand);outline-offset:2px}
+.kk.fn{font-size:15px;color:var(--ink-2)}
+.kk.w2{grid-column:span 2}
+.kk.ent{background:var(--brand);border-color:var(--brand);color:var(--on-brand);font-size:17px}
+.kk.ent:hover{background:var(--brand-hover)}
+.kpad .top{grid-column:span 3;display:grid;grid-template-columns:1fr 1fr;gap:8px}
+/* Box details popup */
+.pick{display:flex;flex-wrap:wrap;gap:6px}
+.pick .chip{min-height:38px;min-width:48px;justify-content:center;font-variant-numeric:tabular-nums}
+.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.msg{display:flex;gap:10px;align-items:flex-start;padding:12px 14px;border-radius:10px;font-size:14px;font-weight:600}
+.msg.info{background:var(--brand-soft);color:var(--brand-ink)}
+.samples{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:12px;color:var(--ink-3);padding:6px 24px;background:var(--surface);border-bottom:1px solid var(--line);flex:none}
+.samples button{all:unset;cursor:pointer;font-family:var(--mono);font-size:12px;padding:3px 8px;border-radius:6px;background:var(--surface-3);color:var(--ink-2)}
+.samples button:hover{background:var(--brand-soft);color:var(--brand-ink)}
+@media (max-width:1100px){.ctl{grid-template-columns:minmax(0,1fr) 120px minmax(0,.8fr)}.kwrap{grid-template-columns:1fr}}
+@media (max-width:820px){.d-app,.d-main{height:auto;overflow:visible}.d-scroll{overflow:visible}.ctl,.d-top,.strip,.samples{padding-left:16px;padding-right:16px}.d-rack,.guide{margin-left:16px;margin-right:16px}.ctl{grid-template-columns:1fr}.ctl-mid{grid-template-columns:1fr 1fr;display:grid}.fgrid{grid-template-columns:repeat(3,minmax(0,1fr))}.lastscan .n{min-width:72px;height:72px;font-size:44px}.slots{grid-template-columns:repeat(13,minmax(0,1fr))}}
+</style>
+</helmet>
+<div class="lt {{themeCls}}">
+<div class="app d-app">
+  <dc-import name="Sidebar" active="dashboard" role="{{role}}" dark="{{dark}}" on-toggle-theme="{{toggleTheme}}" hint-size="236px,100vh"></dc-import>
+
+  <main class="main d-main">
+    <header class="d-top" style="position: relative">
+      <div>
+        <h1>Dashboard</h1>
+        <div class="sub">Amigo Food Mart · Monday, Oct 19</div>
+      </div>
+      <span class="grow"></span>
+      <sc-if value="{{open}}" hint-placeholder-val="{{ true }}">
+        <div class="d-shift open" role="status"><span class="pulse"></span><span>Shift #{{shift.no}} in progress<small>{{shift.by}} · started {{shift.at}}</small></span></div>
+      </sc-if>
+      <sc-if value="{{closed}}" hint-placeholder-val="{{ false }}">
+        <div class="d-shift none" role="status"><svg class="ic ic-sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="M8 12h8"></path></svg><span>No shift open<small>Last: Shift #{{shift.last}} closed {{shift.lastAt}}</small></span></div>
+      </sc-if>
+    </header>
+
+    <section class="ctl" aria-label="Shift controls and scan">
+      <div class="ctl-l">
+        <div class="ctl-btns">
+          <sc-if value="{{showRefresh}}" hint-placeholder-val="{{ true }}">
+            <button class="cbtn ref" onClick="{{refresh}}"><svg class="ic ic-lg {{spinCls}}" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path></svg>Refresh</button>
+          </sc-if>
+          <sc-if value="{{sb2.newShift}}" hint-placeholder-val="{{ false }}">
+            <button class="cbtn ref" onClick="{{print}}"><svg class="ic ic-lg" viewBox="0 0 24 24"><path d="M6 9V2h12v7"></path><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect width="12" height="8" x="6" y="14"></rect></svg>Print</button>
+          </sc-if>
+          <sc-if value="{{sb2.start}}" hint-placeholder-val="{{ false }}">
+            <button class="cbtn start" onClick="{{startShift}}"><svg class="ic ic-lg" viewBox="0 0 24 24"><polygon points="6 3 20 12 6 21 6 3"></polygon></svg>Start Shift</button>
+          </sc-if>
+          <sc-if value="{{sb2.end}}" hint-placeholder-val="{{ true }}">
+            <button class="cbtn end" onClick="{{endShift}}" style="font-weight: 700"><svg class="ic ic-lg" viewBox="0 0 24 24"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"></path><path d="M4 22v-7"></path></svg>End Shift</button>
+          </sc-if>
+          <sc-if value="{{sb2.report}}" hint-placeholder-val="{{ false }}">
+            <button class="cbtn rep" onClick="{{getReport}}"><svg class="ic ic-lg" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path><path d="M16 13H8"></path><path d="M16 17H8"></path></svg><span>Get Report</span> <small>{{scanned}} of {{k.active}} scanned</small></button>
+          </sc-if>
+          <sc-if value="{{sb2.wait}}" hint-placeholder-val="{{ false }}">
+            <button class="cbtn wait" disabled=""><svg class="ic ic-lg spin" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg>Wait…</button>
+          </sc-if>
+          <sc-if value="{{sb2.newShift}}" hint-placeholder-val="{{ false }}">
+            <button class="cbtn newsh" onClick="{{startNewShift}}"><svg class="ic ic-lg" viewBox="0 0 24 24"><polygon points="6 3 20 12 6 21 6 3"></polygon></svg>Start New Shift</button>
+          </sc-if>
+        </div>
+        <div class="scan-field {{scanHot}}">
+          <svg class="ic ic-lg" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h2"></path><path d="M17 3h2a2 2 0 0 1 2 2v2"></path><path d="M21 17v2a2 2 0 0 1-2 2h-2"></path><path d="M7 21H5a2 2 0 0 1-2-2v-2"></path><path d="M8 7v10"></path><path d="M12 7v10"></path><path d="M17 7v10"></path></svg>
+          <label for="scan" class="sr">Scan a ticket</label>
+          <input id="scan" placeholder="{{scanPh}}" value="{{code}}" onChange="{{onCode}}" onKeyDown="{{onCodeKey}}" autocomplete="off" autofocus="">
+          <button class="btn btn-sm" onClick="{{readCode}}">Enter</button>
+        </div>
+      </div>
+      <div class="ctl-mid">
+        <button class="cbtn cx" onClick="{{cancel}}" disabled="{{cancelOff}}" title="{{cancelTitle}}" style="background-color: #E2C4C0; color: #06200f; font-size: 18px; font-weight: 700" type="button"><svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="m15 9-6 6"></path><path d="m9 9 6 6"></path></svg>Cancel</button>
+        <button class="cbtn ud" onClick="{{undo}}" disabled="{{undoOff}}" title="{{undoTitle}}" style="background-color: #e2c4c0; color: #06200f; font-size: 20px; font-weight: 700"><svg class="ic" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"></path><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11"></path></svg>Undo</button>
+      </div>
+      <div class="lastscan {{last.cls}}" aria-live="polite">
+        <span class="t"><span class="l">{{last.label}}</span><b>{{last.title}}</b><span class="note">{{last.note}}</span></span>
+        <span class="n" title="Box number">{{last.n}}</span>
+      </div>
+    </section>
+
+
+    <sc-if value="{{isCalc}}" hint-placeholder-val="{{ false }}">
+      <section class="calc" aria-live="polite"><div class="calc-in"><span class="ring"></span>{{calcText}}</div></section>
+    </sc-if>
+
+    <sc-if value="{{isReport}}" hint-placeholder-val="{{ false }}">
+      <section class="rpt" aria-label="Shift report">
+        <div class="rpt-h">
+          <h2>Shift Report · #{{rp.no}} <span class="muted" style="font-size: 13px; font-weight: 600">A4 · 2 pages · {{rp.file}}</span></h2>
+          <sc-for list="{{mails}}" as="m" hint-placeholder-count="2">
+            <span class="mailchip"><svg class="ic ic-sm" viewBox="0 0 24 24"><rect width="20" height="16" x="2" y="4" rx="2"></rect><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"></path></svg>{{m.to}} <span class="tag {{m.cls}}">{{m.status}}</span><sc-if value="{{m.failed}}" hint-placeholder-val="{{ false }}"><button class="btn" onClick="{{m.retry}}">Retry</button></sc-if></span>
+          </sc-for>
+          <button class="btn btn-sm" onClick="{{pdf}}"><svg class="ic ic-sm" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><path d="m7 10 5 5 5-5"></path><path d="M12 15V3"></path></svg>PDF</button>
+          <button class="btn btn-sm" onClick="{{print}}"><svg class="ic ic-sm" viewBox="0 0 24 24"><path d="M6 9V2h12v7"></path><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect width="12" height="8" x="6" y="14"></rect></svg>Print</button>
+          <button class="btn btn-primary btn-sm" onClick="{{doneReport}}">Done</button>
+        </div>
+        <div class="rpt-scroll print-area">
+          <dc-import name="ShiftReport" data="{{rp.data}}" hint-size="860px,2340px"></dc-import>
+        </div>
+      </section>
+    </sc-if>
+
+    <sc-if value="{{isRack}}" hint-placeholder-val="{{ true }}">
+    <section class="d-rack" aria-label="Dispenser boxes">
+      <div class="d-rack-h">
+        <div class="fgrid" role="group" aria-label="Quick views">
+          <button class="fb" onClick="{{openSettle}}" style="font-size: 16px; font-weight: 700; color: #ffffff; background-color: #1D4ED8; height: 60px"><svg class="ic" viewBox="0 0 24 24" style="fill: #ffffff; stroke: #ffffff"><rect width="20" height="14" x="2" y="5" rx="2" style="fill: none" stroke="#ffffff"></rect><path d="M2 10h20"></path></svg><span style="font-weight: 400">Settlement</span></button>
+          <sc-for list="{{filters}}" as="fl" hint-placeholder-count="4"><button class="fb {{fl.cls}}" onClick="{{fl.click}}" style="font-size: 16px; font-weight: 400; background-color: #1d4ed8; color: #ffffff; height: 60px; gap: 1px">{{fl.label}}<b>{{fl.n}}</b></button></sc-for>
+          <button class="fb inv {{updCls}}" onClick="{{openUpdate}}" style="height: 60px" aria-pressed="{{updPressed}}"><svg class="ic" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h2"></path><path d="M17 3h2a2 2 0 0 1 2 2v2"></path><path d="M21 17v2a2 2 0 0 1-2 2h-2"></path><path d="M7 21H5a2 2 0 0 1-2-2v-2"></path><path d="M8 7v10"></path><path d="M12 7v10"></path><path d="M17 7v10"></path></svg><span>{{updLabel}}</span></button>
+        </div>
+      </div>
+      <div class="d-scroll">
+        <sc-if value="{{updating}}" hint-placeholder-val="{{ false }}">
+          <div class="ul" aria-live="polite">
+            <div class="ul-h">
+              <b>Updating inventory · {{upAdded}} added</b>
+              <span class="hint">Scan one ticket from each new pack. Tap Finish (or Update Inventory again) when done.</span>
+              <button class="btn btn-money fin" onClick="{{finishUpdate}}"><svg class="ic" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"></path></svg>Finish</button>
+            </div>
+            <sc-if value="{{hasUp}}" hint-placeholder-val="{{ true }}">
+              <table class="ul-tbl">
+                <thead><tr><th>#</th><th>Pack number</th><th>Game</th><th>Price</th><th>Tickets</th><th>Result</th></tr></thead>
+                <tbody>
+                  <sc-for list="{{upRows}}" as="u" hint-placeholder-count="7">
+                    <tr class="{{u.rowCls}}"><td class="n">{{u.i}}</td><td class="mono">{{u.code}}</td><td><b>{{u.game}}</b></td><td class="money" style="font-weight: 800">{{u.price}}</td><td>{{u.size}}</td><td><span class="tag {{u.cls}}">{{u.tag}}</span> <span class="muted" style="font-size: 13px">{{u.note}}</span></td></tr>
+                  </sc-for>
+                </tbody>
+              </table>
+            </sc-if>
+            <sc-if value="{{noUp}}" hint-placeholder-val="{{ false }}">
+              <div class="ul-empty"><div><svg class="ic ic-xl" viewBox="0 0 24 24" style="color: var(--money)"><path d="M3 7V5a2 2 0 0 1 2-2h2"></path><path d="M17 3h2a2 2 0 0 1 2 2v2"></path><path d="M21 17v2a2 2 0 0 1-2 2h-2"></path><path d="M7 21H5a2 2 0 0 1-2-2v-2"></path><path d="M8 7v10"></path><path d="M12 7v10"></path><path d="M17 7v10"></path></svg><b>Start scanning packs</b>Each pack appears here as you scan it.</div></div>
+            </sc-if>
+          </div>
+        </sc-if>
+        <sc-if value="{{notUpdating}}" hint-placeholder-val="{{ true }}">
+        <div class="boxes">
+          <sc-for list="{{tiles}}" as="b" hint-placeholder-count="12">
+            <button class="tl {{b.cls}}" onClick="{{b.open}}" aria-label="{{b.aria}}" title="{{b.title}}">
+              <sc-if value="{{b.isJust}}" hint-placeholder-val="{{ false }}"><span class="tag tag-money newtag">New</span></sc-if>
+              <sc-if value="{{b.isDone}}" hint-placeholder-val="{{ false }}"><span class="ck"><svg class="ic ic-sm" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"></path></svg></span></sc-if>
+              <span class="tl-p">{{b.price}}</span>
+              <span class="tl-n">{{b.n}}</span>
+              <span class="tl-d"></span>
+              <span class="tl-v">{{b.v}}</span>
+            </button>
+          </sc-for>
+        </div>
+        </sc-if>
+      </div>
+    </section>
+    </sc-if>
+
+    <footer class="strip" aria-label="All boxes">
+      <div class="strip-h">
+        <b>All {{boxCount}} boxes</b>
+        <span class="legend" style="font-size: 12px; gap: 14px">
+          <span><i style="background: var(--money)"></i>Active book</span>
+          <span><i style="border: 1.5px dashed var(--line-strong)"></i>{{emptyHint}}</span>
+        </span>
+      </div>
+      <div class="slots">
+        <sc-for list="{{slots}}" as="s" hint-placeholder-count="65">
+          <button class="sl {{s.cls}}" onClick="{{s.click}}" aria-label="{{s.aria}}">{{s.n}}</button>
+        </sc-for>
+      </div>
+    </footer>
+  </main>
+</div>
+
+<!-- Step 2 · Box number (keypad) -->
+<sc-if value="{{showKey}}" hint-placeholder-val="{{ false }}">
+  <div class="scrim">
+    <div class="modal kmodal" role="dialog" aria-modal="true" aria-labelledby="k-h">
+      <div class="modal-h">
+        <span class="icon-wrap" style="background: var(--money-soft); color: var(--money)"><svg class="ic ic-lg" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2"></rect><path d="M3 9h18"></path><path d="M9 21V9"></path></svg></span>
+        <div><h2 id="k-h">Box number</h2><p>Scan the box label or type the number.</p></div>
+        <button class="btn btn-ghost icon-btn x" onClick="{{notInBox}}" aria-label="Close"><svg class="ic" viewBox="0 0 24 24"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg></button>
+      </div>
+      <div class="modal-b">
+        <div class="kwrap">
+          <div class="kleft">
+            <div class="pk">
+              <span class="pr">{{kp.price}}</span>
+              <div><b>{{kp.game}}</b><span class="mono">Game {{kp.gid}} · Pack {{kp.pack}}</span><br><span>{{kp.size}} tickets · in stock since {{kp.since}}</span></div>
+            </div>
+
+            <div class="boxrow">
+              <label for="boxin">BOX #</label>
+              <input id="boxin" class="boxin {{kp.errCls}}" inputmode="numeric" value="{{kp.box}}" onChange="{{onBoxIn}}" onKeyDown="{{onBoxKey}}" autocomplete="off" autofocus="" style="font-size: 65px">
+              <div class="arrows">
+                <button onClick="{{boxUp}}" aria-label="Next empty box"><svg class="ic ic-lg" viewBox="0 0 24 24"><path d="m18 15-6-6-6 6"></path></svg></button>
+                <button onClick="{{boxDown}}" aria-label="Previous empty box"><svg class="ic ic-lg" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"></path></svg></button>
+              </div>
+            </div>
+            <div class="kmsg {{kp.msgCls}}" role="status">{{kp.msg}}</div>
+            <div class="near">Empty boxes:
+              <sc-for list="{{near}}" as="p" hint-placeholder-count="8"><button class="chip {{p.cls}}" onClick="{{p.click}}">{{p.n}}</button></sc-for>
+            </div>
+            
+
+            <div class="kbtns">
+              <button class="btn" onClick="{{notInBox}}" title="Keep this book in stock without a box">Not in box</button>
+              <button class="btn btn-primary" onClick="{{addToBox}}" style="color: #ffffff"><svg class="ic" viewBox="0 0 24 24"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>Add to box {{kp.boxShow}}</button>
+            </div>
+          </div>
+
+          <div class="kpad" role="group" aria-label="Keypad">
+            <div class="top">
+              <button class="kk fn" onClick="{{kClear}}">Clear</button>
+              <button class="kk fn" onClick="{{kBack}}" aria-label="Backspace"><svg class="ic" viewBox="0 0 24 24"><path d="M10 5a2 2 0 0 0-1.344.519l-6.328 5.74a1 1 0 0 0 0 1.481l6.328 5.741A2 2 0 0 0 10 19h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2z"></path><path d="m12 9 6 6"></path><path d="m18 9-6 6"></path></svg></button>
+            </div>
+            <sc-for list="{{keys}}" as="d" hint-placeholder-count="9"><button class="kk" onClick="{{d.press}}">{{d.n}}</button></sc-for>
+            <button class="kk w2" onClick="{{k0}}">0</button>
+            <button class="kk ent" onClick="{{addToBox}}">Enter</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</sc-if>
+
+<!-- Get Report · confirmation -->
+<sc-if value="{{showConfirm}}" hint-placeholder-val="{{ false }}">
+  <div class="scrim">
+    <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="cf-h">
+      <div class="modal-h">
+        <span class="icon-wrap"><svg class="ic ic-lg" viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"></path><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg></span>
+        <div><h2 id="cf-h">Check before closing the shift</h2><p>Count the boxes on your dispenser that are not green. It should match Empty slots.</p></div>
+      </div>
+      <div class="modal-b">
+        <div class="cf">
+          <div class="cf-l">
+            <div class="cf-c act"><span><span class="l">Activations</span><span class="s">new books put in a box this shift</span></span><span class="v">{{cf.acts}}</span></div>
+            <div class="cf-c"><span><span class="l">Empty slots</span><span class="s">boxes that are not green</span></span><span class="v">{{cf.empty}}</span></div>
+            <div class="cf-tot"><span>Total slots</span><span>{{boxCount}}</span></div>
+          </div>
+          <div class="cf-r">
+            <div class="h"><span>Sold out tickets</span><span>{{cf.soldN}}</span></div>
+            <div class="list">
+              <sc-for list="{{cf.sold}}" as="x" hint-placeholder-count="2">
+                <div class="row"><span class="boxn">{{x.n}}</span><span class="grow"><b>{{x.price}}</b> {{x.game}}</span><span class="muted mono" style="font-size: 12px">{{x.pack}}</span></div>
+              </sc-for>
+              <sc-if value="{{cf.noSold}}" hint-placeholder-val="{{ false }}"><div class="empty">Every active box was scanned — nothing sold out.</div></sc-if>
+            </div>
+          </div>
+        </div>
+        <sc-if value="{{cf.warn}}" hint-placeholder-val="{{ false }}">
+          <div class="banner warn"><svg class="ic" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg><div><b>Boxes not scanned are closed as sold out.</b>If any of them still has tickets, tap Cancel and scan it.</div></div>
+        </sc-if>
+        <div class="field">
+          <label>From the lottery terminal <span class="muted" style="font-weight: 500">(optional — printed on the report)</span></label>
+          <div class="term">
+            <input class="input mono" inputmode="decimal" placeholder="Cashes $" value="{{term.cashes}}" onChange="{{onCashes}}" aria-label="Cashes">
+            <input class="input mono" inputmode="decimal" placeholder="Online $" value="{{term.online}}" onChange="{{onOnline}}" aria-label="Online sales">
+            <input class="input mono" inputmode="decimal" placeholder="Online cashes $" value="{{term.oc}}" onChange="{{onOc}}" aria-label="Online cashes">
+          </div>
+        </div>
+      </div>
+      <div class="modal-f">
+        <button class="btn btn-lg" onClick="{{cancelConfirm}}" style="background: var(--danger-soft); border-color: transparent; color: var(--danger); min-width: 160px">Cancel</button>
+        <button class="btn btn-primary btn-lg" onClick="{{confirmClose}}" style="min-width: 200px"><svg class="ic" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"></path></svg>Confirm</button>
+      </div>
+    </div>
+  </div>
+</sc-if>
+
+<!-- Settlement -->
+<sc-if value="{{showSettle}}" hint-placeholder-val="{{ false }}">
+  <div class="scrim" onClick="{{closeModal}}">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="st-h" onClick="{{stop}}">
+      <div class="modal-h">
+        <span class="icon-wrap"><svg class="ic ic-lg" viewBox="0 0 24 24"><rect width="20" height="14" x="2" y="5" rx="2"></rect><path d="M2 10h20"></path></svg></span>
+        <div><h2 id="st-h">Settlement</h2><p>{{st.sub}}</p></div>
+        <button class="btn btn-ghost icon-btn x" onClick="{{closeModal}}" aria-label="Close"><svg class="ic" viewBox="0 0 24 24"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg></button>
+      </div>
+      <div class="modal-b">
+        <span class="group-l">This shift</span>
+        <div class="stats">
+          <div class="stat"><span class="l">Boxes scanned</span><span class="v">{{st.scanned}}</span><span class="s">{{st.scanNote}}</span></div>
+          <div class="stat"><span class="l">Tickets sold</span><span class="v">{{st.tickets}}</span><span class="s">from scanned boxes</span></div>
+          <div class="stat"><span class="l">Ticket sales</span><span class="v money">{{st.sales}}</span><span class="s">final after Get Report</span></div>
+        </div>
+        <span class="group-l">Last closed shift</span>
+        <div class="stats">
+          <div class="stat"><span class="l">Shift</span><span class="v">#12</span><span class="s">Daniel · closed 10:05 PM</span></div>
+          <div class="stat"><span class="l">Tickets sold</span><span class="v">251</span><span class="s">19 boxes</span></div>
+          <div class="stat"><span class="l">Ticket sales</span><span class="v money">$1,512.00</span><span class="s">Email sent</span></div>
+        </div>
+      </div>
+      <div class="modal-f">
+        <a class="btn" href="History.dc.html">All reports</a>
+        <span class="grow"></span>
+        <sc-if value="{{sb2.report}}" hint-placeholder-val="{{ false }}"><button class="btn btn-money" onClick="{{getReport}}">Get Report</button></sc-if>
+        <sc-if value="{{sb2.end}}" hint-placeholder-val="{{ true }}"><button class="btn btn-dark" onClick="{{endShift}}" style="color: #ffffff">End Shift</button></sc-if>
+      </div>
+    </div>
+  </div>
+</sc-if>
+
+<!-- This Month / This Week / Today / Inactive -->
+<sc-if value="{{showList}}" hint-placeholder-val="{{ false }}">
+  <div class="scrim" onClick="{{closeModal}}">
+    <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="pl-h" onClick="{{stop}}">
+      <div class="modal-h">
+        <span class="icon-wrap" style="font-size: 18px; font-weight: 800">{{pl.count}}</span>
+        <div><h2 id="pl-h">{{pl.title}}</h2><p>{{pl.sub}}</p></div>
+        <button class="btn btn-ghost icon-btn x" onClick="{{closeModal}}" aria-label="Close"><svg class="ic" viewBox="0 0 24 24"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg></button>
+      </div>
+      <div class="modal-b">
+        <sc-if value="{{pl.empty}}" hint-placeholder-val="{{ false }}">
+          <div class="empty-state"><span class="ei"><svg class="ic ic-xl" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="4" rx="2"></rect><path d="M16 2v4"></path><path d="M8 2v4"></path><path d="M3 10h18"></path></svg></span><b>{{pl.emptyTitle}}</b><span>{{pl.emptyText}}</span></div>
+        </sc-if>
+        <sc-if value="{{pl.has}}" hint-placeholder-val="{{ true }}">
+          <div class="tbl-wrap" style="border: 1px solid var(--line); border-radius: 12px">
+            <table class="tbl pl-tbl">
+              <thead><tr><th>Box</th><th>Game · Pack</th><th class="r">Price</th><th class="r">Ticket now</th><th class="r">{{pl.col}}</th></tr></thead>
+              <tbody>
+                <sc-for list="{{pl.rows}}" as="r" hint-placeholder-count="6">
+                  <tr><td><span class="boxn">{{r.n}}</span></td><td class="g"><b>{{r.game}}</b><span>{{r.pack}}</span></td><td class="r money" style="font-weight: 700">{{r.price}}</td><td class="r big">{{r.pos}}</td><td class="r"><span class="tag {{r.tagCls}}">{{r.extra}}</span></td></tr>
+                </sc-for>
+              </tbody>
+            </table>
+          </div>
+        </sc-if>
+      </div>
+      <div class="modal-f"><button class="btn btn-primary" onClick="{{closeModal}}" style="color: #ffffff">Close</button></div>
+    </div>
+  </div>
+</sc-if>
+
+
+<!-- Box details -->
+<sc-if value="{{showBox}}" hint-placeholder-val="{{ false }}">
+  <div class="scrim" onClick="{{closeModal}}">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="box-h" onClick="{{stop}}">
+      <div class="modal-h">
+        <span class="icon-wrap" style="font-size: 20px; font-weight: 800">{{sb.n}}</span>
+        <div><h2 id="box-h">Box {{sb.n}} · {{sb.game}}</h2><p>Pack {{sb.pack}} · {{sb.price}} a ticket</p></div>
+        <button class="btn btn-ghost icon-btn x" onClick="{{closeModal}}" aria-label="Close"><svg class="ic" viewBox="0 0 24 24"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg></button>
+      </div>
+      <div class="modal-b">
+        <div class="stats">
+          <div class="stat"><span class="l">Opening position</span><span class="v mono">{{sb.pos}}</span><span class="s">{{sb.posNote}}</span></div>
+          <div class="stat"><span class="l">Pack size</span><span class="v">{{sb.size}}</span><span class="s">last ticket {{sb.final}}</span></div>
+          <div class="stat"><span class="l">Game ID</span><span class="v mono">{{sb.gid}}</span><span class="s">activated {{sb.since}}</span></div>
+        </div>
+        <sc-if value="{{isOwner}}" hint-placeholder-val="{{ true }}">
+          <div class="tabs" role="tablist">
+            <button class="tab {{bt.move}}" onClick="{{tabMove}}" role="tab"><svg class="ic ic-sm" viewBox="0 0 24 24"><path d="m16 3 4 4-4 4"></path><path d="M20 7H4"></path><path d="m8 21-4-4 4-4"></path><path d="M4 17h16"></path></svg>Change box</button>
+            <button class="tab {{bt.remove}}" onClick="{{tabRemove}}" role="tab"><svg class="ic ic-sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="m4.9 4.9 14.2 14.2"></path></svg>Remove book</button>
+          </div>
+          <sc-if value="{{bt.isMove}}" hint-placeholder-val="{{ true }}">
+            <div class="field"><label>Move this book to an empty box</label>
+              <div class="pick"><sc-for list="{{movePick}}" as="p" hint-placeholder-count="10"><button class="chip {{p.cls}}" onClick="{{p.click}}">{{p.n}}</button></sc-for></div>
+            </div>
+          </sc-if>
+          <sc-if value="{{bt.isRemove}}" hint-placeholder-val="{{ false }}">
+            <div class="two">
+              <div class="field"><label for="rm-pos">Current position</label><input id="rm-pos" class="input mono" value="{{sb.rmPos}}" onChange="{{onRmPos}}"><span class="hint">Scan the top ticket so sold tickets still count</span></div>
+              <div class="field"><label>Reason</label><div class="pick"><button class="chip {{rr.disc}}" onClick="{{rrDisc}}">Discontinued</button><button class="chip {{rr.ret}}" onClick="{{rrRet}}">Returned</button><button class="chip {{rr.dmg}}" onClick="{{rrDmg}}">Damaged</button></div></div>
+            </div>
+          </sc-if>
+        </sc-if>
+        <sc-if value="{{isSales}}" hint-placeholder-val="{{ false }}">
+          <div class="msg info"><svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg><span>Only the owner can move or remove books.</span></div>
+        </sc-if>
+      </div>
+      <div class="modal-f">
+        <button class="btn" onClick="{{closeModal}}">Close</button>
+        <sc-if value="{{showMoveBtn}}" hint-placeholder-val="{{ true }}">
+          <button class="btn btn-primary" onClick="{{doMove}}" disabled="{{moveOff}}" style="color: #ffffff">Move to box {{moveTo}}</button>
+        </sc-if>
+        <sc-if value="{{showRmBtn}}" hint-placeholder-val="{{ false }}">
+          <button class="btn btn-danger" onClick="{{doRemove}}">Remove book from box {{sb.n}}</button>
+        </sc-if>
+      </div>
+    </div>
+  </div>
+</sc-if>
+
+<sc-if value="{{hasToast}}" hint-placeholder-val="{{ false }}">
+  <div class="toast {{toast.cls}}" role="status" style="animation: toastIn .3s cubic-bezier(.2,.7,.2,1) both">
+    <span class="ti"><svg class="ic ic-sm" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"></path></svg></span>
+    <span>{{toast.text}}</span>
+    <button class="btn" onClick="{{hideToast}}">OK</button>
+  </div>
+</sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"shiftOpen":{"editor":"boolean","default":true},"role":{"editor":"enum","options":["Owner","Salesperson"],"default":"Owner"},"ending":{"editor":"boolean","default":false},"updating":{"editor":"boolean","default":false},"closeStep":{"editor":"enum","options":["none","4 · Confirmation","5 · Report"],"default":"none"},"activation":{"editor":"enum","options":["none","1 · Scan a ticket","2 · Assign its box","3 · Check the screen"],"default":"none"},"$preview":{"width":1440,"height":900}}'>
+var BOX_COUNT = 65;
+var SEED = [
+  { n: 1,  gid: '1401', game: '5X Money',        price: 1,  pack: '120042', size: 300, pos: 13, act: 16, idle: 0 },
+  { n: 2,  gid: '1402', game: 'Jr Jumbo',        price: 1,  pack: '745508', size: 300, pos: 9, act: 16, idle: 0 },
+  { n: 3,  gid: '1403', game: 'Loteria',         price: 2,  pack: '933993', size: 150, pos: 3, act: 20, idle: 1 },
+  { n: 4,  gid: '1404', game: 'Hit 100',         price: 2,  pack: '558845', size: 150, pos: 11, act: 12, idle: 0 },
+  { n: 6,  gid: '1406', game: 'Cross Word',      price: 3,  pack: '935561', size: 100, pos: 4, act: 9, idle: 0 },
+  { n: 7,  gid: '1407', game: '2026 Happy New',  price: 3,  pack: '550840', size: 100, pos: 4, act: 19, idle: 9 },
+  { n: 14, gid: '1408', game: '50X Money',       price: 10, pack: '403040', size: 30,  pos: 11, act: 10, idle: 0 },
+  { n: 17, gid: '1409', game: 'Gold $500,000',   price: 5,  pack: '176017', size: 60,  pos: 12, act: 13, idle: 2 },
+  { n: 18, gid: '1410', game: '25X Tra',         price: 5,  pack: '190315', size: 60,  pos: 8, act: 9, idle: 0 },
+  { n: 21, gid: '1411', game: 'Lucky 7s',        price: 5,  pack: '983287', size: 60,  pos: 7, act: 15, idle: 8 },
+  { n: 22, gid: '1412', game: 'Epic Riches',     price: 10, pack: '502822', size: 30,  pos: 3, act: 6, idle: 0 },
+  { n: 25, gid: '1413', game: 'Jumbo Bucks Ext', price: 50, pack: '301956', size: 18,  pos: 1, act: 14, idle: 1 },
+  { n: 27, gid: '1414', game: 'Cash 500,000',    price: 50, pack: '277104', size: 18,  pos: 4, act: 27, idle: 12 },
+  { n: 56, gid: '1415', game: 'Hit 1000',        price: 20, pack: '560218', size: 15,  pos: 11, act: 12, idle: 0 },
+  { n: 57, gid: '1416', game: 'Frogger',         price: 5,  pack: '571190', size: 60,  pos: 8, act: 9, idle: 1 },
+  { n: 60, gid: '1418', game: 'Jumbo Bucks',     price: 2,  pack: '600871', size: 150, pos: 8, act: 17, idle: 3 },
+  { n: 61, gid: '1419', game: '10X Money',       price: 2,  pack: '610455', size: 150, pos: 10, act: 11, idle: 0 },
+  { n: 62, gid: '1420', game: 'Spicy Hot Cash',  price: 2,  pack: '620913', size: 150, pos: 9, act: 14, idle: 0 },
+  { n: 63, gid: '1421', game: 'Jackpots',        price: 2,  pack: '631402', size: 150, pos: 52, act: 28, idle: 22 }
+];
+// Books received into inventory but not yet in a box
+var STOCK = [
+  { gid: '1422', game: 'Hit 200',         price: 2,  pack: '0915532', size: 150, since: 'Oct 17' },
+  { gid: '1417', game: '5X Money',        price: 1,  pack: '0670170', size: 300, since: 'Oct 17' },
+  { gid: '1770', game: '500X The Money',  price: 50, pack: '1036463', size: 18,  since: 'Oct 17' },
+  { gid: '1799', game: 'Win 50 or 100',   price: 10, pack: '0412288', size: 30,  since: 'Oct 16' }
+];
+var SAMPLES = [
+  ['1422-0915532-000', 'New book (Hit 200) — opens the box popup'],
+  ['1770-1036463-000', 'New $50 book'],
+  ['1408-403040-011', 'Book already in box 14'],
+  ['1854-0221907-000', 'Book not received into inventory']
+];
+// While ending a shift: scan the top ticket in each box
+var CLOSE_SAMPLES = [
+  ['1408-403040-017', 'Box 14 · 6 sold'],
+  ['1403-933993-007', 'Box 3 · 4 sold'],
+  ['1401-120042-031', 'Box 1 · 18 sold'],
+  ['1404-558845-009', 'Box 4 · lower than opening']
+];
+var FILTERS = [['month', 'This Month'], ['week', 'This Week'], ['today', 'Today'], ['idle', 'Inactive']];
+var LIST_INFO = {
+  month: ['Activated this month', 'Books put in a box since Oct 1', 'Activated'],
+  week: ['Activated this week', 'Books put in a box in the last 7 days', 'Activated'],
+  today: ['Activated today', 'Books put in a box today', 'Activated'],
+  idle: ['Inactive books', 'No tickets sold for 7 days or more — think about moving or returning them', 'No sales for']
+};
+// Game list used to recognise a scanned pack in Update Inventory
+var GAMES = { '1153': ['Hit 100', 1, 300], '1423': ['100X The Money', 20, 15], '1411': ['Jumbo Classic', 2, 150], '1451': ['50K Extreme', 2, 150], '1466': ['Limited Rels', 30, 30], '1465': ['1M Cash Vault', 10, 30], '1415': ['Hit 1000', 20, 15], '1409': ['Gold $500,000', 5, 60], '1403': ['Loteria', 2, 150], '1408': ['50X Money', 10, 30], '1422': ['Hit 200', 2, 150], '1417': ['5X Money', 1, 300] };
+function ago(d) { return d === 0 ? 'Today' : (d === 1 ? 'Yesterday' : d + ' days ago'); }
+function pad(n) { n = String(n); while (n.length < 3) n = '0' + n; return n; }
+function money0(v) { return '$' + Number(v).toLocaleString('en-US'); }
+function clone(o) { return JSON.parse(JSON.stringify(o)); }
+function parse(raw) {
+  var m = String(raw || '').replace(/\s/g, '').match(/^(\d{4})-?(\d{6,7})-?(\d{3})/);
+  return m ? { gid: m[1], pack: m[2], pos: parseInt(m[3], 10) } : null;
+}
+
+class Component extends DCLogic {
+  constructor(...args) {
+    super(...args);
+    var p = this.props || {};
+    this.tmr = null;
+    this.hist = [];
+    this.state = {
+      dark: !!p.dark,
+      open: p.shiftOpen !== false,
+      shiftNo: 13,
+      boxes: clone(SEED),
+      stock: clone(STOCK),
+      newBoxes: {},
+      code: '',
+      last: { label: 'Last scan', title: '$2 Hit 100', note: 'Box 4 · ticket 011', n: '4', cls: '' },
+      closing: false, closes: {}, list: null, upCode: '', up: [], updating: false,
+      stage: null, term: { cashes: '', online: '', oc: '' }, report: null, mails: [],
+      flow: null,      // { step: 1|2|3, box: '', preset: n|null, pack: {}, pos: '000', err: '', errBox: false, msg: '', done: n }
+      flash: null,
+      modal: null,
+      sel: null, btab: 'move', moveTo: null, rmPos: '', rmWhy: 'disc',
+      spin: false, refreshedAt: '7:02 AM',
+      toast: null
+    };
+    if (p.updating) {
+      var self0 = this;
+      this.state.updating = true;
+      this.setState = function (o) { Object.assign(self0.state, o); };   // constructor-time: write state directly
+      ['1465-0093468-000', '1466-0109049-000', '1423-0429292-000', '1451-0049086-000', '1411-0219414-000', '1423-0429289-000', '1153-0007532-000'].forEach(function (c) { self0.upScan(c); });
+      delete this.setState;
+    }
+    var cs = String(p.closeStep || 'none').charAt(0);
+    if (p.ending || cs === '4' || cs === '5') {
+      this.state.closing = true;
+      this.state.closes = { 1: 31, 2: 22, 3: 7, 4: 19, 6: 9, 7: 4, 14: 17, 17: 18, 18: 14, 21: 12, 22: 8, 27: 9, 57: 13, 60: 21, 61: 18, 62: 15, 63: 61 };
+      var nb = this.state.stock.splice(1, 1)[0];
+      this.state.boxes.push({ n: 9, gid: nb.gid, game: nb.game, price: nb.price, pack: nb.pack, size: nb.size, pos: 0, act: 0, idle: 0, at: '11:27 AM' });
+      this.state.newBoxes = { 9: true };
+      this.state.closes[9] = 20;
+    }
+    if (cs === '4') this.state.stage = 'confirm';
+    if (cs === '5') { this.state.term = { cashes: '316', online: '167', oc: '330' }; this.state.report = this.buildReport(); this.state.stage = 'report'; this.state.mails = [{ to: 'maulik@amigofoodmart.com', st: 'sent' }, { to: 'accounts@amigofoodmart.com', st: 'failed' }]; this.state.last = { label: 'Shift report', title: 'Total sale', note: 'Shift #13 closed · report emailed', n: this.state.report.totalShort, cls: 'total' }; }
+    var a = String(p.activation || 'none').charAt(0);
+    if (a === '1') this.state.flow = { step: 1, preset: null, box: '' };
+    if (a === '2' || a === '3') {
+      var pk = this.state.stock[0];
+      this.state.flow = { step: 2, preset: null, box: '5', pack: pk, pos: '000' };
+      this.state.last = { title: '$2 Hit 200', note: 'New book · choose its box', n: '?', cls: 'new' };
+      if (a === '3') this.finish(true);
+    }
+  }
+  say(text, cls) {
+    var self = this;
+    clearTimeout(this.tmr);
+    this.setState({ toast: { text: text, cls: cls || '' } });
+    this.tmr = setTimeout(function () { self.setState({ toast: null }); }, 4200);
+  }
+  emptyList() {
+    var used = {};
+    this.state.boxes.forEach(function (b) { used[b.n] = true; });
+    var out = [];
+    for (var i = 1; i <= BOX_COUNT; i++) if (!used[i]) out.push(i);
+    return out;
+  }
+  snap(label) {
+    var s = this.state;
+    this.hist.push({ label: label, st: clone({ boxes: s.boxes, stock: s.stock, closes: s.closes, newBoxes: s.newBoxes, last: s.last, justBox: s.justBox || null }) });
+    if (this.hist.length > 20) this.hist.shift();
+  }
+  buildReport() {
+    var s = this.state, by = {}, lines = [], tick = 0, cents = 0, acts = [], sold = [], activeValue = 0, actN = 0, soldN = 0;
+    s.boxes.forEach(function (b) { by[b.n] = b; });
+    var num = function (v) { var x = parseFloat(String(v || '').replace(/[^0-9.]/g, '')); return isNaN(x) ? 0 : x; };
+    var m2 = function (v) { return '$' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
+    for (var i = 1; i <= BOX_COUNT; i++) {
+      var b = by[i];
+      if (!b) { lines.push({ box: i, pack: '', name: 'EMPTY', open: 'SLOT', close: '', price: '', total: '', cls: 'em' }); continue; }
+      var scannedB = s.closes[i] != null;
+      var close = scannedB ? s.closes[i] : b.size;
+      var isAct = !!s.newBoxes[i], isSold = !scannedB || close >= b.size;
+      var sold1 = close - b.pos, tot = sold1 * b.price;
+      tick += sold1; cents += Math.round(tot * 100);
+      var pk = b.gid + '-' + b.pack, nm = b.game.toUpperCase();
+      if (isAct) { actN++; acts.push({ box: i, time: b.at || '7:40 AM', pack: pk, price: b.price, name: nm }); }
+      if (isSold) { soldN++; sold.push({ box: i, pack: pk, price: b.price, name: nm }); } else activeValue += (b.size - close) * b.price;
+      lines.push({ box: i, pack: pk, name: nm, open: b.pos, close: close, price: b.price, total: tot, cls: isAct ? 'act' : (isSold ? 'sold' : '') });
+    }
+    var total = cents / 100, cash = num(s.term.cashes), onl = num(s.term.online), oc = num(s.term.oc);
+    var now = new Date(), hh = now.getHours(), mm = now.getMinutes();
+    var tm = ((hh % 12) || 12) + ':' + (mm < 10 ? '0' : '') + mm + (hh < 12 ? ' AM' : ' PM');
+    var dt = (now.getMonth() + 1 < 10 ? '0' : '') + (now.getMonth() + 1) + '/' + (now.getDate() < 10 ? '0' : '') + now.getDate() + '/' + now.getFullYear();
+    var opening = s.boxes.length - actN, ending = s.boxes.length - soldN;
+    return {
+      no: s.shiftNo, tickets: tick, total: total, totalShort: '$' + Math.round(total).toLocaleString('en-US'),
+      file: 'Shift-Report-' + s.shiftNo + '.pdf',
+      data: {
+        title: 'Shift Report', total: m2(total), store: 'AMIGO FOOD MART', address: '2300 MOODY RD WARNER ROBINS, GA, 31088',
+        user: this.owner() ? 'maulik' : 'rosa', shift: 'Shift #' + s.shiftNo, date: dt, time: tm, range: 'Opened 7:02 AM · Closed ' + tm,
+        rows: lines,
+        totals: [
+          { l: 'Total', v: m2(total), cls: 'b' }, { l: 'Cashes', v: m2(cash), cls: 'red' },
+          { l: 'Online', v: m2(onl), cls: 'b' }, { l: 'Online Cashes', v: m2(oc), cls: 'red' },
+          { l: 'Total Sales', v: m2(total + onl), cls: 'b' }, { l: 'Total Cashes', v: m2(cash + oc), cls: 'red' }
+        ],
+        stats: [
+          { l: 'Opening Count', v: opening }, { l: 'Ending Count', v: ending, cls: 'ln' }, { l: 'Activations', v: actN }, { l: 'Sold', v: soldN, cls: 'ln' },
+          { l: 'Discontinued', v: 0 }, { l: 'Removed', v: '-', cls: 'ln' }, { l: 'Back Inventory', v: s.stock.length }, { l: 'Total Inventory', v: ending + s.stock.length },
+          { l: 'Active Value', v: m2(activeValue), cls: 'ln' }
+        ],
+        acts: acts, sold: sold
+      }
+    };
+  }
+  sendMails() {
+    var self = this;
+    var list = ['maulik@amigofoodmart.com', 'accounts@amigofoodmart.com'];
+    this.setState({ mails: list.map(function (t) { return { to: t, st: 'queued' }; }) });
+    setTimeout(function () { self.setState({ mails: [{ to: list[0], st: 'sent' }, { to: list[1], st: 'failed' }] }); }, 1800);
+  }
+  upScan(raw) {
+    var s = this.state, r = parse(raw), row;
+    this.setState({ code: '' });
+    if (!r) { this.say('That barcode could not be read. Scan it again.', 'warn'); return; }
+    var code = r.gid + '-' + r.pack;
+    var act = s.boxes.filter(function (b) { return b.gid === r.gid && b.pack === r.pack; })[0];
+    var st = s.stock.filter(function (x) { return x.gid === r.gid && x.pack === r.pack; })[0];
+    var g = GAMES[r.gid];
+    var next = {};
+    if (act) row = { tag: 'Already here', cls: 'tag-muted', game: act.game, price: money0(act.price), size: act.size, code: code, note: 'active in box ' + act.n };
+    else if (st) row = { tag: 'Already here', cls: 'tag-muted', game: st.game, price: money0(st.price), size: st.size, code: code, note: 'in stock' };
+    else if (g) {
+      row = { tag: 'Added', cls: 'tag-money', game: g[0], price: money0(g[1]), size: g[2], code: code, note: 'in stock', added: { gid: r.gid, pack: r.pack } };
+      next.stock = s.stock.concat([{ gid: r.gid, game: g[0], price: g[1], pack: r.pack, size: g[2], since: 'today' }]);
+    } else row = { tag: 'New game', cls: 'tag-warn', game: 'Game ' + r.gid, price: '—', size: '—', code: code, note: 'add name & price in Inventory' };
+    next.up = [row].concat(s.up);
+    var added = next.up.filter(function (u) { return u.added; }).length;
+    next.last = { label: 'Updating inventory', title: (row.price !== '—' ? row.price + ' ' : '') + row.game, note: 'Packs scanned so far: ' + next.up.length + ' · ' + row.tag.toLowerCase(), n: String(next.up.length), cls: row.tag === 'Added' ? 'new' : (row.tag === 'New game' ? 'err' : '') };
+    this.setState(next);
+  }
+  finishUpdateFn() {
+    var s = this.state, n = s.up.filter(function (u) { return u.added; }).length;
+    this.setState({ updating: false, up: [], last: { label: 'Inventory updated', title: n + (n === 1 ? ' pack' : ' packs') + ' added', note: s.stock.length + ' books now in stock', n: String(n), cls: n ? 'new' : '' } });
+    this.say(n ? n + (n === 1 ? ' pack' : ' packs') + ' added to inventory.' : 'No new packs were added.', n ? '' : 'info');
+  }
+  findBox(n) { return this.state.boxes.filter(function (b) { return b.n === n; })[0]; }
+  owner() { return (this.props.role || 'Owner') === 'Owner'; }
+
+  // Step 1 — a ticket is scanned (from the always-ready scan field)
+  accept(raw) {
+    if (this.state.updating && !this.state.flow) { this.upScan(raw); return; }
+    var s = this.state, f = s.flow;
+    var r = parse(raw);
+    var setFlowMsg = function (self, msg, toInv) {
+      if (f) self.say(msg, 'warn');
+    };
+    this.setState({ code: '' });
+    if (!r) {
+      this.setState({ last: { title: 'Could not read barcode', note: 'Scan again or type game-pack-ticket', n: '!', cls: 'err' } });
+      setFlowMsg(this, 'That barcode could not be read. Scan the ticket again.');
+      if (!f) this.say('That barcode could not be read. Scan it again.', 'warn');
+      return;
+    }
+    var act = s.boxes.filter(function (b) { return b.gid === r.gid && b.pack === r.pack; })[0];
+    if (act && s.closing) {
+      if (r.pos < act.pos) {
+        this.setState({ flash: act.n, last: { title: money0(act.price) + ' ' + act.game, note: 'Ticket ' + pad(r.pos) + ' is lower than opening ' + pad(act.pos) + ' · rescan', n: String(act.n), cls: 'err' } });
+        this.say('Box ' + act.n + ': ticket ' + pad(r.pos) + ' is lower than the opening ' + pad(act.pos) + '. Scan the top ticket again.', 'warn');
+        return;
+      }
+      if (r.pos > act.size) { this.setState({ last: { title: money0(act.price) + ' ' + act.game, note: 'Ticket ' + pad(r.pos) + ' is outside this book', n: String(act.n), cls: 'err' } }); return; }
+      this.snap('scan of box ' + act.n);
+      var cl = Object.assign({}, s.closes); var again = cl[act.n] != null && cl[act.n] !== r.pos; cl[act.n] = r.pos;
+      var sold = r.pos - act.pos;
+      this.setState({ closes: cl, flash: act.n, last: { title: money0(act.price) + ' ' + act.game, note: (again ? 'Rescanned · ' : '') + 'Ticket ' + pad(r.pos) + ' · ' + sold + ' sold · ' + money0(sold * act.price), n: String(act.n), cls: 'closed' } });
+      return;
+    }
+    if (act) {
+      this.setState({ flash: act.n, last: { title: money0(act.price) + ' ' + act.game, note: 'Already in box ' + act.n + ' · ticket ' + pad(r.pos), n: String(act.n), cls: '' } });
+      setFlowMsg(this, 'This book is already active in box ' + act.n + '. Scan a ticket from a new book.');
+      return;
+    }
+    var st = s.stock.filter(function (x) { return x.gid === r.gid && x.pack === r.pack; })[0];
+    if (!st) {
+      this.setState({ last: { title: 'Book not in inventory', note: 'Game ' + r.gid + ' · Pack ' + r.pack, n: '!', cls: 'err' } });
+      if (f) setFlowMsg(this, 'Pack ' + r.pack + ' has not been received yet. Receive it first, then scan again.', true);
+      else this.say('Pack ' + r.pack + ' is not in inventory. Receive it first.', 'warn');
+      return;
+    }
+    if (!this.owner()) {
+      this.setState({ last: { title: money0(st.price) + ' ' + st.game, note: 'New book · ask the owner to activate', n: '?', cls: 'new' } });
+      this.say('This is a new book. Ask the owner to activate it.', 'info');
+      return;
+    }
+    if (r.pos > st.size - 1) {
+      this.setState({ last: { title: money0(st.price) + ' ' + st.game, note: 'Ticket ' + pad(r.pos) + ' is outside this book', n: '!', cls: 'err' } });
+      return;
+    }
+    var empties = this.emptyList();
+    var preset = f && f.preset ? f.preset : null;
+    this.setState({
+      last: { title: money0(st.price) + ' ' + st.game, note: 'New book · choose its box', n: '?', cls: 'new' },
+      flow: { step: 2, preset: preset, box: String(preset || empties[0] || ''), pack: st, pos: pad(r.pos), errBox: false }
+    });
+  }
+  boxErr(f) {
+    if (!f || !f.pack) return '';
+    var n = parseInt(f.box, 10);
+    if (!f.box || isNaN(n)) return 'Type or scan a box number.';
+    if (n < 1 || n > BOX_COUNT) return 'There is no box ' + f.box + '. Boxes are 1 to ' + BOX_COUNT + '.';
+    var b = this.findBox(n);
+    if (b) return 'Box ' + n + ' already has ' + money0(b.price) + ' ' + b.game + '. Pick an empty box.';
+    var p = parseInt(f.pos, 10);
+    if (isNaN(p) || p < 0 || p > f.pack.size - 1) return 'Starting ticket must be 000 to ' + pad(f.pack.size - 1) + '.';
+    return '';
+  }
+  // Step 2 → 3 — add the book to the box
+  finish(silent) {
+    var s = this.state, f = s.flow;
+    if (!f || f.step !== 2 || !f.pack) return;
+    var err = this.boxErr(f);
+    if (err) { this.setState({ flow: Object.assign({}, f, { errBox: true, tick: (f.tick || 0) + 1 }) }); return; }
+    var n = parseInt(f.box, 10), pk = f.pack;
+    var nowD = new Date(), hh = nowD.getHours(), mi = nowD.getMinutes();
+    var tile = { n: n, gid: pk.gid, game: pk.game, price: pk.price, pack: pk.pack, size: pk.size, pos: parseInt(f.pos, 10), act: 0, idle: 0, at: ((hh % 12) || 12) + ':' + (mi < 10 ? '0' : '') + mi + (hh < 12 ? ' AM' : ' PM') };
+    if (!silent) this.snap('activation in box ' + n);
+    var nb = Object.assign({}, s.newBoxes); nb[n] = true;
+    var next = {
+      boxes: s.boxes.concat([tile]),
+      stock: s.stock.filter(function (x) { return !(x.gid === pk.gid && x.pack === pk.pack); }),
+      newBoxes: nb,
+      flow: null, justBox: n,
+      toast: { text: money0(pk.price) + ' ' + pk.game + ' is now in box ' + n + '. Check that box ' + n + ' is green.', cls: '' },
+      last: { title: money0(pk.price) + ' ' + pk.game, note: 'Activated in box ' + n + ' · from ticket ' + f.pos, n: String(n), cls: 'new' }
+    };
+    if (silent) Object.assign(this.state, next); else this.setState(next);
+  }
+  renderVals() {
+    var self = this, s = this.state, f = s.flow;
+    var owner = this.owner();
+    var empties = this.emptyList();
+    var used = {}; s.boxes.forEach(function (b) { used[b.n] = true; });
+    var sb = s.sel != null ? this.findBox(s.sel) : null;
+    var step = f ? f.step : 0;
+    var kErr = step === 2 ? this.boxErr(f) : '';
+    var setF = function (patch) { self.setState({ flow: Object.assign({}, f, patch, { errBox: false }) }); };
+    var typeBox = function (v) { if (step !== 2) return; setF({ box: String(v).replace(/\D/g, '').slice(0, 3) }); };
+    var stepEmpty = function (dir) {
+      if (step !== 2) return;
+      var cur = parseInt(f.box, 10) || (dir > 0 ? 0 : BOX_COUNT + 1);
+      var list = dir > 0 ? empties.filter(function (n) { return n > cur; }) : empties.filter(function (n) { return n < cur; }).reverse();
+      if (list.length) typeBox(list[0]);
+    };
+    var startFlow = function (preset) {
+      if (step === 1 && !preset) { self.setState({ flow: null }); return; }
+      self.setState({ flow: { step: 1, preset: preset || null, box: '' }, code: '', justBox: null });
+      try { var el = document.getElementById('scan'); if (el) el.focus(); } catch (e) {}
+    };
+
+    var match = function (b, key) {
+      if (key === 'month') return b.act <= 18;
+      if (key === 'week') return b.act <= 6;
+      if (key === 'today') return b.act === 0;
+      if (key === 'idle') return b.idle >= 7;
+      return true;
+    };
+    var visible = s.boxes;
+    var scanned = s.boxes.filter(function (b) { return s.closes[b.n] != null; }).length;
+    var tiles = visible.slice().sort(function (x, y) { return y.n - x.n; }).map(function (b) {
+      var just = s.justBox === b.n;
+      var done = s.closing && s.closes[b.n] != null;
+      return {
+        n: b.n, price: money0(b.price), v: done ? s.closes[b.n] : b.pos,
+        isJust: just, isDone: done,
+        title: b.game + ' · pack ' + b.pack,
+        cls: (just ? 'just ' : '') + (done ? 'done ' : '') + (s.flash === b.n ? 'flash ' : '') + (s.moved && s.moved[b.n] ? 'moved' : ''),
+        aria: 'Box ' + b.n + ', ' + b.game + ', ' + money0(b.price) + ', ticket ' + (done ? s.closes[b.n] : b.pos) + (done ? ', scanned' : ''),
+        open: function () { self.setState({ modal: 'box', sel: b.n, btab: 'move', moveTo: null, rmPos: pad(b.pos), rmWhy: 'disc' }); }
+      };
+    });
+    var slots = [];
+    for (var i = 1; i <= BOX_COUNT; i++) (function (n) {
+      var full = !!used[n];
+      var pickN = step === 2 && String(f.box) === String(n) && !full;
+      var just = s.justBox === n;
+      slots.push({
+        n: n, cls: (full ? 'full ' : '') + (pickN ? 'pick ' : '') + (just ? 'just' : ''),
+        aria: full ? 'Box ' + n + ' has an active book' : 'Box ' + n + ' is empty',
+        click: function () {
+          if (full) { var b = self.findBox(n); self.setState({ modal: 'box', sel: n, btab: 'move', moveTo: null, rmPos: pad(b.pos), rmWhy: 'disc' }); return; }
+          if (!owner) return;
+          if (step === 2) { typeBox(n); return; }
+          startFlow(n);
+        }
+      });
+    })(i);
+
+
+    var near = empties.slice(0, 10);
+    if (step === 2 && f.box && near.indexOf(parseInt(f.box, 10)) < 0 && empties.indexOf(parseInt(f.box, 10)) >= 0) near = [parseInt(f.box, 10)].concat(near.slice(0, 9));
+
+    return {
+      themeCls: s.dark ? 'dark' : '', dark: s.dark,
+      role: owner ? 'Owner' : 'Salesperson',
+      isOwner: owner, isSales: !owner,
+      toggleTheme: function () { self.setState({ dark: !s.dark }); },
+      open: s.open, closed: !s.open,
+      shift: { no: s.shiftNo, by: owner ? 'Maulik' : 'Rosa', at: s.shiftAt || '7:02 AM', last: s.open ? s.shiftNo - 1 : s.shiftNo, lastAt: s.lastAt || (s.open ? 'yesterday 10:05 PM' : 'today 3:00 PM') },
+      refreshedAt: s.refreshedAt, spinCls: s.spin ? 'spin' : '',
+      k: { active: s.boxes.length, empty: empties.length, stock: s.stock.length },
+      boxCount: BOX_COUNT,
+      tiles: tiles, slots: slots,
+      closing: s.closing, scanned: scanned,
+      sb2: { start: !s.open && !s.stage, end: s.open && !s.closing && !s.stage, report: s.open && s.closing && (!s.stage || s.stage === 'confirm'), wait: s.stage === 'calc' || s.stage === 'starting', newShift: s.stage === 'report' },
+      showRefresh: s.stage !== 'report',
+      isCalc: s.stage === 'calc' || s.stage === 'starting', calcText: s.stage === 'starting' ? 'Starting shift #' + (s.shiftNo + 1) + ' — loading the closing numbers…' : 'Calculating the shift report…',
+      isReport: s.stage === 'report' && !!s.report, isRack: s.stage !== 'calc' && s.stage !== 'report' && s.stage !== 'starting',
+      getReport: function () { self.setState({ stage: 'confirm', modal: null }); },
+      showConfirm: s.stage === 'confirm',
+      cf: (function () {
+        var soldL = s.boxes.filter(function (b) { return s.closes[b.n] == null || s.closes[b.n] >= b.size; }).sort(function (a, b) { return a.n - b.n; });
+        return {
+          acts: Object.keys(s.newBoxes).length, empty: empties.length,
+          sold: soldL.map(function (b) { return { n: b.n, price: money0(b.price), game: b.game, pack: b.gid + '-' + b.pack }; }),
+          soldN: soldL.length, noSold: soldL.length === 0, warn: soldL.some(function (b) { return s.closes[b.n] == null; })
+        };
+      })(),
+      term: s.term,
+      onCashes: function (e) { self.setState({ term: Object.assign({}, s.term, { cashes: e.target.value.replace(/[^0-9.]/g, '') }) }); },
+      onOnline: function (e) { self.setState({ term: Object.assign({}, s.term, { online: e.target.value.replace(/[^0-9.]/g, '') }) }); },
+      onOc: function (e) { self.setState({ term: Object.assign({}, s.term, { oc: e.target.value.replace(/[^0-9.]/g, '') }) }); },
+      cancelConfirm: function () { self.setState({ stage: null }); },
+      confirmClose: function () {
+        self.setState({ stage: 'calc', last: { label: 'Please wait', title: 'Report generating', note: 'Calculating shift #' + s.shiftNo, n: '…', cls: '' } });
+        setTimeout(function () {
+          var r = self.buildReport();
+          self.setState({ stage: 'report', report: r, last: { label: 'Shift report', title: 'Total sale', note: 'Shift #' + r.no + ' closed · ' + r.tickets + ' tickets', n: r.totalShort, cls: 'total' } });
+          self.hist = [];
+          self.sendMails();
+        }, 1600);
+      },
+      rp: s.report ? { no: s.report.no, file: s.report.file, data: s.report.data } : { data: null },
+      mails: s.mails.map(function (m, i) {
+        var map = { queued: ['Sending…', 'tag-muted'], sent: ['Sent', 'tag-money'], failed: ['Failed', 'tag-danger'] };
+        return { to: m.to, status: map[m.st][0], cls: map[m.st][1], failed: m.st === 'failed',
+          retry: function () {
+            var ms = s.mails.slice(); ms[i] = { to: m.to, st: 'queued' }; self.setState({ mails: ms });
+            setTimeout(function () { var m2 = self.state.mails.slice(); m2[i] = { to: m.to, st: 'sent' }; self.setState({ mails: m2 }); self.say('Report emailed to ' + m.to + '.'); }, 1400);
+          } };
+      }),
+      print: function () { try { window.print(); } catch (e) {} },
+      pdf: function () { if (s.report) self.say(s.report.file + ' downloaded.'); },
+      startNewShift: function () {
+        var no = s.shiftNo + 1;
+        self.setState({ stage: 'starting', last: { label: 'Please wait', title: 'New shift', note: 'Loading closing numbers…', n: '…', cls: '' } });
+        setTimeout(function () {
+          var moved = {};
+          var boxes = s.boxes.filter(function (b) { return s.closes[b.n] != null && s.closes[b.n] < b.size; })
+            .map(function (b) { if (s.closes[b.n] !== b.pos) moved[b.n] = true; return Object.assign({}, b, { pos: s.closes[b.n] }); });
+          var d = new Date(), hh = d.getHours(), mi = d.getMinutes();
+          self.hist = [];
+          self.setState({ boxes: boxes, closes: {}, closing: false, stage: null, report: null, mails: [], newBoxes: {}, justBox: null, moved: moved,
+            shiftNo: no, open: true, lastAt: 'today ' + ((hh % 12) || 12) + ':' + (mi < 10 ? '0' : '') + mi + (hh < 12 ? ' AM' : ' PM'), shiftAt: ((hh % 12) || 12) + ':' + (mi < 10 ? '0' : '') + mi + (hh < 12 ? ' AM' : ' PM'), term: { cashes: '', online: '', oc: '' },
+            last: { label: 'Shift #' + no, title: 'New shift in progress', note: 'Last closing numbers are now the opening numbers', n: '0', cls: '' } });
+          self.say('Shift #' + no + ' started. Sold-out boxes are now empty — scan a ticket to activate a new book.');
+          setTimeout(function () { self.setState({ moved: null }); }, 2500);
+        }, 1400);
+      },
+      doneReport: function () {
+        var boxes = s.boxes.filter(function (b) { return s.closes[b.n] != null && s.closes[b.n] < b.size; })
+          .map(function (b) { return Object.assign({}, b, { pos: s.closes[b.n] }); });
+        self.setState({ boxes: boxes, closes: {}, closing: false, stage: null, report: null, mails: [], newBoxes: {}, open: false,
+          last: { label: 'Last scan', title: 'Shift #' + s.shiftNo + ' closed', note: 'Tap Start Shift to begin the next one', n: '–', cls: '' } });
+      },
+      endShift: function () {
+        self.setState({ closing: true, flow: null, justBox: null, modal: null });
+        self.say('Scan the top ticket in each box. Boxes turn green as you scan, then tap Get Report.', 'info');
+        try { var el = document.getElementById('scan'); if (el) el.focus(); } catch (e) {}
+      },
+      cancel: function () {
+        if (s.updating) {
+          var keys = {}; s.up.forEach(function (u) { if (u.added) keys[u.added.gid + '-' + u.added.pack] = true; });
+          self.setState({ updating: false, up: [], stock: s.stock.filter(function (x) { return !keys[x.gid + '-' + x.pack]; }), last: s.prevLast || s.last });
+          self.say('Inventory update cancelled. Nothing was added.', 'info'); return;
+        }
+        if (step === 2 || s.stage) return;
+        if (step === 1) { self.setState({ flow: null }); self.say('Activation cancelled.', 'info'); return; }
+        if (s.closing) { self.hist = []; self.setState({ closing: false, closes: {} }); self.say('End shift cancelled. Shift #' + s.shiftNo + ' is still running.', 'info'); }
+      },
+      cancelOff: !s.updating && (!!s.stage || !(step === 1 || s.closing)),
+      cancelTitle: s.updating ? 'Stop updating and remove the packs added just now' : s.closing ? 'Stop ending the shift and clear the scans' : (step === 1 ? 'Stop activating a book' : 'Nothing to cancel'),
+      undo: function () {
+        if (s.updating) {
+          var u0 = s.up[0]; if (!u0) return;
+          var st2 = u0.added ? s.stock.filter(function (x) { return !(x.gid === u0.added.gid && x.pack === u0.added.pack); }) : s.stock;
+          var rest = s.up.slice(1);
+          self.setState({ up: rest, stock: st2, last: { label: 'Updating inventory', title: 'Removed ' + u0.code, note: 'Packs scanned so far: ' + rest.length, n: String(rest.length), cls: '' } });
+          return;
+        }
+        var h = self.hist.pop();
+        if (!h) return;
+        self.setState(Object.assign({}, h.st, { flash: null }));
+        self.say('Undone: ' + h.label + '.', 'info');
+      },
+      undoOff: s.updating ? s.up.length === 0 : (!!s.stage || self.hist.length === 0),
+      undoTitle: s.updating ? (s.up.length ? 'Remove the last scanned pack ' + s.up[0].code : 'Nothing to undo') : self.hist.length ? 'Undo the last ' + self.hist[self.hist.length - 1].label : 'Nothing to undo',
+      openSettle: function () { self.setState({ modal: 'settle' }); },
+      showSettle: s.modal === 'settle',
+      st: (function () {
+        var t = 0, c = 0;
+        s.boxes.forEach(function (b) { if (s.closes[b.n] != null) { t += s.closes[b.n] - b.pos; c += (s.closes[b.n] - b.pos) * b.price; } });
+        return {
+          sub: s.open ? 'Shift #' + s.shiftNo + ' · ' + (owner ? 'Maulik' : 'Rosa') + ' · started 7:02 AM' : 'No shift open',
+          scanned: scanned + ' / ' + s.boxes.length,
+          scanNote: s.closing ? (s.boxes.length - scanned) + ' left to scan' : 'Tap End Shift to start scanning',
+          tickets: t, sales: '$' + c.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+        };
+      })(),
+      showList: s.modal === 'list' && !!s.list,
+      pl: (function () {
+        if (!s.list) return { rows: [] };
+        var info = LIST_INFO[s.list];
+        var rows = s.boxes.filter(function (b) { return match(b, s.list); }).sort(function (x, y) { return s.list === 'idle' ? y.idle - x.idle : x.act - y.act; }).map(function (b) {
+          return { n: b.n, game: b.game, pack: b.gid + ' · ' + b.pack, price: money0(b.price), pos: pad(b.pos),
+            extra: s.list === 'idle' ? b.idle + ' days' : ago(b.act), tagCls: s.list === 'idle' ? (b.idle >= 21 ? 'tag-danger' : 'tag-warn') : 'tag-muted' };
+        });
+        return { title: info[0], sub: info[1], col: info[2], count: rows.length, rows: rows, has: rows.length > 0, empty: rows.length === 0,
+          emptyTitle: s.list === 'idle' ? 'Every book is selling' : 'No books activated yet',
+          emptyText: s.list === 'idle' ? 'No box has gone 7 days without a sale.' : 'Scan a ticket from a new book to activate it.' };
+      })(),
+      updating: !!s.updating, notUpdating: !s.updating,
+      updCls: s.updating ? 'on' : '', updPressed: s.updating ? 'true' : 'false',
+      updLabel: s.updating ? 'Updating Inventory' : 'Update Inventory',
+      openUpdate: function () {
+        if (s.updating) { self.finishUpdateFn(); return; }
+        if (s.closing || s.stage) { self.say('Finish the shift report first, then update inventory.', 'warn'); return; }
+        self.setState({ updating: true, up: [], flow: null, prevLast: s.last, last: { label: 'Updating inventory', title: 'Start scanning packs', note: 'Packs scanned so far: 0', n: '0', cls: '' } });
+        try { var el = document.getElementById('scan'); if (el) el.focus(); } catch (e) {}
+      },
+      finishUpdate: function () { self.finishUpdateFn(); },
+      hasUp: s.up.length > 0, noUp: s.up.length === 0,
+      upRows: s.up.map(function (u, i) { return Object.assign({}, u, { i: s.up.length - i, rowCls: i === 0 ? 'top' : '' }); }),
+      upAdded: s.up.filter(function (u) { return u.added; }).length,
+      cancelEnd: function () { self.setState({ closing: false, closes: {} }); self.say('End shift cancelled. Shift #' + s.shiftNo + ' is still running.', 'info'); },
+      filters: FILTERS.map(function (x) {
+        var n = s.boxes.filter(function (b) { return match(b, x[0]); }).length;
+        return { label: x[1], n: n, cls: x[0] === 'idle' && n ? 'warn' : '', click: function () { self.setState({ modal: 'list', list: x[0] }); } };
+      }),
+      emptyHint: owner ? 'Empty — tap to activate a book' : 'Empty box',
+
+      startShift: function () {
+        if (s.open) { self.setState({ last: { label: 'Shift #' + s.shiftNo, title: 'New shift is already in process', note: 'No new shift was created', n: '0', cls: '' } }); self.say('Shift #' + s.shiftNo + ' is already open. No new shift was created.', 'warn'); return; }
+        self.setState({ open: true, shiftNo: s.shiftNo + 1, newBoxes: {}, refreshedAt: 'just now', closing: false, closes: {} });
+        self.say('Shift #' + (s.shiftNo + 1) + ' started · ' + s.boxes.length + ' boxes loaded with their last closing positions.');
+      },
+      refresh: function () {
+        self.setState({ spin: true, refreshedAt: 'just now' });
+        setTimeout(function () { self.setState({ spin: false }); }, 800);
+        self.say(s.open ? 'Boxes reloaded. Shift #' + s.shiftNo + ' is still open — no new shift created.' : 'Boxes reloaded.', 'info');
+      },
+
+      // Scan field + flow
+      code: s.code,
+      scanHot: s.updating ? 'upd' : (step === 1 ? 'hot' : (s.closing ? 'closing' : '')),
+      scanPh: s.updating ? 'Scan one ticket from each pack…' : step === 1 ? 'Scan a ticket from the new book…' : (s.closing ? 'Scan the top ticket in each box…' : 'Scan a ticket'),
+      onCode: function (e) { self.setState({ code: e.target.value }); },
+      onCodeKey: function (e) { if (e.key === 'Enter') self.accept(e.target.value); },
+      readCode: function () { self.accept(s.code); },
+      last: Object.assign({ label: 'Last scan' }, s.last),
+      samples: (s.closing ? CLOSE_SAMPLES : SAMPLES).map(function (x) { return { code: x[0], hint: x[1], use: function () { self.accept(x[0]); } }; }),
+      actOn: step ? 'on' : '',
+      startFlow: function () { startFlow(null); },
+
+      // Step 2 popup
+      showKey: step === 2,
+      kp: step === 2 ? {
+        price: money0(f.pack.price), game: f.pack.game, gid: f.pack.gid, pack: f.pack.pack, size: f.pack.size, since: f.pack.since || 'today',
+        box: f.box, boxShow: f.box || '—', pos: f.pos,
+        errCls: f.errBox ? 'err' : '',
+        msg: kErr ? (f.errBox || f.box ? kErr : '') : 'Box ' + f.box + ' is empty and ready.',
+        msgCls: kErr ? 'err' : 'ok'
+      } : {},
+      near: near.map(function (n) { return { n: n, cls: step === 2 && String(f.box) === String(n) ? 'on' : '', click: function () { typeBox(n); } }; }),
+      onBoxIn: function (e) { typeBox(e.target.value); },
+      onBoxKey: function (e) { if (e.key === 'Enter') self.finish(); },
+      boxUp: function () { stepEmpty(1); },
+      boxDown: function () { stepEmpty(-1); },
+      keys: [7, 8, 9, 4, 5, 6, 1, 2, 3].map(function (d) { return { n: d, press: function () { typeBox((f && f.box ? f.box : '') + d); } }; }),
+      k0: function () { if (step === 2) typeBox((f.box || '') + '0'); },
+      kClear: function () { typeBox(''); },
+      kBack: function () { if (step === 2) typeBox(String(f.box || '').slice(0, -1)); },
+      onPos: function (e) { setF({ pos: e.target.value.replace(/\D/g, '').slice(0, 3) }); },
+      addToBox: function () { self.finish(); },
+      notInBox: function () {
+        if (step !== 2) return;
+        var pk = f.pack;
+        self.setState({ flow: null, last: { title: money0(pk.price) + ' ' + pk.game, note: 'Not in a box · kept in stock', n: '–', cls: '' } });
+        self.say(pk.game + ' (pack ' + pk.pack + ') stays in stock. Activate it any time.', 'info');
+      },
+
+      // Box details
+      showBox: s.modal === 'box' && !!sb,
+      closeModal: function () { self.setState({ modal: null }); },
+      stop: function (e) { if (e && e.stopPropagation) e.stopPropagation(); },
+      sb: sb ? {
+        n: sb.n, game: sb.game, pack: sb.pack, price: money0(sb.price), pos: pad(sb.pos), size: sb.size, final: pad(sb.size - 1), gid: sb.gid,
+        posNote: s.newBoxes[sb.n] ? 'set when activated' : 'from last shift close',
+        since: s.newBoxes[sb.n] ? 'today' : 'earlier', rmPos: s.rmPos
+      } : {},
+      bt: { move: s.btab === 'move' ? 'on' : '', remove: s.btab === 'remove' ? 'on' : '', isMove: s.btab === 'move', isRemove: s.btab === 'remove' },
+      tabMove: function () { self.setState({ btab: 'move' }); },
+      tabRemove: function () { self.setState({ btab: 'remove' }); },
+      movePick: empties.slice(0, 14).map(function (n) { return { n: n, cls: s.moveTo === n ? 'on' : '', click: function () { self.setState({ moveTo: n }); } }; }),
+      moveTo: s.moveTo || '—', moveOff: !s.moveTo,
+      showMoveBtn: owner && s.btab === 'move',
+      showRmBtn: owner && s.btab === 'remove',
+      onRmPos: function (e) { self.setState({ rmPos: e.target.value.replace(/\D/g, '').slice(0, 3) }); },
+      rr: { disc: s.rmWhy === 'disc' ? 'on' : '', ret: s.rmWhy === 'ret' ? 'on' : '', dmg: s.rmWhy === 'dmg' ? 'on' : '' },
+      rrDisc: function () { self.setState({ rmWhy: 'disc' }); },
+      rrRet: function () { self.setState({ rmWhy: 'ret' }); },
+      rrDmg: function () { self.setState({ rmWhy: 'dmg' }); },
+      doMove: function () {
+        if (!sb || !s.moveTo) return;
+        var to = s.moveTo, from = sb.n;
+        var boxes = s.boxes.map(function (b) { return b.n === from ? Object.assign({}, b, { n: to }) : b; });
+        var nb = Object.assign({}, s.newBoxes); if (nb[from]) { nb[to] = true; delete nb[from]; }
+        self.setState({ boxes: boxes, newBoxes: nb, modal: null, sel: null });
+        self.say(sb.game + ' moved from box ' + from + ' to box ' + to + '. Box ' + from + ' is now empty.');
+      },
+      doRemove: function () {
+        if (!sb) return;
+        self.setState({ boxes: s.boxes.filter(function (b) { return b.n !== sb.n; }), modal: null, sel: null });
+        self.say('Pack ' + sb.pack + ' removed at ticket ' + (s.rmPos || pad(sb.pos)) + '. Box ' + sb.n + ' is now empty.', 'warn');
+      },
+
+      hasToast: !!s.toast,
+      toast: s.toast || { text: '', cls: '' },
+      hideToast: function () { self.setState({ toast: null }); }
+    };
+  }
+}
+</script>
+</body>
+</html>

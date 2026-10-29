@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+
+# Production build output
+dist/
+dist-ssr/
+
+# Environment variables & secrets (CRITICAL: Do not commit to git)
+.env
+.env.*
+!.env.example
+*.local
+
+# System & Editor files
+.DS_Store
+Thumbs.db
+*.log
+
+# Server local persistent backups & temp scratch files
+server_data/
+data/
+pos_preview*.png
+scratch/

@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Reports</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="/_blob/f3ff9ff7fc8e731e1805db690f5affd2">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800&amp;family=JetBrains+Mono:wght@500;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.h-app{height:100vh;overflow:hidden}
+.h-main{height:100vh;min-height:0;overflow:hidden;display:flex;flex-direction:column}
+.h-top{display:flex;flex-wrap:wrap;align-items:center;gap:12px 16px;padding:14px 24px;background:var(--surface);border-bottom:1px solid var(--line);flex:none}
+.h-top h1{font-size:22px;font-weight:800;letter-spacing:-.01em}
+.h-top .sub{font-size:13px;color:var(--ink-3)}
+.h-top .grow{flex:1 1 auto}
+.h-scroll{flex:1 1 auto;min-height:0;overflow-y:auto;padding:16px 24px 28px;display:flex;flex-direction:column;gap:16px}
+.h-bar{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+.h-bar .grow{flex:1 1 auto}
+.dates{display:flex;flex-wrap:wrap;gap:8px}
+.r-tot{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.mail-cell{display:flex;align-items:center;gap:8px}
+.r-acts{display:flex;flex-wrap:wrap;gap:8px}
+@media (max-width:820px){.h-app,.h-main{height:auto;overflow:visible}.h-scroll{overflow:visible}.r-tot{grid-template-columns:1fr}}
+</style>
+</helmet>
+<div class="lt {{themeCls}}">
+<div class="app h-app">
+  <dc-import name="Sidebar" active="reports" dark="{{dark}}" on-toggle-theme="{{toggleTheme}}" hint-size="236px,100vh"></dc-import>
+
+  <main class="main h-main">
+    <header class="h-top">
+      <div>
+        <h1>Reports</h1>
+        <div class="sub">Saved shift reports and the daily total</div>
+      </div>
+      <span class="grow"></span>
+      <div class="tabs" role="tablist">
+        <button class="tab {{tb.shift}}" role="tab" onClick="{{tabShift}}"><svg class="ic ic-sm" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path></svg>Shift reports</button>
+        <button class="tab {{tb.day}}" role="tab" onClick="{{tabDay}}"><svg class="ic ic-sm" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="4" rx="2"></rect><path d="M16 2v4"></path><path d="M8 2v4"></path><path d="M3 10h18"></path></svg>Daily report</button>
+      </div>
+    </header>
+
+    <div class="h-scroll">
+      <sc-if value="{{isShift}}" hint-placeholder-val="{{ true }}">
+        <sc-if value="{{hasFailed}}" hint-placeholder-val="{{ true }}">
+          <div class="banner warn"><svg class="ic" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg><div><b>{{failedText}}</b>The report is saved. Tap Retry to send the email again — totals do not change.</div></div>
+        </sc-if>
+        <section class="card">
+          <div class="tbl-wrap">
+            <table class="tbl">
+              <thead><tr><th>Shift</th><th>Date</th><th>Salesperson</th><th>Started</th><th>Closed</th><th class="r">Tickets</th><th class="r">Sales</th><th>Email</th><th class="r"></th></tr></thead>
+              <tbody>
+                <sc-for list="{{shifts}}" as="r" hint-placeholder-count="8">
+                  <tr>
+                    <td><b>#{{r.no}}</b></td>
+                    <td>{{r.date}}</td>
+                    <td>{{r.by}}</td>
+                    <td class="muted">{{r.start}}</td>
+                    <td class="muted">{{r.end}}</td>
+                    <td class="r" style="font-weight: 700">{{r.tickets}}</td>
+                    <td class="r money" style="font-weight: 800">{{r.sales}}</td>
+                    <td><div class="mail-cell"><span class="tag {{r.mailCls}}">{{r.mail}}</span><sc-if value="{{r.failed}}" hint-placeholder-val="{{ false }}"><button class="btn btn-sm" onClick="{{r.retry}}">Retry</button></sc-if></div></td>
+                    <td class="r"><button class="btn btn-sm" onClick="{{r.view}}">View</button></td>
+                  </tr>
+                </sc-for>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </sc-if>
+
+      <sc-if value="{{isDay}}" hint-placeholder-val="{{ false }}">
+        <div class="h-bar">
+          <div class="dates" role="group" aria-label="Pick a date">
+            <sc-for list="{{days}}" as="d" hint-placeholder-count="5"><button class="chip {{d.cls}}" onClick="{{d.click}}">{{d.label}}</button></sc-for>
+          </div>
+          <span class="grow"></span>
+          <div class="r-acts">
+            <button class="btn" onClick="{{print}}"><svg class="ic" viewBox="0 0 24 24"><path d="M6 9V2h12v7"></path><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect width="12" height="8" x="6" y="14"></rect></svg>Print</button>
+            <button class="btn btn-primary" onClick="{{emailDay}}"><svg class="ic" viewBox="0 0 24 24"><rect width="20" height="16" x="2" y="4" rx="2"></rect><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"></path></svg>Email daily report</button>
+          </div>
+        </div>
+        <div class="r-tot">
+          <div class="kpi hero"><span class="kpi-l">Ticket sales · {{day.label}}</span><span class="kpi-v">{{day.sales}}</span><span class="kpi-s">sum of closed shifts</span></div>
+          <div class="kpi"><span class="kpi-l">Tickets sold</span><span class="kpi-v">{{day.tickets}}</span><span class="kpi-s">across all shifts</span></div>
+          <div class="kpi"><span class="kpi-l">Closed shifts</span><span class="kpi-v">{{day.count}}</span><span class="kpi-s">{{day.openNote}}</span></div>
+        </div>
+        <section class="card">
+          <div class="card-h"><h3>Shifts on {{day.label}}</h3></div>
+          <div class="tbl-wrap">
+            <table class="tbl">
+              <thead><tr><th>Shift</th><th>Salesperson</th><th>Time</th><th class="r">Tickets</th><th class="r">Sales</th><th class="r"></th></tr></thead>
+              <tbody>
+                <sc-for list="{{dayShifts}}" as="r" hint-placeholder-count="2">
+                  <tr><td><b>#{{r.no}}</b></td><td>{{r.by}}</td><td class="muted">{{r.start}} – {{r.end}}</td><td class="r" style="font-weight: 700">{{r.tickets}}</td><td class="r money" style="font-weight: 800">{{r.sales}}</td><td class="r"><button class="btn btn-sm" onClick="{{r.view}}">View</button></td></tr>
+                </sc-for>
+                <tr><td colspan="3"><b>Day total</b></td><td class="r" style="font-weight: 800">{{day.tickets}}</td><td class="r money" style="font-weight: 800">{{day.sales}}</td><td></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </sc-if>
+    </div>
+  </main>
+</div>
+
+<!-- Report preview -->
+<sc-if value="{{showView}}" hint-placeholder-val="{{ false }}">
+  <div class="scrim" onClick="{{closeView}}">
+    <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="v-h" onClick="{{stop}}">
+      <div class="modal-h">
+        <span class="icon-wrap"><svg class="ic ic-lg" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path><path d="M16 13H8"></path><path d="M16 17H8"></path></svg></span>
+        <div><h2 id="v-h">Shift Report · #{{v.no}}</h2><p>{{v.date}} · {{v.by}} · {{v.start}} – {{v.end}}</p></div>
+        <button class="btn btn-ghost icon-btn x" onClick="{{closeView}}" aria-label="Close"><svg class="ic" viewBox="0 0 24 24"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg></button>
+      </div>
+      <div class="modal-b">
+        <div class="stats">
+          <div class="stat"><span class="l">Ticket sales</span><span class="v money">{{v.sales}}</span></div>
+          <div class="stat"><span class="l">Tickets sold</span><span class="v">{{v.tickets}}</span></div>
+          <div class="stat"><span class="l">Packs counted</span><span class="v">{{v.lineCount}}</span></div>
+          <div class="stat"><span class="l">Email</span><span class="v" style="font-size: 16px"><span class="tag {{v.mailCls}}">{{v.mail}}</span></span></div>
+        </div>
+        <div class="tbl-wrap" style="border: 1px solid var(--line); border-radius: 12px">
+          <table class="tbl">
+            <thead><tr><th>Box</th><th>Game · Pack</th><th class="r">Price</th><th class="r">Opening</th><th class="r">Closing</th><th class="r">Sold</th><th class="r">Sales</th></tr></thead>
+            <tbody>
+              <sc-for list="{{v.lines}}" as="l" hint-placeholder-count="8">
+                <tr><td><span class="boxn">{{l.n}}</span></td><td class="g"><b>{{l.game}}</b><span>{{l.pack}}</span></td><td class="r">{{l.price}}</td><td class="r mono">{{l.open}}</td><td class="r mono">{{l.close}}</td><td class="r" style="font-weight: 800">{{l.sold}}</td><td class="r money" style="font-weight: 800">{{l.sales}}</td></tr>
+              </sc-for>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-f">
+        <button class="btn" onClick="{{print}}"><svg class="ic" viewBox="0 0 24 24"><path d="M6 9V2h12v7"></path><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect width="12" height="8" x="6" y="14"></rect></svg>Print</button>
+        <button class="btn" onClick="{{pdf}}"><svg class="ic" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><path d="m7 10 5 5 5-5"></path><path d="M12 15V3"></path></svg>Download PDF</button>
+        <button class="btn btn-primary" onClick="{{resend}}" style="color: #ffffff"><svg class="ic" viewBox="0 0 24 24"><rect width="20" height="16" x="2" y="4" rx="2"></rect><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"></path></svg><span>Email again</span></button>
+      </div>
+    </div>
+  </div>
+</sc-if>
+
+<sc-if value="{{hasToast}}" hint-placeholder-val="{{ false }}">
+  <div class="toast {{toast.cls}}" role="status" style="animation: toastIn .3s cubic-bezier(.2,.7,.2,1) both">
+    <span class="ti"><svg class="ic ic-sm" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"></path></svg></span>
+    <span>{{toast.text}}</span>
+    <button class="btn" onClick="{{hideToast}}">OK</button>
+  </div>
+</sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"tab":{"editor":"enum","options":["shift","day"],"default":"shift"},"$preview":{"width":1440,"height":1000}}'>
+var SHIFTS = [
+  { no: 13, day: 'Oct 18', date: 'Sat, Oct 18', by: 'Rosa',   start: '7:02 AM', end: '3:00 PM',  tickets: 214, cents: 128400, mail: 'sent' },
+  { no: 12, day: 'Oct 17', date: 'Fri, Oct 17', by: 'Daniel', start: '3:04 PM', end: '10:05 PM', tickets: 251, cents: 151200, mail: 'failed' },
+  { no: 11, day: 'Oct 17', date: 'Fri, Oct 17', by: 'Rosa',   start: '7:00 AM', end: '3:01 PM',  tickets: 198, cents: 117300, mail: 'sent' },
+  { no: 10, day: 'Oct 16', date: 'Thu, Oct 16', by: 'Daniel', start: '3:02 PM', end: '10:02 PM', tickets: 233, cents: 139600, mail: 'sent' },
+  { no: 9,  day: 'Oct 16', date: 'Thu, Oct 16', by: 'Rosa',   start: '7:05 AM', end: '3:00 PM',  tickets: 176, cents: 104500, mail: 'sent' },
+  { no: 8,  day: 'Oct 15', date: 'Wed, Oct 15', by: 'Daniel', start: '3:00 PM', end: '10:04 PM', tickets: 240, cents: 142000, mail: 'sent' },
+  { no: 7,  day: 'Oct 15', date: 'Wed, Oct 15', by: 'Rosa',   start: '7:01 AM', end: '3:02 PM',  tickets: 187, cents: 109800, mail: 'sent' },
+  { no: 6,  day: 'Oct 14', date: 'Tue, Oct 14', by: 'Daniel', start: '3:03 PM', end: '10:00 PM', tickets: 228, cents: 133100, mail: 'sent' }
+];
+var LINES = [
+  { n: 1, game: '5X Money', pack: '1401 · 120042', price: 1, open: 13, close: 31 },
+  { n: 2, game: 'Jr Jumbo', pack: '1402 · 745508', price: 1, open: 9, close: 22 },
+  { n: 3, game: 'Loteria', pack: '1403 · 933993', price: 2, open: 3, close: 7 },
+  { n: 4, game: 'Hit 100', pack: '1404 · 558845', price: 2, open: 11, close: 19 },
+  { n: 14, game: '50X Money', pack: '1408 · 403040', price: 10, open: 11, close: 17 },
+  { n: 17, game: 'Gold $500,000', pack: '1409 · 176017', price: 5, open: 12, close: 18 },
+  { n: 25, game: 'Jumbo Bucks Ext', pack: '1413 · 301956', price: 50, open: 1, close: 3 },
+  { n: 56, game: 'Hit 1000', pack: '1415 · 560218', price: 20, open: 11, close: 15 }
+];
+var MAIL = { sent: ['Sent', 'tag-money'], failed: ['Failed', 'tag-danger'], queued: ['Sending…', 'tag-muted'] };
+function money(c) { return '$' + (c / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function pad(n) { n = String(n); while (n.length < 3) n = '0' + n; return n; }
+
+class Component extends DCLogic {
+  constructor(...args) {
+    super(...args);
+    this.tmr = null;
+    this.state = {
+      dark: !!(this.props && this.props.dark),
+      tab: (this.props && this.props.tab) || 'shift',
+      mail: SHIFTS.map(function (s) { return s.mail; }),
+      day: 'Oct 17',
+      view: null,
+      toast: null
+    };
+  }
+  say(text, cls) {
+    var self = this;
+    clearTimeout(this.tmr);
+    this.setState({ toast: { text: text, cls: cls || '' } });
+    this.tmr = setTimeout(function () { self.setState({ toast: null }); }, 4000);
+  }
+  send(i) {
+    var self = this;
+    var m = this.state.mail.slice(); m[i] = 'queued'; this.setState({ mail: m });
+    setTimeout(function () { var m2 = self.state.mail.slice(); m2[i] = 'sent'; self.setState({ mail: m2 }); self.say('Shift #' + SHIFTS[i].no + ' report emailed.'); }, 1400);
+  }
+  renderVals() {
+    var self = this, s = this.state;
+    var view = function (i) { return function () { self.setState({ view: i }); }; };
+    var failed = s.mail.filter(function (m) { return m === 'failed'; }).length;
+    var dayList = [];
+    SHIFTS.forEach(function (x) { if (dayList.indexOf(x.day) < 0) dayList.push(x.day); });
+    var inDay = [];
+    SHIFTS.forEach(function (x, i) { if (x.day === s.day) inDay.push(i); });
+    var dc = 0, dt = 0;
+    inDay.forEach(function (i) { dc += SHIFTS[i].cents; dt += SHIFTS[i].tickets; });
+    var vs = s.view != null ? SHIFTS[s.view] : null;
+    var lines = LINES.map(function (l) {
+      var sold = l.close - l.open;
+      return { n: l.n, game: l.game, pack: l.pack, price: '$' + l.price, open: pad(l.open), close: pad(l.close), sold: sold, sales: money(sold * l.price * 100) };
+    });
+    return {
+      themeCls: s.dark ? 'dark' : '', dark: s.dark,
+      toggleTheme: function () { self.setState({ dark: !s.dark }); },
+      tb: { shift: s.tab === 'shift' ? 'on' : '', day: s.tab === 'day' ? 'on' : '' },
+      tabShift: function () { self.setState({ tab: 'shift' }); },
+      tabDay: function () { self.setState({ tab: 'day' }); },
+      isShift: s.tab === 'shift', isDay: s.tab === 'day',
+      hasFailed: failed > 0,
+      failedText: failed === 1 ? '1 report email did not go through.' : failed + ' report emails did not go through.',
+      shifts: SHIFTS.map(function (x, i) {
+        return {
+          no: x.no, date: x.date, by: x.by, start: x.start, end: x.end, tickets: x.tickets, sales: money(x.cents),
+          mail: MAIL[s.mail[i]][0], mailCls: MAIL[s.mail[i]][1], failed: s.mail[i] === 'failed',
+          retry: function () { self.send(i); }, view: view(i)
+        };
+      }),
+      days: dayList.map(function (d) { return { label: d === 'Oct 18' ? 'Today' : d, cls: s.day === d ? 'on' : '', click: function () { self.setState({ day: d }); } }; }),
+      day: {
+        label: s.day === 'Oct 18' ? 'today' : s.day, sales: money(dc), tickets: dt.toLocaleString('en-US'), count: inDay.length,
+        openNote: s.day === 'Oct 18' ? 'open shifts are not counted' : 'all shifts closed'
+      },
+      dayShifts: inDay.map(function (i) { var x = SHIFTS[i]; return { no: x.no, by: x.by, start: x.start, end: x.end, tickets: x.tickets, sales: money(x.cents), view: view(i) }; }),
+      print: function () { try { window.print(); } catch (e) {} },
+      emailDay: function () { self.say('Daily report for ' + (s.day === 'Oct 18' ? 'today' : s.day) + ' emailed to 2 recipients.'); },
+
+      showView: !!vs,
+      closeView: function () { self.setState({ view: null }); },
+      stop: function (e) { if (e && e.stopPropagation) e.stopPropagation(); },
+      v: vs ? {
+        no: vs.no, date: vs.date, by: vs.by, start: vs.start, end: vs.end, sales: money(vs.cents), tickets: vs.tickets,
+        lineCount: lines.length, mail: MAIL[s.mail[s.view]][0], mailCls: MAIL[s.mail[s.view]][1], lines: lines
+      } : { lines: [] },
+      pdf: function () { if (vs) self.say('Shift #' + vs.no + ' report saved as PDF.'); },
+      resend: function () { if (s.view != null) self.send(s.view); },
+
+      hasToast: !!s.toast,
+      toast: s.toast || { text: '', cls: '' },
+      hideToast: function () { self.setState({ toast: null }); }
+    };
+  }
+}
+</script>
+</body>
+</html>
