@@ -373,6 +373,7 @@ async function migrateCleanData(db) {
     await ensureColumn(db, 'store_inventory', 'store_id', "VARCHAR(60) NOT NULL DEFAULT 'store_amigo'");
     await ensureColumn(db, 'daily_reports', 'store_id', "VARCHAR(60) NOT NULL DEFAULT 'store_amigo'");
     await ensureColumn(db, 'shift_reports', 'store_id', "VARCHAR(60) NOT NULL DEFAULT 'store_amigo'");
+    await ensureColumn(db, 'ticket_scans_log', 'store_id', "VARCHAR(60) NOT NULL DEFAULT 'store_amigo'");
 
     await db.query(`
       CREATE TABLE IF NOT EXISTS \`store_pos_state\` (
@@ -473,81 +474,6 @@ async function migrateCleanData(db) {
       await ensureColumn(db, 'admin_audit_logs', col, def);
     }
 
-    // 1b. Ensure default admin & core store accounts exist in MySQL with PBKDF2-hashed credentials
-    try {
-      const defHashes = getDefaultSeedHashes();
-      await db.query(
-        `INSERT IGNORE INTO stores (store_id, store_name, owner_username, retailer_number, address, phone, total_boxes, authorization_status, operational_status, subscription_status, document_status, retailer_auth_status, software_access_status)
-         VALUES
-           ('store_amigo', 'AMIGO FOOD MART', 'amigo', 'GA-89412', '2300 MOODY RD WARNER ROBINS, GA, 31088', '(478) 923-4567', 65, 'APPROVED', 'ACTIVE', 'ACTIVE', 'APPROVED', 'VALID', 'ACTIVE'),
-           ('store_downtown', 'DOWNTOWN QUICK MART', 'downtown_owner', 'GA-94103', '104 N COMMERCIAL BLVD, WARNER ROBINS, GA, 31088', '(478) 953-8821', 60, 'APPROVED', 'ACTIVE', 'ACTIVE', 'APPROVED', 'VALID', 'ACTIVE'),
-           ('store_anish', 'ANISH STORE', 'anish', 'GA-88510', 'Warner Robins, GA', '(478) 555-0188', 65, 'APPROVED', 'ACTIVE', 'ACTIVE', 'APPROVED', 'VALID', 'ACTIVE')`
-      );
-
-      const [admRows] = await db.query("SELECT id, username, email, password_hash, is_active FROM admin_users WHERE LOWER(username) = 'admin' LIMIT 1");
-      if (admRows.length === 0) {
-        await db.query(
-          `INSERT INTO admin_users (id, username, password_hash, full_name, email, role, is_active)
-           VALUES ('adm_001', 'admin', ?, 'Platform Administrator', 'amigofoodmart2300@gmail.com', 'SUPER_ADMIN', 1)`,
-          [defHashes.admin]
-        );
-      } else {
-        const row = admRows[0];
-        const legacyAdminPasswords = ['1234', 'AX123456@', 'admin', 'AdminPass_Unified2026_SuperSecure#99', 'AdminPass_cf777d216e0933e84559#Root99', 'TestAdminPass123!', 'FinalSecurePass@2027!'];
-        let hasExplicitPasswordChange = false;
-        try {
-          const [chgRows] = await db.query(
-            "SELECT id FROM admin_audit_logs WHERE action_type IN ('ADMIN_PASSWORD_CHANGED', 'ADMIN_PASSWORD_RESET', 'ADMIN_PROVISIONED') AND LOWER(target_id) = 'admin' LIMIT 1"
-          );
-          hasExplicitPasswordChange = chgRows.length > 0;
-        } catch (_) { }
-        const matchesLegacySeed = !row.password_hash || legacyAdminPasswords.some(p => verifyPassword(p, row.password_hash));
-        // Upgrade any legacy script/schema/backdoor seed hash (or un-migrated admin without an explicit password change) to PBKDF2(aj123456@)
-        if (!verifyPassword('aj123456@', row.password_hash) && (matchesLegacySeed || !hasExplicitPasswordChange)) {
-          await db.query('UPDATE admin_users SET password_hash = ?, is_active = 1 WHERE id = ?', [defHashes.admin, row.id]);
-        } else if (!row.is_active) {
-          await db.query('UPDATE admin_users SET is_active = 1 WHERE id = ?', [row.id]);
-        }
-        if (!row.email || row.email.toLowerCase() === 'admin@jackpotlo.com') {
-          await db.query("UPDATE admin_users SET email = 'amigofoodmart2300@gmail.com' WHERE id = ?", [row.id]);
-        }
-      }
-
-      await db.query(
-        `INSERT IGNORE INTO store_users (id, store_id, username, email, normalized_email, password_hash, full_name, role, account_status, is_active, approved_by, approved_at)
-         VALUES
-           ('usr_amigo_1', 'store_amigo', 'amigo', 'amigofoodmart2300@gmail.com', 'amigofoodmart2300@gmail.com', ?, 'Amigo Food Mart', 'STORE_USER', 'APPROVED', 1, 'SYSTEM_SEED', CURRENT_TIMESTAMP),
-           ('usr_anish_1', 'store_anish', 'anish', 'anish', 'anish', ?, 'Anish Store', 'STORE_USER', 'APPROVED', 1, 'SYSTEM_SEED', CURRENT_TIMESTAMP)`,
-        [defHashes.amigo, defHashes.anish]
-      );
-
-      // Upgrade legacy seed store_users rows in MySQL if they still hold old placeholder/backdoor hashes
-      const [coreStoreUsers] = await db.query("SELECT id, username, store_id, password_hash, account_status, is_active FROM store_users WHERE LOWER(username) IN ('amigo', 'anish')");
-      const legacyStorePasswords = ['1234', 'Store1234!', 'StorePass_f1441d8249a4acfc2974!2026', 'AX123456@', '0000'];
-      for (const su of coreStoreUsers) {
-        const uName = (su.username || '').toLowerCase();
-        const targetPass = uName === 'amigo' ? '0000' : 'AX123456@';
-        const targetHash = uName === 'amigo' ? defHashes.amigo : defHashes.anish;
-        let hasStorePassChange = false;
-        try {
-          const [sChg] = await db.query(
-            "SELECT id FROM admin_audit_logs WHERE action_type = 'STORE_PASSWORD_CHANGED' AND (LOWER(target_id) = ? OR LOWER(store_id) = ?) LIMIT 1",
-            [uName, (su.store_id || '').toLowerCase()]
-          );
-          hasStorePassChange = sChg.length > 0;
-        } catch (_) { }
-        const matchesLegacy = !su.password_hash || legacyStorePasswords.some(p => verifyPassword(p, su.password_hash));
-        if (!verifyPassword(targetPass, su.password_hash) && (matchesLegacy || !hasStorePassChange)) {
-          await db.query(
-            'UPDATE store_users SET password_hash = ?, account_status = ?, is_active = 1 WHERE id = ?',
-            [targetHash, 'APPROVED', su.id]
-          );
-        }
-      }
-    } catch (seedErr) {
-      console.warn('⚠️ [MySQL Migration] Default account seed notice:', seedErr.message);
-    }
-
     // 2. PURGE ALL EMPTY BOXES from existing database
     await db.query(`
       DELETE FROM day_box_sales 
@@ -586,7 +512,7 @@ async function migrateCleanData(db) {
     await db.query(`
       UPDATE shift_box_sales sbs
       INNER JOIN shift_reports sr ON sbs.shift_id = sr.id
-      SET sbs.date = COALESCE(NULLIF(sr.shift_date, ''), DATE_FORMAT(sr.created_at, '%Y-%m-%d'), 'CURRENT')
+      SET sbs.date = COALESCE(sr.shift_date, sr.started_at, 'CURRENT')
       WHERE sbs.date = '' OR sbs.date IS NULL
     `);
 
@@ -646,7 +572,7 @@ async function migrateCleanData(db) {
       if (existing[0].c === 0 && sr.slots_snapshot) {
         let slots = [];
         try { slots = JSON.parse(sr.slots_snapshot); } catch (_) { }
-        const sDate = sr.shift_date || (sr.created_at ? String(sr.created_at).slice(0, 10) : new Date().toLocaleDateString('en-US'));
+        const sDate = sr.shift_date || (sr.started_at ? String(sr.started_at).slice(0, 10) : new Date().toLocaleDateString('en-US'));
         for (const s of slots) {
           // SKIP EMPTY BOXES
           if (!s.packNumber || s.packNumber === '---' || s.status === 'EMPTY' || !s.gameName || s.gameName === 'Empty Slot') continue;
@@ -666,6 +592,46 @@ async function migrateCleanData(db) {
           );
         }
       }
+    }
+
+    // 6b. Ensure default admin & core store accounts exist in MySQL with PBKDF2-hashed credentials
+    try {
+      const defHashes = getDefaultSeedHashes();
+      await db.query(
+        `INSERT IGNORE INTO stores (store_id, store_name, owner_username, retailer_number, address, phone, total_boxes, authorization_status, operational_status, subscription_status, document_status, retailer_auth_status, software_access_status)
+         VALUES
+           ('store_amigo', 'AMIGO FOOD MART', 'amigo', 'GA-89412', '2300 MOODY RD WARNER ROBINS, GA, 31088', '(478) 923-4567', 65, 'APPROVED', 'ACTIVE', 'ACTIVE', 'APPROVED', 'VALID', 'ACTIVE'),
+           ('store_downtown', 'DOWNTOWN QUICK MART', 'downtown_owner', 'GA-94103', '104 N COMMERCIAL BLVD, WARNER ROBINS, GA, 31088', '(478) 953-8821', 60, 'APPROVED', 'ACTIVE', 'ACTIVE', 'APPROVED', 'VALID', 'ACTIVE'),
+           ('store_anish', 'ANISH STORE', 'anish', 'GA-88510', 'Warner Robins, GA', '(478) 555-0188', 65, 'APPROVED', 'ACTIVE', 'ACTIVE', 'APPROVED', 'VALID', 'ACTIVE')`
+      );
+
+      const [admRows] = await db.query("SELECT id, username, email, password_hash FROM admin_users WHERE LOWER(username) = 'admin' LIMIT 1");
+      if (admRows.length === 0) {
+        await db.query(
+          `INSERT INTO admin_users (id, username, password_hash, full_name, email, role, is_active)
+           VALUES ('adm_001', 'admin', ?, 'Platform Administrator', 'amigofoodmart2300@gmail.com', 'SUPER_ADMIN', 1)`,
+          [defHashes.admin]
+        );
+      } else {
+        const row = admRows[0];
+        // Upgrade legacy insecure '1234' schema seed so admin login matches provisioned PBKDF2 credentials
+        if (verifyPassword('1234', row.password_hash)) {
+          await db.query('UPDATE admin_users SET password_hash = ? WHERE id = ?', [defHashes.admin, row.id]);
+        }
+        if (!row.email || row.email.toLowerCase() === 'admin@jackpotlo.com') {
+          await db.query("UPDATE admin_users SET email = 'amigofoodmart2300@gmail.com' WHERE id = ?", [row.id]);
+        }
+      }
+
+      await db.query(
+        `INSERT IGNORE INTO store_users (id, store_id, username, email, normalized_email, password_hash, full_name, role, account_status, is_active, approved_by, approved_at)
+         VALUES
+           ('usr_amigo_1', 'store_amigo', 'amigo', 'amigofoodmart2300@gmail.com', 'amigofoodmart2300@gmail.com', ?, 'Amigo Food Mart', 'STORE_USER', 'APPROVED', 1, 'SYSTEM_SEED', CURRENT_TIMESTAMP),
+           ('usr_anish_1', 'store_anish', 'anish', 'anish', 'anish', ?, 'Anish Store', 'STORE_USER', 'APPROVED', 1, 'SYSTEM_SEED', CURRENT_TIMESTAMP)`,
+        [defHashes.amigo, defHashes.anish]
+      );
+    } catch (seedErr) {
+      console.warn('⚠️ [MySQL Migration] Default account seed notice:', seedErr.message);
     }
 
     // 7. Sync active dispensers from pos_state (ONLY loaded active boxes)
@@ -765,7 +731,9 @@ async function syncStateToNormalizedTables(state, db) {
 // =============================================================
 
 // Root Service Info Endpoint
-app.get('/', (req, res) => {
+app.get('/', (req, res, next) => {
+  // Built site present: '/' is the LottoTrack Pro landing page (served by express.static below)
+  if (fs.existsSync(path.join(__dirname, 'dist', 'index.html'))) return next();
   res.json({
     service: 'Jackpotlo API',
     status: 'running',
@@ -842,24 +810,26 @@ app.post('/api/save-day-report', requireStoreActive, async (req, res) => {
     const net = (parseNum(d.totalSales, 0) || (parseNum(d.totalScratcherSales, 0) + parseNum(d.onlineSales, 0))) -
       (parseNum(d.totalCashes, 0) || (parseNum(d.cashes, 0) + parseNum(d.onlineCashes, 0)));
 
+    const targetStoreId = d.storeId || req.authorizedStoreId || (req.storeSession && req.storeSession.storeId) || 'store_amigo';
     const query = `
       INSERT INTO daily_reports (
-        report_date, report_time, cashier, store_name, total_scratcher_sales,
-        online_sales, cashes, total_sales, net_balance, boxes_data
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        report_date, report_time, user_id, store_name, total_scratcher_sales,
+        online_sales, cashes, total_sales, net_balance, boxes_data, store_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     const [result] = await pool.query(query, [
       reportDate,
       reportTime,
-      d.userId || 'master',
+      d.userId || d.cashier || 'master',
       d.storeName || 'AMIGO FOOD MART',
       parseNum(d.totalScratcherSales, 0),
       parseNum(d.onlineSales, 0),
       parseNum(d.cashes, 0) + parseNum(d.onlineCashes, 0),
       parseNum(d.totalSales, 0),
       net,
-      JSON.stringify(d.boxes || [])
+      JSON.stringify(d.boxes || []),
+      targetStoreId
     ]);
 
     const reportId = result.insertId;
@@ -963,12 +933,13 @@ app.post('/api/save-shift-report', requireStoreActive, async (req, res) => {
     const overShort = actualCash - expectedCash;
     const shiftDate = h.endedAt ? String(h.endedAt).slice(0, 10) : (h.startedAt ? String(h.startedAt).slice(0, 10) : new Date().toLocaleDateString('en-US'));
 
+    const targetStoreId = h.storeId || req.authorizedStoreId || (req.storeSession && req.storeSession.storeId) || 'store_amigo';
     const query = `
       INSERT INTO shift_reports (
-        shift_number, shift_date, cashier, tickets_sold, total_sales,
+        shift_number, shift_date, cashier, total_tickets_sold, total_sales_revenue,
         cashes, drawer_float, actual_cash_counted, expected_cash,
-        drawer_over_short, slots_snapshot
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        drawer_over_short, slots_snapshot, store_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     const [result] = await pool.query(query, [
@@ -982,7 +953,8 @@ app.post('/api/save-shift-report', requireStoreActive, async (req, res) => {
       actualCash,
       expectedCash,
       overShort,
-      JSON.stringify(h.slots || [])
+      JSON.stringify(h.slots || []),
+      targetStoreId
     ]);
 
     const shiftId = result.insertId;
@@ -1348,14 +1320,14 @@ app.post('/api/sync-pos-state', requireStoreActive, async (req, res) => {
            ON DUPLICATE KEY UPDATE state_data = VALUES(state_data), updated_at = CURRENT_TIMESTAMP`,
           [storeId, stateJson]
         );
-        if (storeId === 'store_amigo') {
+        if (storeId === 'store_amigo' || !storeId) {
           await pool.query(
             `INSERT INTO pos_state (id, state_data) VALUES (1, ?)
              ON DUPLICATE KEY UPDATE state_data = VALUES(state_data)`,
             [stateJson]
           );
-          await syncStateToNormalizedTables(stateObj, pool);
         }
+        await syncStateToNormalizedTables(stateObj, pool);
       } catch (dbErr) {
         console.warn('MySQL state sync warning:', dbErr.message);
       }
@@ -1553,14 +1525,15 @@ app.post('/api/log-scan', requireStoreActive, async (req, res) => {
       try {
         await pool.query(
           `INSERT INTO ticket_scans_log (
-            date, time, barcode, box_number, game_name, pack_number,
-            ticket_number, ticket_price, cashier
+            barcode, box_number, game_name, pack_number,
+            ticket_number, ticket_price, cashier, shift_number, store_id
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
-            dateStr, timeStr, s.barcode || 'UNKNOWN', s.boxNumber || 0,
+            s.barcode || 'UNKNOWN', s.boxNumber || 0,
             s.gameName || 'Scratch Off', s.packNumber || '---',
             parseIntSafe(s.ticketNumber, 0), parseNum(s.price, 0),
-            s.cashier || 'master'
+            s.cashier || 'master', parseIntSafe(s.shiftNumber, 1),
+            storeId || 'store_amigo'
           ]
         );
       } catch (dbErr) {
@@ -1849,22 +1822,6 @@ const SUBSCRIPTION_PLANS = [
     features: ['Unlimited Dispenser Capacity', 'Full Compliance Audit History', 'Dedicated Onboarding & SLA']
   }
 ];
-
-const LIFETIME_PLAN = {
-  id: 'lifetime',
-  name: 'Lifetime POS Subscription',
-  priceMonthly: 179,
-  priceAnnual: 179,
-  maxBoxes: 250,
-  description: 'One-time $179 lifetime POS subscription.',
-  features: ['Lifetime POS Software Access', '65+ Dispenser Boxes & Shift Reports', 'Barcode & Scanner Support']
-};
-
-function findSubscriptionPlan(planId) {
-  const id = String(planId || '').toLowerCase().trim();
-  if (id === 'lifetime') return LIFETIME_PLAN;
-  return SUBSCRIPTION_PLANS.find(p => p.id === id) || null;
-}
 
 function applyStoreDbRow(target, row) {
   if (!row || typeof row !== 'object') return target;
@@ -2603,38 +2560,38 @@ app.post('/api/auth/login', async (req, res) => {
 
     // In-memory state fallbacks (merged without dropping DB candidates)
     if (Array.isArray(st.admins)) {
-      for (const a of st.admins) {
-        const isMatch = (
-          (a.email || '').toLowerCase().trim() === normIdentifier ||
-          (a.username || '').toLowerCase().trim() === normIdentifier ||
-          (a.id || '').toLowerCase().trim() === normIdentifier
+        for (const a of st.admins) {
+          const isMatch = (
+            (a.email || '').toLowerCase().trim() === normIdentifier ||
+            (a.username || '').toLowerCase().trim() === normIdentifier ||
+(a.id || '').toLowerCase().trim() === normIdentifier
         ) && a.is_active !== false;
-        if (isMatch && !adminCandidates.some(c => (c.username || '').toLowerCase() === (a.username || '').toLowerCase())) {
-          adminCandidates.push(a);
-        }
+if (isMatch && !adminCandidates.some(c => (c.username || '').toLowerCase() === (a.username || '').toLowerCase())) {
+  adminCandidates.push(a);
+}
       }
     }
     if (Array.isArray(st.storeUsers)) {
-      for (const u of st.storeUsers) {
-        const isMatch = (
-          (u.email || '').toLowerCase().trim() === normIdentifier ||
-          (u.username || '').toLowerCase().trim() === normIdentifier ||
-          (u.normalizedEmail || '').toLowerCase().trim() === normIdentifier ||
-          (u.id || '').toLowerCase().trim() === normIdentifier ||
-          (u.storeId || u.store_id || '').toLowerCase().trim() === normIdentifier
+    for (const u of st.storeUsers) {
+      const isMatch = (
+        (u.email || '').toLowerCase().trim() === normIdentifier ||
+        (u.username || '').toLowerCase().trim() === normIdentifier ||
+        (u.normalizedEmail || '').toLowerCase().trim() === normIdentifier ||
+        (u.id || '').toLowerCase().trim() === normIdentifier ||
+      (u.storeId || u.store_id || '').toLowerCase().trim() === normIdentifier
         ) && u.isActive !== false;
-        if (isMatch && !storeCandidates.some(c => c.id === u.id || ((c.store_id || c.storeId) === (u.storeId || u.store_id) && (c.username || '').toLowerCase() === (u.username || '').toLowerCase()))) {
-          storeCandidates.push(u);
-        }
+      if (isMatch && !storeCandidates.some(c => c.id === u.id || ((c.store_id || c.storeId) === (u.storeId || u.store_id) && (c.username || '').toLowerCase() === (u.username || '').toLowerCase()))) {
+        storeCandidates.push(u);
       }
     }
+  }
 
-    // 2. Verify submitted password strictly against stored PBKDF2 hashes across matching candidates
-    let matchedAdmin = adminCandidates.find(a => verifyPassword(rawPassword, a.password_hash)) || null;
-    let isAdminMatch = Boolean(matchedAdmin);
+  // 2. Verify submitted password strictly against stored PBKDF2 hashes across matching candidates
+  let matchedAdmin = adminCandidates.find(a => verifyPassword(rawPassword, a.password_hash)) || null;
+  let isAdminMatch = Boolean(matchedAdmin);
 
-    let matchedStoreUser = null;
-    let isStoreMatch = false;
+  let matchedStoreUser = null;
+  let isStoreMatch = false;
     for (const candidate of storeCandidates) {
       const sHash = candidate.password_hash || candidate.passwordHash;
       if (verifyPassword(rawPassword, sHash)) {
@@ -2960,13 +2917,14 @@ app.post('/api/admin/provision', async (req, res) => {
       }
     }
 
-    recordAuditEvent(st, {
+    st.auditLogs.unshift({
+      id: `aud_${Date.now()}`,
       adminUsername: 'API_PROVISION',
-      actorRole: 'SYSTEM',
       actionType: 'ADMIN_PROVISIONED',
       targetEntity: 'admin_users',
       targetId: normUser,
-      details: { username: normUser, fullName }
+      details: { username: normUser, fullName },
+      createdAt: new Date().toISOString()
     });
 
     saveAdminState(st);
@@ -3026,13 +2984,14 @@ app.post('/api/admin/change-password', requireAdminRole, async (req, res) => {
       st.adminSessions = st.adminSessions.filter(s => s.token === currentToken || (s.username || '').toLowerCase() !== adminRec.username.toLowerCase());
     }
 
-    recordAuditEvent(st, {
+    st.auditLogs.unshift({
+      id: `aud_${Date.now()}`,
       adminUsername: adminRec.username,
-      actorRole: 'SUPER_ADMIN',
       actionType: 'ADMIN_PASSWORD_CHANGED',
       targetEntity: 'admin_users',
       targetId: adminRec.username,
-      details: { message: 'Password securely changed and hashed with PBKDF2-HMAC-SHA256 (600,000 iterations)' }
+      details: { message: 'Password securely changed and hashed with PBKDF2-HMAC-SHA256 (600,000 iterations)' },
+      createdAt: new Date().toISOString()
     });
 
     saveAdminState(st);
@@ -3279,23 +3238,19 @@ app.get('/api/payments/config', (req, res) => {
 app.post('/api/payments/create-checkout-session', async (req, res) => {
   try {
     const planId = String(req.body?.planId || 'pro').toLowerCase().trim();
-    const plan = findSubscriptionPlan(planId);
+    const billingCycle = String(req.body?.billingCycle || 'monthly').toLowerCase() === 'annual' ? 'annual' : 'monthly';
+    const plan = SUBSCRIPTION_PLANS.find(p => p.id === planId);
     if (!plan) return res.status(400).json({ success: false, message: `Unknown subscription plan: ${planId}` });
-    const rawCycle = String(req.body?.billingCycle || 'monthly').toLowerCase().trim();
-    const billingCycle = plan.id === 'lifetime' ? 'lifetime' : (rawCycle === 'annual' ? 'annual' : 'monthly');
 
     const expectedAmount = billingCycle === 'annual' ? plan.priceAnnual : plan.priceMonthly;
     const expectedCents = Math.round(expectedAmount * 100);
 
     if (isStripeConfigured()) {
       const origin = String(req.headers.origin || req.body?.returnOrigin || `http://localhost:${PORT}`).replace(/\/$/, '');
-      const rawReturnPath = typeof req.body?.returnPath === 'string' ? req.body.returnPath.trim() : '/';
-      const returnPath = (rawReturnPath.startsWith('/') && !rawReturnPath.startsWith('//')) ? rawReturnPath : '/';
-      const sep = returnPath.includes('?') ? '&' : '?';
       const stripeRes = await stripeHttpsRequest('POST', '/v1/checkout/sessions', {
         mode: 'payment',
-        success_url: `${origin}${returnPath}${sep}checkout_session_id={CHECKOUT_SESSION_ID}`,
-        cancel_url: `${origin}${returnPath}${sep}checkout_cancelled=1`,
+        success_url: `${origin}/?checkout_session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${origin}/?checkout_cancelled=1`,
         'line_items[0][quantity]': '1',
         'line_items[0][price_data][currency]': 'usd',
         'line_items[0][price_data][unit_amount]': String(expectedCents),
@@ -3406,6 +3361,11 @@ app.post('/api/payments/webhook', async (req, res) => {
     rawPayload: { eventType: event.type, paymentStatus: obj.payment_status || obj.status }
   });
 
+  // Lifetime license: provision the account even if the buyer closed the tab before returning
+  if (mappedStatus === 'PAID' && (obj.metadata?.planId || existing?.planId) === 'lifetime') {
+    try { await finalizeLifetimePurchase(paymentRef); } catch (e) { console.warn('License webhook provisioning warning:', e.message); }
+  }
+
   res.json({ received: true, paymentRef, paymentStatus: mappedStatus });
 });
 
@@ -3498,13 +3458,11 @@ app.post('/api/subscriptions/checkout-and-register', async (req, res) => {
   try {
     const b = req.body || {};
     const planId = String(b.planId || 'pro').toLowerCase().trim();
-    const plan = findSubscriptionPlan(planId);
+    const billingCycle = String(b.billingCycle || 'monthly').toLowerCase() === 'annual' ? 'annual' : 'monthly';
+    const plan = SUBSCRIPTION_PLANS.find(p => p.id === planId);
     if (!plan) {
       return res.status(400).json({ success: false, message: `Unknown subscription plan: ${planId}` });
     }
-    const isLifetimeSignup = plan.id === 'lifetime';
-    const rawCycle = String(b.billingCycle || 'monthly').toLowerCase().trim();
-    const billingCycle = isLifetimeSignup ? 'lifetime' : (rawCycle === 'annual' ? 'annual' : 'monthly');
 
     const paymentRefInput = String(b.paymentSessionId || b.paymentRef || '').trim();
     const paymentVerification = await verifyAndLockSubscriptionPayment({
@@ -3521,8 +3479,7 @@ app.post('/api/subscriptions/checkout-and-register', async (req, res) => {
     }
     const paymentRef = paymentVerification.paymentRef;
     const storeName = String(b.storeName || b.name || '').trim();
-    const rawApplicantName = String(b.applicantName || b.ownerName || '').trim();
-    const applicantName = rawApplicantName || (isLifetimeSignup ? storeName : '');
+    const applicantName = String(b.applicantName || b.ownerName || '').trim();
     const applicantEmail = String(b.applicantEmail || b.email || '').trim();
     const applicantPhone = String(b.applicantPhone || b.phone || '').trim();
     const businessTaxId = String(b.businessTaxId || b.taxId || '').trim();
@@ -3530,336 +3487,806 @@ app.post('/api/subscriptions/checkout-and-register', async (req, res) => {
     const licenseExpiry = String(b.licenseExpiry || '').trim();
     const address = String(b.address || '').trim();
     const rawUsername = String(b.username || '').trim();
-    const rawPasswordInput = String(b.password || b.desiredPassword || '').trim();
+    const requestedPassword = String(b.password || b.desiredPassword || '').trim();
     const archivePassword = String(b.archivePassword || '').trim();
     const documentsUrl = String(b.documentsUrl || b.licenseUrl || '').trim();
     const applicantNotes = String(b.notes || b.applicantNotes || '').trim();
-    const paymentMethodLabel = String(b.paymentMethodLabel || (isLifetimeSignup ? 'Lifetime $179' : 'Card •••• 4242')).trim();
+    const paymentMethodLabel = String(b.paymentMethodLabel || 'Card •••• 4242').trim();
 
-      if (isLifetimeSignup) {
-        if (!storeName || !applicantPhone || applicantPhone.replace(/\D/g, '').length < 7) {
-          return res.status(400).json({
-            success: false,
-            message: 'Store Name and a valid Store Mobile Number are required.'
-          });
-        }
-        if (applicantEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(applicantEmail)) {
-          return res.status(400).json({
-            success: false,
-            message: 'Please provide a valid Email address or leave it blank.'
-          });
-        }
-      } else {
-        if (!storeName || !applicantName || !applicantEmail || !applicantPhone || !address) {
-          return res.status(400).json({
-            success: false,
-            message: 'Store Name, Owner Name, Email, Phone Number, and Physical Address are required.'
-          });
-        }
-      }
-      const requestedPassword = rawPasswordInput || (isLifetimeSignup ? crypto.randomBytes(9).toString('base64url') : '');
-      if (!requestedPassword || requestedPassword.length < 4) {
-        return res.status(400).json({
-          success: false,
-          message: 'Please create a store login password (minimum 4 characters).'
-        });
-      }
+    if (!storeName || !applicantName || !applicantEmail || !applicantPhone || !address) {
+      return res.status(400).json({
+        success: false,
+        message: 'Store Name, Owner Name, Email, Phone Number, and Physical Address are required.'
+      });
+    }
+    if (!requestedPassword || requestedPassword.length < 4) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please create a store login password (minimum 4 characters).'
+      });
+    }
 
-      const st = getAdminState();
-      const normEmail = applicantEmail ? applicantEmail.toLowerCase().trim() : '';
-      const slugBase = (rawUsername || (applicantEmail ? applicantEmail.split('@')[0] : '') || storeName)
-        .toLowerCase()
-        .replace(/[^a-z0-9_]/g, '_')
-        .replace(/^_+|_+$/g, '') || 'owner';
-      let ownerUser = slugBase;
+    const st = getAdminState();
+    const normEmail = applicantEmail.toLowerCase().trim();
+    const slugBase = (rawUsername || applicantEmail.split('@')[0] || storeName)
+      .toLowerCase()
+      .replace(/[^a-z0-9_]/g, '_')
+      .replace(/^_+|_+$/g, '') || 'owner';
+    const ownerUser = slugBase;
 
-    const duplicateEmailOrExplicitUser = (st.storeUsers || []).find(u =>
-          (normEmail && ((u.normalizedEmail && u.normalizedEmail === normEmail) || (u.email && u.email.toLowerCase().trim() === normEmail))) ||
-          (rawUsername && u.username && u.username.toLowerCase().trim() === ownerUser)
-        );
-        if (duplicateEmailOrExplicitUser) {
-          return res.status(409).json({
-            success: false,
-            message: 'An account with this email or Login ID already exists. Please sign in or choose another Login ID.'
-          });
-        }
+    const duplicateUser = (st.storeUsers || []).find(u =>
+      (u.normalizedEmail && u.normalizedEmail === normEmail) ||
+      (u.email && u.email.toLowerCase().trim() === normEmail) ||
+      (rawUsername && u.username && u.username.toLowerCase().trim() === ownerUser)
+    );
+    if (duplicateUser) {
+      return res.status(409).json({
+        success: false,
+        message: 'An account with this email or Login ID already exists. Please sign in or choose another Login ID.'
+      });
+    }
 
-        // Auto-disambiguate generated username when no explicit username was supplied (e.g. lifetime signup without email)
-        if (!rawUsername && (st.storeUsers || []).some(u => u.username && u.username.toLowerCase().trim() === ownerUser)) {
-          ownerUser = `${slugBase}_${String(Date.now()).slice(-4)}`;
-        }
+    const nowIso = new Date().toISOString();
+    const storeSlug = storeName.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 24) || 'store';
+    const storeId = `store_${storeSlug}_${String(Date.now()).slice(-5)}`;
+    const appId = `app_${Date.now()}_${Math.floor(100 + Math.random() * 900)}`;
 
-        const nowIso = new Date().toISOString();
-        const storeSlug = storeName.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 24) || 'store';
-        const storeId = `store_${storeSlug}_${String(Date.now()).slice(-5)}`;
-        const appId = `app_${Date.now()}_${Math.floor(100 + Math.random() * 900)}`;
+    const rawUploads = Array.isArray(b.licenseFiles) ? b.licenseFiles : [];
+    const licenseFiles = saveLicenseAttachments(appId, rawUploads);
+    if (rawUploads.length > 0 && licenseFiles.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Uploaded files must be supported document/image/archive formats and under 15 MB each.'
+      });
+    }
 
-        const rawUploads = Array.isArray(b.licenseFiles) ? b.licenseFiles : [];
-        const licenseFiles = saveLicenseAttachments(appId, rawUploads);
-        if (rawUploads.length > 0 && licenseFiles.length === 0) {
-          return res.status(400).json({
-            success: false,
-            message: 'Uploaded files must be supported document/image/archive formats and under 15 MB each.'
-          });
-        }
+    const docLabels = licenseFiles.map(f => f.relativePath || f.name);
+    if (documentsUrl && /^https?:\/\//i.test(documentsUrl)) docLabels.push(documentsUrl);
 
-        const docLabels = licenseFiles.map(f => f.relativePath || f.name);
-        if (documentsUrl && /^https?:\/\//i.test(documentsUrl)) docLabels.push(documentsUrl);
+    const amountPaid = paymentVerification.amountPaid;
+    const subscriptionInfo = {
+      planId: plan.id,
+      planName: plan.name,
+      billingCycle,
+      amountPaid,
+      amountCents: paymentVerification.amountCents,
+      currency: 'USD',
+      provider: paymentVerification.provider,
+      paymentRef,
+      paymentMethodLabel,
+      status: 'ACTIVE',
+      paidAt: nowIso
+    };
 
-        const amountPaid = paymentVerification.amountPaid;
-        const subscriptionInfo = {
-          planId: plan.id,
-          planName: plan.name,
-          billingCycle,
-          amountPaid,
-          amountCents: paymentVerification.amountCents,
-          currency: 'USD',
-          provider: paymentVerification.provider,
-          paymentRef,
-          paymentMethodLabel,
-          status: 'ACTIVE',
-          paidAt: nowIso
-        };
+    const passwordHash = hashPassword(requestedPassword);
+    const userId = `usr_${Date.now()}`;
 
-        const passwordHash = hashPassword(requestedPassword);
-        const userId = `usr_${Date.now()}`;
+    const newStore = {
+      storeId,
+      storeName,
+      ownerName: applicantName,
+      ownerUsername: ownerUser,
+      ownerEmail: applicantEmail,
+      retailerNumber: lotteryRetailerId || 'PENDING-VERIFY',
+      taxId: businessTaxId,
+      licenseExpiry,
+      address,
+      phone: applicantPhone,
+      totalBoxes: plan.maxBoxes || 65,
+      subscriptionStatus: 'ACTIVE',
+      documentStatus: 'PENDING_REVIEW',
+      retailerAuthStatus: 'PENDING_VERIFICATION',
+      softwareAccessStatus: 'ACTIVE',
+      authorizationStatus: 'APPROVED',
+      operationalStatus: 'ACTIVE',
+      subscription: subscriptionInfo,
+      tokenVersion: 1,
+      suspensionReason: '',
+      suspendedAt: null,
+      suspendedBy: null,
+      reapprovedAt: null,
+      reapprovedBy: null,
+      suspensionHistory: [],
+      createdAt: nowIso,
+      updatedAt: nowIso
+    };
+    normalizeStoreStatuses(newStore);
+    st.stores.push(newStore);
 
-        const newStore = {
-          storeId,
-          storeName,
-          ownerName: applicantName,
-          ownerUsername: ownerUser,
-          ownerEmail: applicantEmail,
-          retailerNumber: lotteryRetailerId || 'PENDING-VERIFY',
-          taxId: businessTaxId,
-          licenseExpiry,
-          address,
-          phone: applicantPhone,
-          totalBoxes: plan.maxBoxes || 65,
-          subscriptionStatus: 'ACTIVE',
-          documentStatus: 'PENDING_REVIEW',
-          retailerAuthStatus: 'PENDING_VERIFICATION',
-          softwareAccessStatus: 'ACTIVE',
-          authorizationStatus: 'APPROVED',
-          operationalStatus: 'ACTIVE',
-          subscription: subscriptionInfo,
-          tokenVersion: 1,
-          suspensionReason: '',
-          suspendedAt: null,
-          suspendedBy: null,
-          reapprovedAt: null,
-          reapprovedBy: null,
-          suspensionHistory: [],
-          createdAt: nowIso,
-          updatedAt: nowIso
-        };
-        normalizeStoreStatuses(newStore);
-        st.stores.push(newStore);
+    if (!Array.isArray(st.storeUsers)) st.storeUsers = [];
+    st.storeUsers.push({
+      id: userId,
+      storeId,
+      username: ownerUser,
+      email: applicantEmail,
+      normalizedEmail: normEmail,
+      passwordHash,
+      fullName: applicantName,
+      role: 'Owner',
+      accountStatus: 'APPROVED',
+      isActive: true,
+      createdAt: nowIso
+    });
 
-        if (!Array.isArray(st.storeUsers)) st.storeUsers = [];
-        st.storeUsers.push({
-          id: userId,
-          storeId,
-          username: ownerUser,
-          email: applicantEmail,
-          normalizedEmail: normEmail,
-          passwordHash,
-          fullName: applicantName,
-          role: 'Owner',
-          accountStatus: 'APPROVED',
-          isActive: true,
-          createdAt: nowIso
-        });
+    const newApp = {
+      id: appId,
+      storeId,
+      storeName,
+      applicantName,
+      ownerUsername: ownerUser,
+      applicantEmail,
+      applicantPhone,
+      businessTaxId,
+      lotteryRetailerId,
+      licenseExpiry,
+      address,
+      documentsUrl: /^https?:\/\//i.test(documentsUrl) ? documentsUrl : '',
+      applicantNotes,
+      archivePassword,
+      licenseFiles,
+      documents: docLabels,
+      subscription: subscriptionInfo,
+      documentStatus: 'PENDING_REVIEW',
+      retailerAuthStatus: 'PENDING_VERIFICATION',
+      status: 'PENDING',
+      adminNotes: '',
+      reviewedBy: null,
+      reviewedAt: null,
+      reviewHistory: [],
+      resubmissionCount: 0,
+      createdAt: nowIso
+    };
+    st.applications.unshift(newApp);
 
-        const newApp = {
-          id: appId,
-          storeId,
-          storeName,
-          applicantName,
-          ownerUsername: ownerUser,
-          applicantEmail,
-          applicantPhone,
-          businessTaxId,
-          lotteryRetailerId,
-          licenseExpiry,
-          address,
-          documentsUrl: /^https?:\/\//i.test(documentsUrl) ? documentsUrl : '',
-          applicantNotes,
-          archivePassword,
-          licenseFiles,
-          documents: docLabels,
-          subscription: subscriptionInfo,
-          documentStatus: 'PENDING_REVIEW',
-          retailerAuthStatus: 'PENDING_VERIFICATION',
-          status: 'PENDING',
-          adminNotes: '',
-          reviewedBy: null,
-          reviewedAt: null,
-          reviewHistory: [],
-          resubmissionCount: 0,
-          createdAt: nowIso
-        };
-        st.applications.unshift(newApp);
+    // Ensure clean isolated POS workspace exists immediately
+    const cleanState = buildCleanStorePosState({
+      storeId,
+      storeName,
+      address,
+      retailerNumber: newStore.retailerNumber,
+      ownerName: applicantName,
+      ownerEmail: applicantEmail
+    });
+    ensureStorePosStateFile({
+      storeId,
+      storeName,
+      address,
+      retailerNumber: newStore.retailerNumber,
+      ownerName: applicantName,
+      ownerEmail: applicantEmail
+    });
 
-        // Ensure clean isolated POS workspace exists immediately
-        const cleanState = buildCleanStorePosState({
-          storeId,
-          storeName,
-          address,
-          retailerNumber: newStore.retailerNumber,
-          ownerName: applicantName,
-          ownerEmail: applicantEmail
-        });
-        ensureStorePosStateFile({
-          storeId,
-          storeName,
-          address,
-          retailerNumber: newStore.retailerNumber,
-          ownerName: applicantName,
-          ownerEmail: applicantEmail
-        });
+    // Consume verified payment reference atomically so duplicate callbacks cannot create duplicate subscriptions
+    await upsertPaymentTransaction({
+      paymentRef,
+      provider: paymentVerification.provider,
+      storeId,
+      planId: plan.id,
+      billingCycle,
+      amountCents: paymentVerification.amountCents,
+      currency: 'usd',
+      paymentStatus: 'PAID',
+      consumed: true,
+      consumedAt: nowIso
+    });
 
-        // Consume verified payment reference atomically so duplicate callbacks cannot create duplicate subscriptions
-        await upsertPaymentTransaction({
-          paymentRef,
-          provider: paymentVerification.provider,
-          storeId,
-          planId: plan.id,
-          billingCycle,
-          amountCents: paymentVerification.amountCents,
-          currency: 'usd',
-          paymentStatus: 'PAID',
-          consumed: true,
-          consumedAt: nowIso
-        });
-
-        await persistStoreComplianceToMySQL(newStore);
-        if (isDbConnected && pool) {
-          try {
-            await pool.query(
-              `INSERT INTO store_applications (
+    await persistStoreComplianceToMySQL(newStore);
+    if (isDbConnected && pool) {
+      try {
+        await pool.query(
+          `INSERT INTO store_applications (
             store_id, store_name, applicant_name, owner_username, applicant_email, applicant_phone,
             business_tax_id, lottery_retailer_id, license_expiry, address, documents_url, applicant_notes,
             documents, license_files_json, subscription_json, document_status, retailer_auth_status, status, app_id
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING_REVIEW', 'PENDING_VERIFICATION', 'PENDING', ?)`,
-              [
-                storeId, storeName, applicantName, ownerUser, applicantEmail, applicantPhone,
-                businessTaxId, lotteryRetailerId, licenseExpiry, address, newApp.documentsUrl, applicantNotes,
-                JSON.stringify(docLabels), JSON.stringify(licenseFiles), JSON.stringify(subscriptionInfo), appId
-              ]
-            );
-            await pool.query(
-              `INSERT INTO store_pos_state (store_id, state_data) VALUES (?, ?)
+          [
+            storeId, storeName, applicantName, ownerUser, applicantEmail, applicantPhone,
+            businessTaxId, lotteryRetailerId, licenseExpiry, address, newApp.documentsUrl, applicantNotes,
+            JSON.stringify(docLabels), JSON.stringify(licenseFiles), JSON.stringify(subscriptionInfo), appId
+          ]
+        );
+        await pool.query(
+          `INSERT INTO store_pos_state (store_id, state_data) VALUES (?, ?)
            ON DUPLICATE KEY UPDATE state_data = VALUES(state_data), updated_at = CURRENT_TIMESTAMP`,
-              [storeId, JSON.stringify(cleanState)]
-            );
-            await pool.query(
-              `INSERT INTO store_users (id, store_id, username, email, normalized_email, password_hash, full_name, role, account_status, is_active, approved_by, approved_at)
+          [storeId, JSON.stringify(cleanState)]
+        );
+        await pool.query(
+          `INSERT INTO store_users (id, store_id, username, email, normalized_email, password_hash, full_name, role, account_status, is_active, approved_by, approved_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, 'Owner', 'APPROVED', 1, 'SUBSCRIPTION_SELF_SERVICE', CURRENT_TIMESTAMP)`,
-              [userId, storeId, ownerUser, applicantEmail, normEmail, passwordHash, applicantName]
-            );
-          } catch (dbErr) {
-            console.warn('MySQL subscription provisioning warning:', dbErr.message);
-          }
-        }
+          [userId, storeId, ownerUser, applicantEmail, normEmail, passwordHash, applicantName]
+        );
+      } catch (dbErr) {
+        console.warn('MySQL subscription provisioning warning:', dbErr.message);
+      }
+    }
 
-        // Record required audit trail events (no plaintext password!)
-        recordAuditEvent(st, {
-          adminUsername: ownerUser,
-          actorRole: 'CUSTOMER',
-          actionType: 'SUBSCRIPTION_PAYMENT_COMPLETED',
-          targetEntity: 'stores',
-          targetId: storeId,
-          storeId,
-          details: { planId: plan.id, planName: plan.name, billingCycle, amountPaid, paymentRef, paymentMethodLabel }
-        });
-        recordAuditEvent(st, {
-          adminUsername: ownerUser,
-          actorRole: 'CUSTOMER',
-          actionType: 'STORE_ACCOUNT_CREATED',
-          targetEntity: 'stores',
-          targetId: storeId,
-          storeId,
-          details: { storeName, username: ownerUser, email: applicantEmail, retailerNumber: newStore.retailerNumber, immediateSoftwareAccess: 'ACTIVE' }
-        });
-        recordAuditEvent(st, {
-          adminUsername: ownerUser,
-          actorRole: 'CUSTOMER',
-          actionType: 'DOCUMENTS_SUBMITTED',
-          targetEntity: 'store_applications',
-          targetId: appId,
-          storeId,
-          details: { storeId, fileCount: licenseFiles.length, retailerNumber: lotteryRetailerId || null }
-        });
+    // Record required audit trail events (no plaintext password!)
+    recordAuditEvent(st, {
+      adminUsername: ownerUser,
+      actorRole: 'CUSTOMER',
+      actionType: 'SUBSCRIPTION_PAYMENT_COMPLETED',
+      targetEntity: 'stores',
+      targetId: storeId,
+      storeId,
+      details: { planId: plan.id, planName: plan.name, billingCycle, amountPaid, paymentRef, paymentMethodLabel }
+    });
+    recordAuditEvent(st, {
+      adminUsername: ownerUser,
+      actorRole: 'CUSTOMER',
+      actionType: 'STORE_ACCOUNT_CREATED',
+      targetEntity: 'stores',
+      targetId: storeId,
+      storeId,
+      details: { storeName, username: ownerUser, email: applicantEmail, retailerNumber: newStore.retailerNumber, immediateSoftwareAccess: 'ACTIVE' }
+    });
+    recordAuditEvent(st, {
+      adminUsername: ownerUser,
+      actorRole: 'CUSTOMER',
+      actionType: 'DOCUMENTS_SUBMITTED',
+      targetEntity: 'store_applications',
+      targetId: appId,
+      storeId,
+      details: { storeId, fileCount: licenseFiles.length, retailerNumber: lotteryRetailerId || null }
+    });
 
-        // Issue immediate live session JWT
-        const token = generateJWT({
-          sub: userId,
-          userId,
-          storeId,
-          username: ownerUser,
-          email: applicantEmail,
-          role: 'Owner',
-          isAdmin: false,
-          mode: 'STORE',
-          tokenVersion: 1
-        }, 86400);
+    // Issue immediate live session JWT
+    const token = generateJWT({
+      sub: userId,
+      userId,
+      storeId,
+      username: ownerUser,
+      email: applicantEmail,
+      role: 'Owner',
+      isAdmin: false,
+      mode: 'STORE',
+      tokenVersion: 1
+    }, 86400);
 
-        const storeSession = {
-          token,
-          userId,
-          storeId,
-          username: ownerUser,
-          email: applicantEmail,
-          role: 'Owner',
-          tokenVersion: 1,
-          createdAt: nowIso,
-          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
-        };
-        activeStoreSessions.set(token, storeSession);
-        if (!Array.isArray(st.storeSessions)) st.storeSessions = [];
-        st.storeSessions.push(storeSession);
+    const storeSession = {
+      token,
+      userId,
+      storeId,
+      username: ownerUser,
+      email: applicantEmail,
+      role: 'Owner',
+      tokenVersion: 1,
+      createdAt: nowIso,
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+    };
+    activeStoreSessions.set(token, storeSession);
+    if (!Array.isArray(st.storeSessions)) st.storeSessions = [];
+    st.storeSessions.push(storeSession);
 
-        saveAdminState(st);
+    saveAdminState(st);
 
-        const statuses = {
-          subscriptionStatus: newStore.subscriptionStatus,
-          documentStatus: newStore.documentStatus,
-          retailerAuthStatus: newStore.retailerAuthStatus,
-          softwareAccessStatus: newStore.softwareAccessStatus,
-          canSellLottery: false
-        };
+    const statuses = {
+      subscriptionStatus: newStore.subscriptionStatus,
+      documentStatus: newStore.documentStatus,
+      retailerAuthStatus: newStore.retailerAuthStatus,
+      softwareAccessStatus: newStore.softwareAccessStatus,
+      canSellLottery: false
+    };
 
-        res.status(201).json({
-          success: true,
-          message: `Subscription activated (${plan.name}) and store "${storeName}" is ready for immediate software access. Lottery selling unlocks once official retailer authorization is verified.`,
-          token,
-          mode: 'STORE',
-          isAdmin: false,
-          storeId,
-          storeName,
-          storeAddress: address,
-          retailerNumber: newStore.retailerNumber,
-          subscription: subscriptionInfo,
-          statuses,
-          application: sanitizeApplicationForAdmin(newApp),
-          user: {
-            id: userId,
-            username: ownerUser,
-            name: applicantName,
-            email: applicantEmail,
-            role: 'Owner',
-            storeId,
-            storeName,
-            storeAddress: address,
-            retailerNumber: newStore.retailerNumber,
-            ...statuses
-          }
-        });
-      } catch (err) {
-        res.status(500).json({ success: false, message: err.message });
+    res.status(201).json({
+      success: true,
+      message: `Subscription activated (${plan.name}) and store "${storeName}" is ready for immediate software access. Lottery selling unlocks once official retailer authorization is verified.`,
+      token,
+      mode: 'STORE',
+      isAdmin: false,
+      storeId,
+      storeName,
+      storeAddress: address,
+      retailerNumber: newStore.retailerNumber,
+      subscription: subscriptionInfo,
+      statuses,
+      application: sanitizeApplicationForAdmin(newApp),
+      user: {
+        id: userId,
+        username: ownerUser,
+        name: applicantName,
+        email: applicantEmail,
+        role: 'Owner',
+        storeId,
+        storeName,
+        storeAddress: address,
+        retailerNumber: newStore.retailerNumber,
+        ...statuses
       }
     });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// 14c-3b. Public: LottoTrack Pro one-time purchase ($179 lifetime license)
+// Flow: /start (validate + hold hashed signup, open checkout) -> pay -> /complete (verify payment,
+// create store + owner + auto-generated license, issue session). No admin review is required.
+const LIFETIME_LICENSE = { id: 'lifetime', name: 'LottoTrack Pro Lifetime License', price: 179, amountCents: 17900, maxBoxes: 250 };
+const PENDING_SIGNUP_TTL_MS = 24 * 60 * 60 * 1000;
+
+function generateLicenseKey(userId) {
+  const hex = crypto.createHmac('sha256', JWT_SECRET).update(`ltp-license:${userId}`).digest('hex').toUpperCase();
+  return `LTP-${hex.slice(0, 4)}-${hex.slice(4, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}`;
+}
+
+function storeEmailTaken(st, normEmail) {
+  return (st.storeUsers || []).some(u =>
+    (u.normalizedEmail && u.normalizedEmail === normEmail) ||
+    (u.email && String(u.email).toLowerCase().trim() === normEmail)
+  );
+}
+
+function isPolarConfigured() {
+  return Boolean(process.env.POLAR_ACCESS_TOKEN && process.env.POLAR_PRODUCT_ID);
+}
+
+async function polarRequest(method, apiPath, body) {
+  const base = process.env.POLAR_SERVER === 'sandbox' ? 'https://sandbox-api.polar.sh' : 'https://api.polar.sh';
+  const resp = await fetch(`${base}${apiPath}`, {
+    method,
+    headers: { Authorization: `Bearer ${process.env.POLAR_ACCESS_TOKEN}`, 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined
+  });
+  return { statusCode: resp.status, body: await resp.json().catch(() => ({})) };
+}
+
+function getPurchaseGateway() {
+  if (isPolarConfigured()) return 'polar';
+  if (isStripeConfigured()) return 'stripe';
+  if (isLocalTestPaymentEnabled()) return 'test';
+  return 'none';
+}
+
+app.get('/api/purchase/config', (req, res) => {
+  res.json({ success: true, price: LIFETIME_LICENSE.price, currency: 'USD', gateway: getPurchaseGateway() });
+});
+
+app.post('/api/purchase/start', async (req, res) => {
+  try {
+    const storeName = String(req.body?.storeName || '').trim();
+    const email = String(req.body?.email || '').trim();
+    const password = String(req.body?.password || '');
+    const normEmail = email.toLowerCase();
+
+    if (storeName.length < 2 || storeName.length > 80) {
+      return res.status(400).json({ success: false, field: 'storeName', message: 'Enter your store name.' });
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ success: false, field: 'email', message: 'Enter a valid email address.' });
+    }
+    if (password.length < 8) {
+      return res.status(400).json({ success: false, field: 'password', message: 'Password must be at least 8 characters.' });
+    }
+    if (storeEmailTaken(getAdminState(), normEmail)) {
+      return res.status(409).json({ success: false, field: 'email', message: 'An account with this email already exists. Sign in instead.' });
+    }
+
+    const gateway = getPurchaseGateway();
+    if (gateway === 'none') {
+      return res.status(503).json({
+        success: false,
+        code: 'PAYMENT_GATEWAY_NOT_CONFIGURED',
+        message: 'Payments are not set up on this server yet. Set POLAR_ACCESS_TOKEN + POLAR_PRODUCT_ID (or ALLOW_LOCAL_TEST_PAYMENT=true for local testing).'
+      });
+    }
+
+    let paymentRef = '';
+    let checkoutUrl = null;
+    if (gateway === 'polar') {
+      const origin = String(req.headers.origin || `http://localhost:${PORT}`).replace(/\/$/, '');
+      const polarRes = await polarRequest('POST', '/v1/checkouts/', {
+        products: [process.env.POLAR_PRODUCT_ID],
+        customer_email: email,
+        success_url: `${origin}/signup?checkout_id={CHECKOUT_ID}`,
+        return_url: `${origin}/signup?checkout_cancelled=1`,
+        metadata: { planId: LIFETIME_LICENSE.id, storeName }
+      });
+      if (polarRes.statusCode === 422 && JSON.stringify(polarRes.body?.detail || '').includes('customer_email')) {
+        return res.status(400).json({ success: false, field: 'email', message: 'Enter a real email address you can receive mail at.' });
+      }
+      if (polarRes.statusCode >= 400 || !polarRes.body?.id || !polarRes.body?.url) {
+        console.warn('Polar checkout error:', polarRes.statusCode, JSON.stringify(polarRes.body).slice(0, 500));
+        return res.status(502).json({ success: false, code: 'PAYMENT_GATEWAY_ERROR', message: 'Could not start checkout. Please try again.' });
+      }
+      paymentRef = polarRes.body.id;
+      checkoutUrl = polarRes.body.url;
+    } else if (gateway === 'stripe') {
+      const origin = String(req.headers.origin || `http://localhost:${PORT}`).replace(/\/$/, '');
+      const stripeRes = await stripeHttpsRequest('POST', '/v1/checkout/sessions', {
+        mode: 'payment',
+        customer_email: email,
+        success_url: `${origin}/signup?checkout_session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${origin}/signup?checkout_cancelled=1`,
+        'line_items[0][quantity]': '1',
+        'line_items[0][price_data][currency]': 'usd',
+        'line_items[0][price_data][unit_amount]': String(LIFETIME_LICENSE.amountCents),
+        'line_items[0][price_data][product_data][name]': LIFETIME_LICENSE.name,
+        'metadata[planId]': LIFETIME_LICENSE.id,
+        'metadata[billingCycle]': 'one_time'
+      });
+      if (stripeRes.statusCode >= 400 || !stripeRes.body?.id) {
+        return res.status(502).json({ success: false, code: 'PAYMENT_GATEWAY_ERROR', message: stripeRes.body?.error?.message || 'Could not start checkout.' });
+      }
+      paymentRef = stripeRes.body.id;
+      checkoutUrl = stripeRes.body.url;
+    } else {
+      paymentRef = `cs_test_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`;
+    }
+
+    await upsertPaymentTransaction({
+      paymentRef,
+      provider: gateway === 'test' ? 'stripe_test_harness' : gateway,
+      planId: LIFETIME_LICENSE.id,
+      billingCycle: 'one_time',
+      amountCents: LIFETIME_LICENSE.amountCents,
+      currency: 'usd',
+      paymentStatus: 'PENDING',
+      consumed: false
+    });
+
+    // Hold the signup server-side (hashed password only) until payment is verified
+    const st = getAdminState();
+    const cutoff = Date.now() - PENDING_SIGNUP_TTL_MS;
+    st.pendingSignups = (st.pendingSignups || []).filter(p => p.normalizedEmail !== normEmail && new Date(p.createdAt).getTime() > cutoff);
+    st.pendingSignups.push({ paymentRef, storeName, email, normalizedEmail: normEmail, passwordHash: hashPassword(password), createdAt: new Date().toISOString() });
+    saveAdminState(st);
+
+    res.json({ success: true, gateway, paymentRef, checkoutUrl, amountCents: LIFETIME_LICENSE.amountCents });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Local test mode only: stands in for the card processor. Never available when a real gateway is configured.
+app.post('/api/purchase/test-confirm', async (req, res) => {
+  if (getPurchaseGateway() !== 'test') {
+    return res.status(404).json({ success: false, message: 'Not available.' });
+  }
+  const paymentRef = String(req.body?.paymentRef || '').trim();
+  const tx = await getPaymentTransaction(paymentRef);
+  if (!tx || tx.planId !== LIFETIME_LICENSE.id) {
+    return res.status(404).json({ success: false, message: 'Checkout session not found.' });
+  }
+  if (!tx.consumed) {
+    await upsertPaymentTransaction({ ...tx, paymentStatus: 'PAID', providerEventId: `evt_test_${Date.now()}` });
+  }
+  res.json({ success: true, paymentRef });
+});
+
+async function verifyLifetimePayment(paymentRef) {
+  if (isPolarConfigured()) {
+    const polarRes = await polarRequest('GET', `/v1/checkouts/${encodeURIComponent(paymentRef)}`);
+    const obj = polarRes.body || {};
+    if (polarRes.statusCode >= 400 || !obj.id) return { ok: false, status: 402, message: 'Could not verify the payment.' };
+    if (obj.status !== 'succeeded') return { ok: false, status: 402, message: 'Payment has not completed yet.' };
+    // Check the product and its list price (`amount` is before discounts, so owner-issued discount codes still activate)
+    if (obj.product_id !== process.env.POLAR_PRODUCT_ID || String(obj.currency).toLowerCase() !== 'usd' || Number(obj.amount) !== LIFETIME_LICENSE.amountCents) {
+      return { ok: false, status: 400, message: 'Payment does not match the LottoTrack Pro license.' };
+    }
+    return { ok: true, provider: 'polar' };
+  }
+  if (isStripeConfigured()) {
+    const stripeRes = await stripeHttpsRequest('GET', `/v1/checkout/sessions/${encodeURIComponent(paymentRef)}`);
+    const obj = stripeRes.body || {};
+    if (stripeRes.statusCode >= 400 || !obj.id) return { ok: false, status: 402, message: 'Could not verify the payment.' };
+    if (obj.payment_status !== 'paid') return { ok: false, status: 402, message: 'Payment has not completed yet.' };
+    if (String(obj.currency).toLowerCase() !== 'usd' || Number(obj.amount_total) !== LIFETIME_LICENSE.amountCents) {
+      return { ok: false, status: 400, message: 'Payment amount does not match the license price.' };
+    }
+    return { ok: true, provider: 'stripe' };
+  }
+  const tx = await getPaymentTransaction(paymentRef);
+  if (!tx || tx.paymentStatus !== 'PAID') return { ok: false, status: 402, message: 'Payment has not completed yet.' };
+  if (Number(tx.amountCents) !== LIFETIME_LICENSE.amountCents) return { ok: false, status: 400, message: 'Payment amount does not match the license price.' };
+  return { ok: true, provider: tx.provider || 'stripe_test_harness' };
+}
+
+async function finalizeLifetimePurchase(paymentRef) {
+  const ref = String(paymentRef || '').trim();
+  if (!ref) return { ok: false, status: 400, message: 'Missing checkout session.' };
+
+  const existingTx = await getPaymentTransaction(ref);
+  if (existingTx?.consumed) return { ok: true, alreadyActivated: true };
+
+  const verification = await verifyLifetimePayment(ref);
+  if (!verification.ok) return verification;
+
+  // Synchronous section: claim the pending signup and create the account before any await (no double provisioning)
+  const st = getAdminState();
+  const pendingIdx = (st.pendingSignups || []).findIndex(p => p.paymentRef === ref);
+  if (pendingIdx < 0) return { ok: true, alreadyActivated: true };
+  const pending = st.pendingSignups[pendingIdx];
+  st.pendingSignups.splice(pendingIdx, 1);
+  if (storeEmailTaken(st, pending.normalizedEmail)) {
+    saveAdminState(st);
+    return { ok: false, status: 409, message: 'An account with this email already exists. Sign in instead, or contact support for a refund.' };
+  }
+
+  const nowIso = new Date().toISOString();
+  const { storeName, email, normalizedEmail, passwordHash } = pending;
+  const takenNames = new Set((st.storeUsers || []).map(u => String(u.username || '').toLowerCase()));
+  const baseUser = email.split('@')[0].toLowerCase().replace(/[^a-z0-9_]/g, '_').replace(/^_+|_+$/g, '') || 'owner';
+  let username = baseUser;
+  for (let n = 2; takenNames.has(username); n++) username = `${baseUser}_${n}`;
+  const storeSlug = storeName.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 24) || 'store';
+  const storeId = `store_${storeSlug}_${String(Date.now()).slice(-5)}`;
+  const userId = `usr_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
+  const license = {
+    key: generateLicenseKey(userId),
+    userId,
+    type: 'LIFETIME',
+    status: 'ACTIVE',
+    issuedAt: nowIso,
+    paymentRef: ref
+  };
+  const subscriptionInfo = {
+    planId: LIFETIME_LICENSE.id,
+    planName: LIFETIME_LICENSE.name,
+    billingCycle: 'one_time',
+    amountPaid: LIFETIME_LICENSE.price,
+    amountCents: LIFETIME_LICENSE.amountCents,
+    currency: 'USD',
+    provider: verification.provider,
+    paymentRef: ref,
+    status: 'ACTIVE',
+    paidAt: nowIso
+  };
+
+  const newStore = {
+    storeId,
+    storeName,
+    ownerName: storeName,
+    ownerUsername: username,
+    ownerEmail: email,
+    retailerNumber: '',
+    address: '',
+    phone: '',
+    totalBoxes: LIFETIME_LICENSE.maxBoxes,
+    subscriptionStatus: 'ACTIVE',
+    documentStatus: 'APPROVED',
+    retailerAuthStatus: 'VALID',
+    softwareAccessStatus: 'ACTIVE',
+    subscription: subscriptionInfo,
+    license,
+    tokenVersion: 1,
+    suspensionReason: '',
+    suspensionHistory: [],
+    createdAt: nowIso,
+    updatedAt: nowIso
+  };
+  normalizeStoreStatuses(newStore);
+  st.stores.push(newStore);
+  if (!Array.isArray(st.storeUsers)) st.storeUsers = [];
+  st.storeUsers.push({
+    id: userId,
+    storeId,
+    username,
+    email,
+    normalizedEmail,
+    passwordHash,
+    fullName: storeName,
+    role: 'Owner',
+    accountStatus: 'APPROVED',
+    isActive: true,
+    licenseKey: license.key,
+    createdAt: nowIso
+  });
+  recordAuditEvent(st, {
+    adminUsername: username,
+    actorRole: 'CUSTOMER',
+    actionType: 'LICENSE_PURCHASED',
+    targetEntity: 'stores',
+    targetId: storeId,
+    storeId,
+    details: { storeName, email, licenseKey: license.key, amountPaid: LIFETIME_LICENSE.price, paymentRef: ref }
+  });
+
+  const token = generateJWT({ sub: userId, userId, storeId, username, email, role: 'Owner', isAdmin: false, mode: 'STORE', tokenVersion: 1 }, 86400);
+  const storeSession = {
+    token, userId, storeId, username, email, role: 'Owner', tokenVersion: 1,
+    createdAt: nowIso, expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+  };
+  activeStoreSessions.set(token, storeSession);
+  if (!Array.isArray(st.storeSessions)) st.storeSessions = [];
+  st.storeSessions.push(storeSession);
+  saveAdminState(st);
+
+  ensureStorePosStateFile({ storeId, storeName, ownerName: storeName, ownerEmail: email });
+  await upsertPaymentTransaction({
+    paymentRef: ref, provider: verification.provider, storeId, planId: LIFETIME_LICENSE.id, billingCycle: 'one_time',
+    amountCents: LIFETIME_LICENSE.amountCents, currency: 'usd', paymentStatus: 'PAID', consumed: true, consumedAt: nowIso
+  });
+  await persistStoreComplianceToMySQL(newStore);
+  if (isDbConnected && pool) {
+    try {
+      await pool.query(
+        `INSERT INTO store_pos_state (store_id, state_data) VALUES (?, ?)
+         ON DUPLICATE KEY UPDATE state_data = VALUES(state_data), updated_at = CURRENT_TIMESTAMP`,
+        [storeId, JSON.stringify(buildCleanStorePosState({ storeId, storeName, ownerName: storeName, ownerEmail: email }))]
+      );
+      await pool.query(
+        `INSERT INTO store_users (id, store_id, username, email, normalized_email, password_hash, full_name, role, account_status, is_active, approved_by, approved_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'Owner', 'APPROVED', 1, 'LICENSE_PURCHASE', CURRENT_TIMESTAMP)`,
+        [userId, storeId, username, email, normalizedEmail, passwordHash, storeName]
+      );
+    } catch (dbErr) {
+      console.warn('MySQL license provisioning warning:', dbErr.message);
+    }
+  }
+
+  const statuses = {
+    subscriptionStatus: newStore.subscriptionStatus,
+    documentStatus: newStore.documentStatus,
+    retailerAuthStatus: newStore.retailerAuthStatus,
+    softwareAccessStatus: newStore.softwareAccessStatus,
+    canSellLottery: newStore.canSellLottery
+  };
+  sendWelcomeEmail({ email, storeName, licenseKey: license.key }).catch(e => console.warn('Welcome email warning:', e.message));
+
+  return {
+    ok: true,
+    data: {
+      success: true,
+      token,
+      mode: 'STORE',
+      isAdmin: false,
+      storeId,
+      storeName,
+      licenseKey: license.key,
+      statuses,
+      user: { id: userId, username, name: storeName, email, role: 'Owner', storeId, storeName, ...statuses }
+    }
+  };
+}
+
+app.post('/api/purchase/complete', async (req, res) => {
+  try {
+    const result = await finalizeLifetimePurchase(req.body?.paymentRef || req.body?.checkoutSessionId);
+    if (!result.ok) return res.status(result.status || 400).json({ success: false, message: result.message });
+    if (result.alreadyActivated) {
+      return res.json({ success: true, alreadyActivated: true, message: 'Your license is already active. Sign in to continue.' });
+    }
+    res.status(201).json(result.data);
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// 14c-3c. Transactional email (Brevo) + password reset
+// Links always use PUBLIC_SITE_URL, never the request's Origin header (a forged Origin would send reset tokens to another site).
+const PUBLIC_SITE_URL = String(process.env.PUBLIC_SITE_URL || 'http://localhost:5173').replace(/\/$/, '');
+const RESET_TOKEN_TTL_MS = 30 * 60 * 1000;
+const RESET_RESEND_COOLDOWN_MS = 60 * 1000;
+
+const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+async function sendEmail({ to, subject, html }) {
+  if (!process.env.BREVO_API_KEY || !process.env.MAIL_FROM_EMAIL) {
+    console.warn(`Email not sent (BREVO_API_KEY / MAIL_FROM_EMAIL missing): "${subject}" to ${to}`);
+    return false;
+  }
+  const resp = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: { 'api-key': process.env.BREVO_API_KEY, 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({
+      sender: { email: process.env.MAIL_FROM_EMAIL, name: process.env.MAIL_FROM_NAME || 'LottoTrack Pro' },
+      to: [{ email: to }],
+      subject,
+      htmlContent: html
+    })
+  });
+  if (!resp.ok) {
+    console.warn('Brevo send error:', resp.status, (await resp.text()).slice(0, 300));
+    return false;
+  }
+  return true;
+}
+
+function emailLayout(title, bodyHtml) {
+  return `<!doctype html><html><body style="margin:0;background:#f5f5f5;font-family:Arial,Helvetica,sans-serif;color:#0a0a0a">
+<table width="100%" cellpadding="0" cellspacing="0" style="padding:24px 12px"><tr><td align="center">
+<table width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#ffffff;border-radius:12px;overflow:hidden;border-top:4px solid #1D4ED8">
+<tr><td style="background:#0B1B3F;padding:18px 24px;color:#ffffff;font-size:18px;font-weight:800">
+<span style="display:inline-block;width:26px;height:26px;line-height:26px;text-align:center;background:#1D4ED8;color:#ffffff;border-radius:6px;font-weight:900;margin-right:8px">&#10003;</span>LottoTrack <span style="background:#ffffff;color:#0B1B3F;font-size:11px;padding:2px 6px;border-radius:4px;vertical-align:3px">PRO</span></td></tr>
+<tr><td style="padding:28px 24px 8px"><h1 style="margin:0 0 12px;font-size:22px">${title}</h1>${bodyHtml}</td></tr>
+<tr><td style="padding:16px 24px 24px;font-size:12px;color:#737373">LottoTrack Pro, retail lottery POS and shift tracking.</td></tr>
+</table></td></tr></table></body></html>`;
+}
+
+const emailButton = (href, label) =>
+  `<p style="margin:24px 0"><a href="${href}" style="background:#1D4ED8;color:#ffffff;text-decoration:none;font-weight:700;padding:12px 22px;border-radius:6px;display:inline-block">${label}</a></p>`;
+
+function sendWelcomeEmail({ email, storeName, licenseKey }) {
+  return sendEmail({
+    to: email,
+    subject: 'Your LottoTrack Pro license',
+    html: emailLayout('Welcome to LottoTrack Pro', `
+<p style="font-size:15px;line-height:1.6">Thanks for your purchase. <strong>${escapeHtml(storeName)}</strong> is licensed to use LottoTrack Pro.</p>
+<p style="font-size:13px;color:#525252;margin:20px 0 6px">Your license key</p>
+<p style="font-family:Consolas,Menlo,monospace;font-size:18px;font-weight:700;background:#0B1B3F;color:#93C5FD;padding:12px 16px;border-radius:8px;margin:0">${escapeHtml(licenseKey)}</p>
+${emailButton(`${PUBLIC_SITE_URL}/signin`, 'Sign in to LottoTrack Pro')}
+<p style="font-size:13px;color:#525252;line-height:1.6">Sign in with this email address (${escapeHtml(email)}) and the password you chose. Keep this email for your records.</p>`)
+  });
+}
+
+app.post('/api/auth/forgot-password', async (req, res) => {
+  const generic = { success: true, message: 'If an account exists for that email, a reset link is on its way. It expires in 30 minutes.' };
+  try {
+    const normEmail = String(req.body?.email || '').trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normEmail)) {
+      return res.status(400).json({ success: false, message: 'Enter the email address you signed up with.' });
+    }
+    const st = getAdminState();
+    const user = (st.storeUsers || []).find(u =>
+      (u.normalizedEmail || String(u.email || '').toLowerCase().trim()) === normEmail && u.isActive !== false);
+    // Same answer whether or not the account exists, so the form can't be used to discover customers
+    if (!user) return res.json(generic);
+    if (user.resetRequestedAt && Date.now() - new Date(user.resetRequestedAt).getTime() < RESET_RESEND_COOLDOWN_MS) {
+      return res.json(generic);
+    }
+
+    const token = crypto.randomBytes(32).toString('hex');
+    user.resetTokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    user.resetTokenExpiresAt = new Date(Date.now() + RESET_TOKEN_TTL_MS).toISOString();
+    user.resetRequestedAt = new Date().toISOString();
+    saveAdminState(st);
+
+    const link = `${PUBLIC_SITE_URL}/reset-password?token=${token}`;
+    await sendEmail({
+      to: user.email,
+      subject: 'Reset your LottoTrack Pro password',
+      html: emailLayout('Reset your password', `
+<p style="font-size:15px;line-height:1.6">We got a request to reset the password for <strong>${escapeHtml(user.email)}</strong>.</p>
+${emailButton(link, 'Choose a new password')}
+<p style="font-size:13px;color:#525252;line-height:1.6">This link works once and expires in 30 minutes. If you didn't ask for this, ignore this email; your password won't change.</p>`)
+    });
+    res.json(generic);
+  } catch (err) {
+    console.warn('Forgot-password error:', err.message);
+    res.json(generic);
+  }
+});
+
+app.post('/api/auth/reset-password', async (req, res) => {
+  try {
+    const token = String(req.body?.token || '').trim();
+    const password = String(req.body?.password || '');
+    if (password.length < 8) {
+      return res.status(400).json({ success: false, field: 'password', message: 'Password must be at least 8 characters.' });
+    }
+    const tokenHash = /^[0-9a-f]{64}$/.test(token) ? crypto.createHash('sha256').update(token).digest('hex') : '';
+    const st = getAdminState();
+    const user = tokenHash && (st.storeUsers || []).find(u => u.resetTokenHash === tokenHash);
+    if (!user || new Date(user.resetTokenExpiresAt).getTime() < Date.now()) {
+      return res.status(400).json({ success: false, code: 'RESET_LINK_INVALID', message: 'This reset link is invalid or has expired. Request a new one.' });
+    }
+
+    user.passwordHash = hashPassword(password);
+    delete user.resetTokenHash;
+    delete user.resetTokenExpiresAt;
+    // Sign out every existing session for this store (tokens carry the store's tokenVersion)
+    const store = (st.stores || []).find(s => s.storeId === user.storeId);
+    if (store) store.tokenVersion = Math.max(1, Number(store.tokenVersion) || 1) + 1;
+    saveAdminState(st);
+
+    if (isDbConnected && pool) {
+      try {
+        await pool.query('UPDATE store_users SET password_hash = ? WHERE id = ?', [user.passwordHash, user.id]);
+        if (store) await persistStoreComplianceToMySQL(store);
+      } catch (dbErr) {
+        console.warn('MySQL password reset warning:', dbErr.message);
+      }
+    }
+    recordAuditEvent(st, {
+      adminUsername: user.username, actorRole: 'CUSTOMER', actionType: 'PASSWORD_RESET',
+      targetEntity: 'store_users', targetId: user.id, storeId: user.storeId, details: { email: user.email }
+    });
+    saveAdminState(st);
+    res.json({ success: true, email: user.email, message: 'Password updated. Sign in with your new password.' });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
 
 // 14c-4. Authenticated Store: Fetch Live Account Status & Compliance Notifications
 app.get('/api/store/account-status', requireStoreActive, (req, res) => {
@@ -6071,16 +6498,6 @@ app.all('/api/auth/verify-token', (req, res) => {
   return res.status(401).json({ valid: false, message: 'Invalid or expired token' });
 });
 
-// Serve standalone marketing & subscription landing page at /landing
-const landingPath = path.join(__dirname, 'landing');
-if (fs.existsSync(landingPath)) {
-  app.use('/landing', express.static(landingPath, {
-    dotfiles: 'ignore',
-    etag: true,
-    lastModified: true
-  }));
-}
-
 // Serve compiled, minified production assets if dist directory exists (hides raw source files)
 const distPath = path.join(__dirname, 'dist');
 if (fs.existsSync(distPath)) {
@@ -6091,13 +6508,15 @@ if (fs.existsSync(distPath)) {
   }));
 }
 
-// SPA Route handler for /pos and /admin (preserves GET / API status JSON)
-app.get(/^\/(pos|admin)(\/.*)?$/, (req, res) => {
-  if (fs.existsSync(path.join(distPath, 'index.html'))) {
-    res.sendFile(path.join(distPath, 'index.html'));
-  } else {
-    res.sendFile(path.join(__dirname, 'index.html'));
-  }
+// POS app (and its #admin views) lives under /app; the marketing site + sign in/up are the root SPA
+app.get(/^\/(app|admin)(\/.*)?$/, (req, res) => {
+  const builtApp = path.join(distPath, 'app', 'index.html');
+  res.sendFile(fs.existsSync(builtApp) ? builtApp : path.join(__dirname, 'app', 'index.html'));
+});
+app.get(/^\/(signin|signup|reset-password)(\/.*)?$/, (req, res, next) => {
+  const builtSite = path.join(distPath, 'index.html');
+  if (fs.existsSync(builtSite)) return res.sendFile(builtSite);
+  next();
 });
 
 // Start listening and initialize DB
