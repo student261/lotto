@@ -174,10 +174,10 @@ export default function Landing() {
               <div className="problem-points-col">
                 <ul className="problem-points-list">
                   {[
-                    'Writing down 65 ticket numbers by hand takes 45+ minutes every shift.',
-                    'One misread number throws off your entire shift sales calculation.',
-                    "When the cash drawer is short, you cannot tell whether money was stolen or miscounted.",
-                    'Stored reserve packs in the safe are forgotten or lost without real-time inventory tracking.'
+                    'Checking opening and closing ticket numbers across 65 dispenser boxes by hand slows down every shift change.',
+                    'One misread ticket number, wrong game price ($1 to $50), or missed sold-out pack throws off the shift report.',
+                    'Without box-by-box records, it is hard to match physical rack sales against your terminal instant and online totals.',
+                    'Packs held in stock, returned from a box, or activated mid-shift quickly fall out of sync on paper logs.'
                   ].map((t, i) => (
                     <li key={i} className="problem-point-item">
                       <span className="problem-marker" aria-hidden="true">{String(i + 1).padStart(2, '0')}</span>

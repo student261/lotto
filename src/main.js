@@ -2,7 +2,7 @@
 import './style.css';
 import './design-system.css';
 import './responsive.css';
-import { loadState, saveState, shouldUseServerState, resetToDefaults, resetToCleanState, getCleanEmptyState, SAMPLE_GAMES, findGameByBarcode, getStandardPackDetails, parseLotteryBarcode, normalizePackNumber, isPackNumberMatch, formatLotteryBarcode, computeLotterySeriesCode, DEFAULT_STORES, getStoresList, saveStoresList, getCurrentStoreId, setCurrentStoreId, getStoreStorageKey, normalizeLotteryJurisdiction, getStoreJurisdiction } from './data.js';
+import { loadState, saveState, shouldUseServerState, resetToDefaults, resetToCleanState, getCleanEmptyState, SAMPLE_GAMES, findGameByBarcode, getStandardPackDetails, parseLotteryBarcode, normalizePackNumber, isPackNumberMatch, formatLotteryBarcode, computeLotterySeriesCode, DEFAULT_STORES, getStoresList, saveStoresList, getCurrentStoreId, setCurrentStoreId, getStoreStorageKey, normalizeLotteryJurisdiction, getStoreJurisdiction, isScelGameNumber } from './data.js';
 import { sfx, voice } from './audio.js';
 import { setupDayReportHandlers, openDayReportModal, printDayReport, populateDayReportDOM } from './dayReportRenderer.js';
 import { getDayReportData, getScreenDayReportData } from './dayReportData.js';
@@ -2508,7 +2508,7 @@ function renderDispenserRack() {
       </div>
       <div class="card-dashed-line"></div>
       <div class="card-footer-cluster ${isScanning ? 'is-scanning' : ''}">
-        ${(!isScanning && slot.needsActivation) ? `<button type="button" class="btn-card-activate" data-box="${slot.boxNumber}">Activate</button>` : ''}
+        ${slot.needsActivation ? `<button type="button" class="btn-card-activate" data-box="${slot.boxNumber}">Activate</button>` : ''}
         <span class="ticket-number-display ticket-sold-count ${isScanning ? 'scanning-num' : ''}">${displaySoldNumber}</span>
         <div style="display:none;">
           <div class="tile-ticket-info-top">
@@ -2523,13 +2523,13 @@ function renderDispenserRack() {
             <span class="count-total">of ${packSize}</span>
           </div>
         </div>
-        ${isScanning ? (slot.scannedInEndShift ? '<span class="card-scan-badge done" style="margin-top:4px;">✓ SCANNED</span>' : (slot.needsActivation ? '<span class="card-scan-badge pending" style="margin-top:4px;background:#2563eb;color:#fff;">ACTIVATE</span>' : '<span class="card-scan-badge pending" style="margin-top:4px;">SCAN</span>')) : ''}
+        ${(isScanning && !slot.needsActivation) ? (slot.scannedInEndShift ? '<span class="card-scan-badge done" style="margin-top:4px;">✓ SCANNED</span>' : '<span class="card-scan-badge pending" style="margin-top:4px;">SCAN</span>') : ''}
       </div>
     `;
 
     card.addEventListener('click', (e) => {
       const activateBtn = e.target.closest('.btn-card-activate');
-      if (activateBtn || (isScanning && slot.needsActivation)) {
+      if (activateBtn) {
         e.stopPropagation();
         if (isScanning) {
           handleActivateEndShiftSlot(slot);
@@ -2708,7 +2708,7 @@ function handleBoxCardClick(slot) {
   if (slot && slot.boxNumber) {
     bringBoxToVisibleRack(slot.boxNumber);
   }
-  const isBoxActive = Boolean(slot && slot.status === 'ACTIVE' && slot.packNumber);
+  const isBoxActive = Boolean(slot && slot.status === 'ACTIVE' && (slot.packNumber || slot.needsActivation));
 
   if (state.shiftStatus === 'SCANNING_END_SHIFT') {
     // In End Shift verification mode: clicking/selecting a box must NEVER mark it scanned or increase verification count.
@@ -6426,6 +6426,14 @@ function openEndShiftBoxReviewModal(slot) {
     }
     if (unscannedActions) unscannedActions.style.display = 'flex';
     if (scannedActions) scannedActions.style.display = 'none';
+  } else if (slot.needsActivation) {
+    if (statusEl) {
+      statusEl.textContent = 'PENDING ACTIVATION';
+      statusEl.style.background = '#2563eb';
+      statusEl.style.color = '#fff';
+    }
+    if (unscannedActions) unscannedActions.style.display = 'flex';
+    if (scannedActions) scannedActions.style.display = 'none';
   } else {
     if (statusEl) {
       statusEl.textContent = 'UNSCANNED';
@@ -7063,12 +7071,12 @@ export function buildShiftReportRows(slots = [], soldOutList = []) {
   const rows = [];
   const processedKeys = new Set();
 
-  // Find all unique box numbers that have an active slot, verified/dispositioned slot, or sold-out pack
-  // Every active box is included so store owners see the complete rack report (all boxes accounted for)
+  // Find all unique box numbers that have a verified/dispositioned slot or sold-out pack
+  // Untouched unscanned slots are completely excluded from boxNumSet and the report
   const boxNumSet = new Set();
   (slots || []).forEach(s => {
     if (s && s.boxNumber) {
-      if (s.status === 'ACTIVE' || s.scannedInEndShift || s.declaredOutThere || s.status === 'SOLD_OUT' || (s.packNumber && s.packNumber !== '---')) {
+      if (s.scannedInEndShift || s.declaredOutThere || s.status === 'SOLD_OUT') {
         boxNumSet.add(s.boxNumber);
       }
     }
@@ -7154,27 +7162,8 @@ export function buildShiftReportRows(slots = [], soldOutList = []) {
               isDeclaredOutThere: true
             });
           }
-        } else {
-          // Untouched active slot: included in report with 0 sold so the complete rack is visible
-          const startNum = slot.startTicket !== undefined ? slot.startTicket : 0;
-          const closeNum = slot.currentTicket !== undefined ? slot.currentTicket : startNum;
-          const key = `${boxNum}_act_${slot.packNumber}_${startNum}_${closeNum}`;
-          if (!processedKeys.has(key)) {
-            processedKeys.add(key);
-            rows.push({
-              boxNumber: boxNum,
-              gameName: slot.gameName || 'Scratch Off',
-              price: slot.price || 0,
-              startTicket: startNum,
-              closeTicket: closeNum,
-              sold: 0,
-              amount: 0,
-              statusTag: null,
-              isReturned: false,
-              isSoldOut: false
-            });
-          }
         }
+        // Untouched unscanned slot: completely excluded from report rows
       }
     } else if (slot && slot.status === 'SOLD_OUT' && boxSoldOuts.length === 0) {
       const sold = Math.max(0, (slot.currentTicket || 0) - (slot.startTicket || 0));
@@ -8661,12 +8650,20 @@ export function autoAddInStockPackToDispenser(inStockPack, parsed = null, barcod
 }
 
 
+function clearPendingEndShiftActivation(slot) {
+  if (!slot) return;
+  slot.needsActivation = false;
+  delete slot.pendingEndShiftBarcode;
+  delete slot.pendingEndShiftEffectiveBarcode;
+  delete slot.pendingEndShiftParsed;
+}
+
 export function handleActivateEndShiftSlot(slot) {
   if (!slot) return;
   const targetSlot = (state.slots || []).find(s => Number(s.boxNumber) === Number(slot.boxNumber));
   if (!targetSlot) return;
 
-  targetSlot.needsActivation = false;
+  clearPendingEndShiftActivation(targetSlot);
   targetSlot.status = 'ACTIVE';
   targetSlot.activatedThisShift = true;
   targetSlot.scannedInEndShift = true;
@@ -14580,6 +14577,7 @@ function handleSetBoxForTicket(boxNumber, barcode, detectedGame, restorePack = n
       slot.status = 'SOLD_OUT';
       slot.scannedInEndShift = false;
       slot.declaredOutThere = false;
+      clearPendingEndShiftActivation(slot);
       recordSoldOutPack(slot, packSize);
       saveState(state);
       renderHeaderAndMetrics();
@@ -14635,6 +14633,11 @@ function handleSetBoxForTicket(boxNumber, barcode, detectedGame, restorePack = n
           packNumber: String(slot.packNumber),
           gameName: slot.gameName,
           gameId: slot.gameId,
+          barcodePrefix: slot.barcodePrefix || '',
+          basePackNumber: slot.basePackNumber || String(slot.packNumber),
+          checkDigit: slot.checkDigit || null,
+          packCombined: slot.packCombined || String(slot.packNumber),
+          jurisdiction: slot.jurisdiction || null,
           price: price,
           packSize: packSize,
           currentTicket: curr,
@@ -14656,6 +14659,7 @@ function handleSetBoxForTicket(boxNumber, barcode, detectedGame, restorePack = n
       slot.activatedThisShift = false;
       slot.scannedInEndShift = false;
       slot.declaredOutThere = false;
+      clearPendingEndShiftActivation(slot);
 
       saveState(state);
       renderHeaderAndMetrics();
@@ -14671,6 +14675,7 @@ function handleSetBoxForTicket(boxNumber, barcode, detectedGame, restorePack = n
       const slot = currentEndShiftReviewSlot;
       slot.declaredOutThere = true;
       slot.scannedInEndShift = false;
+      clearPendingEndShiftActivation(slot);
       saveState(state);
       renderHeaderAndMetrics();
       renderDispenserRack();

@@ -30,7 +30,7 @@ async function run() {
     '--headless=new',
     '--disable-gpu',
     '--window-size=1920,1080',
-    'http://localhost:5173'
+    'http://localhost:5173/app/?bypass_login=1'
   ]);
 
   try {
@@ -92,7 +92,7 @@ async function run() {
         paneVisible,
         hasInput: Boolean(input),
         btnDisabledInitial: btn ? btn.disabled : false,
-        btnText: btn ? btn.textContent.trim() : ''
+        btnText: btn ? btn.textContent.replace(/\\s+/g, ' ').trim() : ''
       };
     })()`);
 
@@ -150,7 +150,7 @@ async function run() {
     console.log('\n--- Test Group 4: Sell Counter "Start Shift" Display ---');
     const btnLabelCheck = await evalInPage(`(() => {
       const sellNav = document.getElementById('navSellCounter');
-      if (sellNav) sellNav.click();
+      if (sellNav && !sellNav.classList.contains('active')) sellNav.click();
 
       const shiftBtn = document.getElementById('mainShiftActionBtn');
       const label = document.getElementById('mainShiftBtnLabel')?.textContent.trim();

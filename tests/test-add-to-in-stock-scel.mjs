@@ -112,7 +112,8 @@ runTest('2.1: 4-part ticket 1684-345553-4-004 (025) parses correctly with checkD
   assert.strictEqual(adapted.ticketString, '004');
   assert.strictEqual(adapted.checkCode, '4');
   assert.strictEqual(adapted.rawSuffix, '(025)');
-  assert.strictEqual(adapted.securityCode, null, 'Must NOT classify (025) as security code');
+  assert.strictEqual(adapted.securityCode, '025');
+  assert.strictEqual(adapted.hasExplicitSecurityCode, true);
   assert.strictEqual(adapted.canonicalId, '1684-345553-4-004');
   assert.strictEqual(adapted.displayBarcode, '1684-345553-4-004 (025)');
   assert.strictEqual(adapted.price, 10);
@@ -135,7 +136,8 @@ runTest('2.2: 4-part ticket 1705-002921-5-069 (080) continues to parse correctly
   assert.strictEqual(adapted.ticketNumber, 69);
   assert.strictEqual(adapted.ticketString, '069');
   assert.strictEqual(adapted.rawSuffix, '(080)');
-  assert.strictEqual(adapted.securityCode, null);
+  assert.strictEqual(adapted.securityCode, '080');
+  assert.strictEqual(adapted.hasExplicitSecurityCode, true);
   assert.strictEqual(adapted.canonicalId, '1705-002921-5-069');
   assert.strictEqual(adapted.displayBarcode, '1705-002921-5-069 (080)');
   assert.strictEqual(adapted.price, 2);
@@ -158,12 +160,18 @@ runTest('3.1: Georgia ticket 1886-003594-0-029 (000) continues to parse with che
   assert.strictEqual(gaParsed.hasExplicitSecurityCode, true);
 });
 
-runTest('3.2: SC jurisdiction does NOT compute Georgia series PIN for 1684 or 1705', () => {
+runTest('3.2: SC jurisdiction uses SCEL countdown suffix instead of synthetic GA series PIN for 1684 or 1705', () => {
   const sc1684 = parseLotteryBarcode('1684-345553-4-004 (025)', [], 'SC');
-  assert.strictEqual(sc1684.securityCode, null);
+  assert.strictEqual(sc1684.securityCode, '025');
+  assert.strictEqual(sc1684.hasExplicitSecurityCode, true);
+
+  const sc1684NoSuffix = parseLotteryBarcode('1684-345553-4-004', [], 'SC');
+  assert.strictEqual(sc1684NoSuffix.securityCode, '025');
+  assert.strictEqual(sc1684NoSuffix.hasExplicitSecurityCode, false);
 
   const sc1705 = parseLotteryBarcode('1705-002921-5-069 (080)', [], 'SC');
-  assert.strictEqual(sc1705.securityCode, null);
+  assert.strictEqual(sc1705.securityCode, '080');
+  assert.strictEqual(sc1705.hasExplicitSecurityCode, true);
 
   // In SC jurisdiction, formatTicketDisplayBarcode does not append synthetic GA PIN
   const formatted1684 = formatLotteryBarcode('1684-345553-4-004 (025)', [], null, 'SC');

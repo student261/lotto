@@ -146,14 +146,14 @@ runTest('2.4: Game 1705 automatically populates name, price, and catalogue pack 
   assert.strictEqual(parsed.packSize, 150);
 });
 
-runTest('2.5: Optional raw suffix (080) is preserved as rawSuffix and not confused with securityCode', () => {
+runTest('2.5: Optional raw suffix (080) is preserved as rawSuffix and securityCode', () => {
   const parsed = parseLotteryBarcode('1705-002921-5-069(080)', [], 'SC');
   assert.strictEqual(parsed.isValid, true);
   assert.strictEqual(parsed.rawSuffix, '(080)');
   assert.strictEqual(parsed.ticketString, '069');
   assert.strictEqual(parsed.ticketNumber, 69);
-  assert.strictEqual(parsed.securityCode, null);
-  assert.strictEqual(parsed.hasExplicitSecurityCode, false);
+  assert.strictEqual(parsed.securityCode, '080');
+  assert.strictEqual(parsed.hasExplicitSecurityCode, true);
 });
 
 // -------------------------------------------------------------
@@ -175,7 +175,7 @@ runTest('3.2: Malformed SCEL formats are safely rejected in SC jurisdiction', ()
     '170-002921-5-069', // 3-digit game
     '1705-002921-5-69', // 2-digit ticket
     '1705-002921-5', // missing ticket
-    '17050029215069080', // 17-digit continuous format
+    '1705002921506908', // malformed 16-digit continuous format
     '833283017051' // 12-digit UPC retail
   ];
   for (const m of malformedList) {
@@ -184,11 +184,18 @@ runTest('3.2: Malformed SCEL formats are safely rejected in SC jurisdiction', ()
     assert.strictEqual(res.jurisdiction, 'SC');
   }
 
-  // Continuous 14-digit format is now supported
+  // Continuous 14-digit and 17-digit formats are supported for physical scanners
   const res14 = parseLotteryBarcode('17050029215069', [], 'SC');
   assert.strictEqual(res14.isValid, true);
   assert.strictEqual(res14.jurisdiction, 'SC');
   assert.strictEqual(res14.ticketNumber, 69);
+
+  const res17 = parseLotteryBarcode('17050029215069080', [], 'SC');
+  assert.strictEqual(res17.isValid, true);
+  assert.strictEqual(res17.jurisdiction, 'SC');
+  assert.strictEqual(res17.ticketNumber, 69);
+  assert.strictEqual(res17.securityCode, '080');
+  assert.strictEqual(res17.displayBarcode, '1705-002921-5-069 (080)');
 });
 
 runTest('3.3: GA Receive a Book behavior remains 100% unchanged', () => {

@@ -215,7 +215,7 @@ async function runBrowserTests() {
     '--no-first-run',
     '--no-default-browser-check',
     '--window-size=1440,900',
-    'http://127.0.0.1:5173/'
+    'http://127.0.0.1:5173/app/?bypass_login=1'
   ]);
 
   try {
@@ -372,7 +372,7 @@ async function runBrowserTests() {
   } finally {
     try {
       chromeProcess.kill('SIGKILL');
-    } catch (_) {}
+    } catch (_) { }
   }
 }
 
