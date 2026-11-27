@@ -1,5 +1,6 @@
 // Official Georgia Lottery Retailer Day Report Data Model
 // Exact Match to LT System Software Georgia Lottery Specification
+import { calculateSlotSoldTickets, calculateSoldOutRecordTickets, isBoxActive, isPackNumberMatch, getStandardPackDetails } from './data.js';
 
 export const AMIGO_DAY_REPORT_REFERENCE = {
   isLive: false,
@@ -474,12 +475,12 @@ export function getScreenDayReportData(state, options = {}) {
 
       const openTime = earliestShift.startedAt
         ? new Date(earliestShift.startedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
-        : (earliestShift.openedTime || '7:00 AM');
+        : (earliestShift.openedTime || '—');
       const closeTime = latestShift.endedAt
         ? new Date(latestShift.endedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
-        : (latestShift.closedTime || '10:00 PM');
+        : (latestShift.closedTime || '—');
 
-      const user = latestShift.cashier || latestShift.cashierName || earliestShift.cashier || 'Clerk';
+      const user = latestShift.cashier || latestShift.cashierName || earliestShift.cashier || '—';
 
       let totalTickets = 0;
       let totalInstantSales = 0;
@@ -492,10 +493,7 @@ export function getScreenDayReportData(state, options = {}) {
         (h.soldOutSnapshot || []).forEach(so => allSoldOutOnDate.push(so));
       });
 
-      const soldOutList = allSoldOutOnDate.filter(sp => {
-        const sSold = sp.ticketsSold !== undefined ? sp.ticketsSold : Math.max(0, (sp.closeTicket || 0) - (sp.startTicket || 0));
-        return sSold > 0;
-      });
+      const soldOutList = allSoldOutOnDate.filter(sp => calculateSoldOutRecordTickets(sp) > 0);
       const soldOutCount = soldOutList.length;
       const soldOutBox = soldOutList.length > 0 ? `Box ${soldOutList[0].boxNumber || ''}` : '-';
 
@@ -516,7 +514,7 @@ export function getScreenDayReportData(state, options = {}) {
 
         // 1. Sold-out packs in this box on this date
         soldPacks.forEach(sp => {
-          const sSold = sp.ticketsSold !== undefined ? sp.ticketsSold : Math.max(0, (sp.closeTicket || 0) - (sp.startTicket || 0));
+          const sSold = calculateSoldOutRecordTickets(sp);
           const price = Number(sp.price) || 1;
           const sTotal = sp.salesAmount !== undefined ? sp.salesAmount : (sSold * price);
 
@@ -528,12 +526,16 @@ export function getScreenDayReportData(state, options = {}) {
           pEntry.total += sTotal;
           priceMap.set(price, pEntry);
 
+          const closePos = (sp.closeTicket !== undefined && sp.closeTicket !== null)
+            ? sp.closeTicket
+            : ((sp.startTicket || 0) + sSold);
+
           boxes.push({
             box: b,
             pack: sp.packNumber,
             game: sp.gameName || 'Scratch-off',
             open: String(sp.startTicket || 0).padStart(3, '0'),
-            close: String(sp.closeTicket || (sp.startTicket || 0) + sSold).padStart(3, '0'),
+            close: String(closePos).padStart(3, '0'),
             sold: sSold,
             price,
             total: sTotal,
@@ -543,16 +545,22 @@ export function getScreenDayReportData(state, options = {}) {
         });
 
         // 2. Active pack in this box at the end of the day
-        const lastSlot = (latestShift.slotsSnapshot || []).find(s => s.boxNumber === b && s.status === 'ACTIVE' && s.packNumber);
+        const lastSlot = (latestShift.slotsSnapshot || []).find(s => s.boxNumber === b && isBoxActive(s));
         if (lastSlot) {
           // Find opening ticket from earliest shift that had this same pack
-          const firstShiftWithPack = shiftsOnDate.find(h => (h.slotsSnapshot || []).some(s => s.boxNumber === b && s.packNumber === lastSlot.packNumber));
-          const firstSlot = firstShiftWithPack ? (firstShiftWithPack.slotsSnapshot || []).find(s => s.boxNumber === b && s.packNumber === lastSlot.packNumber) : null;
+          const samePack = (s) => s.boxNumber === b && s.packNumber && (s.packNumber === lastSlot.packNumber || isPackNumberMatch(s.packNumber, lastSlot.packNumber));
+          const firstShiftWithPack = shiftsOnDate.find(h => (h.slotsSnapshot || []).some(samePack));
+          const firstSlot = firstShiftWithPack ? (firstShiftWithPack.slotsSnapshot || []).find(samePack) : null;
           const openTix = (firstSlot && typeof firstSlot.startTicket === 'number')
             ? firstSlot.startTicket
             : (typeof lastSlot.packStartTicket === 'number' ? lastSlot.packStartTicket : (typeof lastSlot.startTicket === 'number' ? lastSlot.startTicket : 0));
           const closeTix = typeof lastSlot.currentTicket === 'number' ? lastSlot.currentTicket : openTix;
-          const sold = Math.max(0, closeTix - openTix);
+          const sold = calculateSlotSoldTickets({
+            ...lastSlot,
+            startTicket: openTix,
+            currentTicket: closeTix,
+            packSize: lastSlot.packSize || firstSlot?.packSize || getStandardPackDetails(lastSlot.price || 1).packSize
+          });
           const price = Number(lastSlot.price) || 1;
           const rowTotal = sold * price;
 
@@ -597,9 +605,9 @@ export function getScreenDayReportData(state, options = {}) {
 
       const shifts = shiftsOnDate.map((h, idx) => {
         const sNum = h.shiftNumber || (idx + 1);
-        const cName = h.cashier || h.cashierName || 'Cashier';
-        const sStart = h.startedAt ? new Date(h.startedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }) : '7:00 AM';
-        const sEnd = h.endedAt ? new Date(h.endedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }) : '3:00 PM';
+        const cName = h.cashier || h.cashierName || state?.cashierName || '—';
+        const sStart = h.startedAt ? new Date(h.startedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }) : '—';
+        const sEnd = h.endedAt ? new Date(h.endedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }) : '—';
         return {
           id: sNum,
           name: `Shift #${sNum} · ${cName}`,
@@ -620,8 +628,8 @@ export function getScreenDayReportData(state, options = {}) {
         isDailyMode: true,
         reportHeading: 'Day Report',
         reportTitle: 'Day Report',
-        storeName: state?.storeName || earliestShift.storeName || 'AMIGO FOOD MART',
-        storeAddress: state?.storeAddress || earliestShift.storeAddress || '2300 Moody Rd, Warner Robins, GA 31088',
+        storeName: state?.storeName || earliestShift.storeName || '',
+        storeAddress: state?.storeAddress || earliestShift.storeAddress || '',
         subtitle,
         date: dateStr,
         dateRange: dateStr,
@@ -650,15 +658,15 @@ export function getScreenDayReportData(state, options = {}) {
       isDailyMode: true,
       reportHeading: 'Day Report',
       reportTitle: 'Day Report',
-      storeName: state?.storeName || 'AMIGO FOOD MART',
-      storeAddress: state?.storeAddress || '2300 Moody Rd, Warner Robins, GA 31088',
+      storeName: state?.storeName || '',
+      storeAddress: state?.storeAddress || '',
       subtitle: `${dateStr} · 0 shifts`,
       date: dateStr,
       dateRange: dateStr,
       generatedTime: dateStr,
       openedTime: '-',
       closedTime: '-',
-      userId: state?.cashierName || 'Clerk',
+      userId: state?.cashierName || '—',
       shifts: [],
       shiftsCount: '0 shifts',
       shiftsSummary: 'No shifts recorded',
@@ -694,9 +702,9 @@ export function getScreenDayReportData(state, options = {}) {
 
   const openTime = state?.shiftStartedAt
     ? new Date(state.shiftStartedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
-    : '7:02 AM';
+    : '-';
 
-  const user = state?.cashierName || 'Carlos';
+  const user = state?.cashierName || '—';
   const isDailyMode = state?.settings?.operationMode !== 'SHIFTS';
 
   let totalTickets = 0;
@@ -723,7 +731,7 @@ export function getScreenDayReportData(state, options = {}) {
   const getDayOpenTicket = (slot) => {
     if (isDailyMode && earliestTodayShift && Array.isArray(earliestTodayShift.slotsSnapshot)) {
       const pastSlot = earliestTodayShift.slotsSnapshot.find(s => s.boxNumber === slot.boxNumber);
-      if (pastSlot && pastSlot.packNumber === slot.packNumber && typeof pastSlot.startTicket === 'number') {
+      if (pastSlot && pastSlot.packNumber && slot.packNumber && (pastSlot.packNumber === slot.packNumber || isPackNumberMatch(pastSlot.packNumber, slot.packNumber)) && typeof pastSlot.startTicket === 'number') {
         return pastSlot.startTicket;
       }
     }
@@ -741,7 +749,7 @@ export function getScreenDayReportData(state, options = {}) {
 
   // Only count sold-out packs that had actual sales
   const soldOutList = allSoldOutToday.filter(sp => {
-    const sSold = sp.ticketsSold !== undefined ? sp.ticketsSold : Math.max(0, (sp.closeTicket || 0) - (sp.startTicket || 0));
+    const sSold = calculateSoldOutRecordTickets(sp);
     return sSold > 0;
   });
   let soldOutCount = soldOutList.length;
@@ -757,7 +765,7 @@ export function getScreenDayReportData(state, options = {}) {
     // 1. Include any packs that sold out in this box today
     if (soldPacks.length > 0) {
       soldPacks.forEach(sp => {
-        const sSold = sp.ticketsSold !== undefined ? sp.ticketsSold : Math.max(0, (sp.closeTicket || 0) - (sp.startTicket || 0));
+        const sSold = calculateSoldOutRecordTickets(sp);
         const price = Number(sp.price) || 1;
         const sTotal = sp.salesAmount !== undefined ? sp.salesAmount : (sSold * price);
 
@@ -769,12 +777,16 @@ export function getScreenDayReportData(state, options = {}) {
         pEntry.total += sTotal;
         priceMap.set(price, pEntry);
 
+        const closePos = (sp.closeTicket !== undefined && sp.closeTicket !== null)
+          ? sp.closeTicket
+          : ((sp.startTicket || 0) + sSold);
+
         boxes.push({
           box: b,
           pack: sp.packNumber,
           game: sp.gameName || 'Scratch-off',
           open: String(sp.startTicket || 0).padStart(3, '0'),
-          close: String(sp.closeTicket || (sp.startTicket || 0) + sSold).padStart(3, '0'),
+          close: String(closePos).padStart(3, '0'),
           sold: sSold,
           price,
           total: sTotal,
@@ -785,10 +797,10 @@ export function getScreenDayReportData(state, options = {}) {
     }
 
     // 2. Include the currently active pack in this box (if any)
-    if (slot && slot.status === 'ACTIVE' && slot.packNumber) {
+    if (isBoxActive(slot)) {
       const openTix = isDailyMode ? getDayOpenTicket(slot) : (typeof slot.startTicket === 'number' ? slot.startTicket : 0);
       const closeTix = typeof slot.currentTicket === 'number' ? slot.currentTicket : openTix;
-      const sold = Math.max(0, closeTix - openTix);
+      const sold = calculateSlotSoldTickets({ ...slot, startTicket: openTix, currentTicket: closeTix });
       const price = Number(slot.price) || 1;
       const rowTotal = sold * price;
 
@@ -956,16 +968,14 @@ export function getTodayVsYesterdayComparison(state) {
   let currentShiftTickets = 0;
   let currentShiftRevenue = 0;
   (state?.slots || []).forEach(s => {
-    if (s && s.status === 'ACTIVE' && s.packNumber) {
-      const openT = typeof s.startTicket === 'number' ? s.startTicket : 0;
-      const currT = typeof s.currentTicket === 'number' ? s.currentTicket : openT;
-      const sSold = Math.abs(currT - openT);
+    if (isBoxActive(s)) {
+      const sSold = calculateSlotSoldTickets(s);
       currentShiftTickets += sSold;
       currentShiftRevenue += sSold * (s.price || 0);
     }
   });
   (state?.soldOutThisShift || []).forEach(so => {
-    const sSold = so.ticketsSold !== undefined ? so.ticketsSold : Math.abs((so.closeTicket || 0) - (so.startTicket || 0));
+    const sSold = calculateSoldOutRecordTickets(so);
     currentShiftTickets += sSold;
     currentShiftRevenue += so.salesAmount !== undefined ? so.salesAmount : (sSold * (so.price || 0));
   });
@@ -973,7 +983,7 @@ export function getTodayVsYesterdayComparison(state) {
   const currentCashes = Number(state?.cashes || 0);
   const currentOnline = Number(state?.onlineSales || 0);
   const currentOnlineCashes = Number(state?.onlineCashes || 0);
-  const currentActivations = (state?.slots || []).filter(s => s && s.status === 'ACTIVE' && s.activatedThisShift).length;
+  const currentActivations = (state?.slots || []).filter(s => isBoxActive(s) && s.activatedThisShift).length;
   const currentSoldOuts = (state?.soldOutThisShift || []).length;
 
   const todayTotalTickets = todayPastTickets + currentShiftTickets;

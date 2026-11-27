@@ -252,21 +252,14 @@ export function parseScelPrintedTicketNumber(input) {
   const ticketNumber = match4[4];
   const rawSuffix = match4[5] || null;
 
-  const game = findScelGame(gameNumber) || {
-    id: `sc${gameNumber}`,
-    gameNumber,
-    barcodePrefix: gameNumber,
-    name: 'Scratch-Off Game',
-    price: 1,
-    packSize: 100,
-    jurisdiction: 'SCEL'
-  };
+  const matchedGame = findScelGame(gameNumber);
 
   const baseCanonical = `${gameNumber}-${packNumber}-${checkDigit}-${ticketNumber}`;
 
   return {
     isValid: true,
     jurisdiction: 'SCEL',
+    isCatalogued: Boolean(matchedGame),
     gameNumber,
     packNumber,
     checkDigit,
@@ -277,7 +270,7 @@ export function parseScelPrintedTicketNumber(input) {
     displayString: rawSuffix
       ? `${baseCanonical} ${rawSuffix}`
       : baseCanonical,
-    game,
+    game: matchedGame || null,
     raw: input
   };
 }
@@ -388,43 +381,31 @@ export function adaptScelToLotteryBarcode(raw, customGames = []) {
     }
   }
 
-  // Verify game existence against SCEL catalog or store custom games
-  let matchedGame = findScelGame(gameNumber)
-    || (customGames || []).find(g => g.barcodePrefix === gameNumber || g.gameNumber === gameNumber);
+  // Verify game existence against SCEL catalog or confirmed SC custom games (never invent price/packSize)
+  const matchedGame = findScelGame(gameNumber)
+    || (customGames || []).find(g => {
+      const jur = normalizeLotteryJurisdiction(g.jurisdiction);
+      const matchPrefix = g.barcodePrefix === gameNumber || g.gameNumber === gameNumber;
+      return matchPrefix && (!g.jurisdiction || jur === 'SC');
+    })
+    || null;
 
   if (!matchedGame) {
-    const gNumInt = parseInt(gameNumber, 10);
-    // Explicit rejection for uncataloged test/dummy games (e.g. 9999), Georgia games (e.g. 1648) or non-numeric/out of lottery range
-    if (gameNumber === '9999' || gameNumber === '1648' || isNaN(gNumInt) || gNumInt > 3000 || gNumInt < 100) {
-      return {
-        isValid: false,
-        jurisdiction: 'SC',
-        isNonLotteryBarcode: true,
-        isRetailProduct: true,
-        error: `Unknown SCEL game: ${gameNumber}`,
-        gameNumber,
-        raw
-      };
-    }
-
-    // Uncataloged active SCEL scratch-off game: infer packSize & price from countdown PIN if available (just like GA)
-    const pinNum = rawSuffix ? parseInt(String(rawSuffix).replace(/[^0-9]/g, ''), 10) : null;
-    const ticketInt = parseInt(ticketString, 10);
-    let inferredSize = (pinNum !== null && !isNaN(pinNum) && !isNaN(ticketInt)) ? (ticketInt + pinNum + 1) : null;
-    const stdSizes = [300, 150, 100, 60, 30, 25, 20, 18, 15, 12, 10];
-    if (!stdSizes.includes(inferredSize)) {
-      inferredSize = 100;
-    }
-    const derivedPrice = inferredSize === 300 ? 1 : (inferredSize === 150 ? 2 : (inferredSize === 100 ? 3 : (inferredSize === 60 ? 5 : (inferredSize === 30 ? 10 : (inferredSize === 18 ? 50 : 20)))));
-    matchedGame = {
-      id: `sc${gameNumber}`,
+    return {
+      isValid: false,
+      jurisdiction: 'SC',
+      isUncatalogued: true,
+      isUnknownGame: true,
+      isNonLotteryBarcode: true,
+      isRetailProduct: false,
+      error: `Unknown SCEL game: ${gameNumber}`,
       gameNumber,
-      barcodePrefix: gameNumber,
-      name: 'Scratch-Off Game',
-      price: derivedPrice,
-      packSize: inferredSize,
-      bookValue: derivedPrice * inferredSize,
-      jurisdiction: 'SCEL'
+      basePackNumber: parsed.packNumber,
+      checkDigit: parsed.checkDigit,
+      price: null,
+      packSize: null,
+      bookValue: null,
+      raw
     };
   }
 
@@ -463,14 +444,16 @@ export function adaptScelToLotteryBarcode(raw, customGames = []) {
     };
   }
 
-  // Determine suffix: use explicit rawSuffix from input, or compute countdown suffix from SCEL packSize
+  // Determine suffix/countdown separately from explicit security PIN
+  const countdown = packSize != null ? (packSize - 1) - ticketNum : null;
+  const countdownCode = countdown !== null && countdown >= 0 ? String(countdown).padStart(3, '0') : null;
   let finalSuffix = rawSuffix;
-  if (!finalSuffix && packSize != null) {
-    const countdown = (packSize - 1) - ticketNum;
-    finalSuffix = `(${String(countdown).padStart(3, '0')})`;
+  if (!finalSuffix && countdownCode) {
+    finalSuffix = `(${countdownCode})`;
   }
 
-  const sec = finalSuffix ? finalSuffix.replace(/[^0-9]/g, '') : null;
+  const explicitPin = rawSuffix ? rawSuffix.replace(/[^0-9]/g, '') : null;
+  const sec = explicitPin || countdownCode || null;
   const canonicalId = checkDigit ? `${gameNumber}-${packNumber}-${checkDigit}-${ticketString}` : `${gameNumber}-${packNumber}-${ticketString}`;
   const standardBarcode = canonicalId;
   const fullId = finalSuffix ? `${canonicalId}${finalSuffix.replace(/\s+/g, '')}` : canonicalId;
@@ -489,8 +472,10 @@ export function adaptScelToLotteryBarcode(raw, customGames = []) {
     ticketString,
     checkCode: checkDigit,
     checkDigit: checkDigit,
+    countdownCode,
     securityCode: sec,
     hasExplicitSecurityCode: Boolean(rawSuffix),
+    isCountdownDerived: Boolean(!rawSuffix && countdownCode),
     rawSuffix: finalSuffix,
     standardBarcode,
     canonicalId,

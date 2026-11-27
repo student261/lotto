@@ -107,7 +107,7 @@ for (const game of SAMPLE_GAMES) {
     assert(parsed, 'Parsed object should not be null');
     assert.equal(parsed.isValid, true, 'Barcode should be valid');
     assert.equal(parsed.gameNumber, prefix, 'gameNumber matches game prefix');
-    const isSC = parsed.jurisdiction === 'SC' || isScelGameNumber(prefix);
+    const isSC = parsed.jurisdiction === 'SC';
     if (isSC) {
       assert.equal(parsed.packNumber, '067017', 'SC packNumber is 6 digits');
       assert.equal(parsed.ticketNumber, 0, 'SC ticketNumber is 0');

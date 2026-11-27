@@ -161,7 +161,7 @@ it('Physical 14-digit scanned barcode "16583508770290" parses ticket #029', () =
 console.log('\n--- Ticket 1670: HIT $100 ($2, 150 tickets/pack) ---');
 
 it('Physical ticket printed text "1670-019869-3-000(149)" parses ticket #000, PIN 149', () => {
-  const p = parseLotteryBarcode('1670-019869-3-000(149)');
+  const p = parseLotteryBarcode('1670-019869-3-000(149)', [], 'SC');
   assert.ok(p && p.isValid);
   assert.equal(p.gameNumber, '1670');
   assert.equal(p.packNumber, '019869', 'Pack MUST be clean 6 digits: 019869');
@@ -173,7 +173,7 @@ it('Physical ticket printed text "1670-019869-3-000(149)" parses ticket #000, PI
 });
 
 it('Physical ticket printed text "1670-019869-3-001(148)" parses ticket #001, PIN 148', () => {
-  const p = parseLotteryBarcode('1670-019869-3-001(148)');
+  const p = parseLotteryBarcode('1670-019869-3-001(148)', [], 'SC');
   assert.ok(p && p.isValid);
   assert.equal(p.gameNumber, '1670');
   assert.equal(p.packNumber, '019869');
@@ -185,7 +185,7 @@ it('Physical ticket printed text "1670-019869-3-001(148)" parses ticket #001, PI
 });
 
 it('Continuous 14-digit ticket 000 "16700198693000" parses ticket #000, PIN 149', () => {
-  const p = parseLotteryBarcode('16700198693000');
+  const p = parseLotteryBarcode('16700198693000', [], 'SC');
   assert.ok(p && p.isValid);
   assert.equal(p.gameNumber, '1670');
   assert.equal(p.packNumber, '019869');
@@ -195,7 +195,7 @@ it('Continuous 14-digit ticket 000 "16700198693000" parses ticket #000, PIN 149'
 });
 
 it('Continuous 14-digit ticket 001 "16700198693001" parses ticket #001, PIN 148', () => {
-  const p = parseLotteryBarcode('16700198693001');
+  const p = parseLotteryBarcode('16700198693001', [], 'SC');
   assert.ok(p && p.isValid);
   assert.equal(p.gameNumber, '1670');
   assert.equal(p.packNumber, '019869');
@@ -205,7 +205,7 @@ it('Continuous 14-digit ticket 001 "16700198693001" parses ticket #001, PIN 148'
 });
 
 it('Physical 14-digit scanned barcode "16700198690017" parses ticket #001 (NOT #017!)', () => {
-  const p = parseLotteryBarcode('16700198690017');
+  const p = parseLotteryBarcode('16700198690017', [], 'SC');
   assert.ok(p && p.isValid, 'Must be valid');
   assert.equal(p.gameNumber, '1670');
   assert.equal(p.packNumber, '019869', 'Must be clean 6-digit pack, NEVER 7 digits');

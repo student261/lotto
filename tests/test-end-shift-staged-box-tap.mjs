@@ -197,7 +197,7 @@ async function main() {
 
     await sleep(500);
 
-    // 5. Re-scan same ticket -> assign Box #12 -> tap Activate button -> must activate cleanly
+    // 5. Re-scan same ticket -> assign Box #12 -> tap Activate button -> opens Ticket Details (3B) -> Set Box -> activates cleanly
     const activated = await evalJs(`(() => {
       window.processScannedBarcode('1658-350877-029 (000)');
       const boxInput = document.getElementById('setBoxNumberInput');
@@ -206,11 +206,18 @@ async function main() {
       const activateBtn = document.querySelector('.box-card[data-box="12"] .btn-card-activate');
       const existedBeforeClick = Boolean(activateBtn);
       activateBtn?.click();
+      const detailsOpened = Boolean(document.getElementById('setTicketDetailsModal')?.open);
+      const reviewStayedClosed = !document.getElementById('endShiftTicketReviewModal')?.open;
+      document.getElementById('btnTicketDetailsNext')?.click();
+      const boxInputAfter = document.getElementById('setBoxNumberInput');
+      if (boxInputAfter) boxInputAfter.value = '12';
+      window.confirmSetBoxForTicket(false);
       const slot12 = window.state.slots.find(s => Number(s.boxNumber) === 12);
       const card12 = document.querySelector('.box-card[data-box="12"]');
       return {
         existedBeforeClick,
-        reviewStayedClosed: !document.getElementById('endShiftTicketReviewModal')?.open,
+        detailsOpened,
+        reviewStayedClosed,
         status: slot12?.status,
         needsActivation: slot12?.needsActivation,
         scannedInEndShift: slot12?.scannedInEndShift,
@@ -218,8 +225,9 @@ async function main() {
       };
     })()`);
     assert(activated.existedBeforeClick, 'Activate button rendered after re-staging returned pack to Box #12');
+    assert(activated.detailsOpened, 'Clicking Activate button opens Ticket Details modal (no bypass)');
     assert(activated.reviewStayedClosed, 'Clicking Activate button does NOT open review modal');
-    assert(activated.status === 'ACTIVE' && activated.needsActivation === false && activated.scannedInEndShift === true, 'Box #12 activated cleanly on Activate button click');
+    assert(activated.status === 'ACTIVE' && activated.needsActivation === false && activated.scannedInEndShift === true, 'Box #12 activated cleanly after Ticket Details -> Set Box flow');
     assert(activated.badgeText === '✓ SCANNED', `Box #12 card shows ✓ SCANNED after activation (got "${activated.badgeText}")`);
     assert(errors.length === 0, `Zero browser runtime errors (got ${errors.length})`);
 

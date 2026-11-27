@@ -366,7 +366,7 @@ async function runBrowserTests() {
     assert(browserResults.sc4_shiftSold === 5, 'Browser: Scenario 4 shiftSold is 5 after 5 sales');
     assert(browserResults.sc4_packSold === 15, 'Browser: Scenario 5 packSold advances to 15 (10 + 5)');
     assert(browserResults.sc7_packSold === 0, 'Browser: Scenario 7 Pack B starts fresh cumulative count at 0');
-    assert(browserResults.sc11_sold === 4, 'Browser: Scenario 11 Descending countdown pack calculates 4 tickets sold');
+    assert(browserResults.sc11_sold === 5, 'Browser: Scenario 11 Descending countdown pack calculates 5 tickets sold');
 
     ws.close();
   } finally {

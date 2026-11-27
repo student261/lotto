@@ -2862,29 +2862,28 @@
             <!-- Active Form Container (reveals when scanned or tested) -->
             <div class="rp-form-container" id="rpFormContainer" style="display: none;">
               <!-- Detection Banner -->
-              <div class="rp-detection-banner known" id="rpDetectionBanner">
+              <div class="rp-detection-banner" id="rpDetectionBanner" style="display:none;">
                 <div class="rp-detection-title">
-                  <span class="rp-check-icon">✓</span> <span id="rpDetectionTitleText">We know this game</span>
+                  <span class="rp-check-icon">✓</span> <span id="rpDetectionTitleText"></span>
                 </div>
-                <div class="rp-detection-sub" id="rpDetectionSubText">Details were filled in automatically. Just check
-                  and add.</div>
+                <div class="rp-detection-sub" id="rpDetectionSubText"></div>
               </div>
 
               <!-- Form Fields -->
               <div class="rp-form-group">
                 <label for="rpTicketNameInput" class="rp-label">Ticket name</label>
-                <input type="text" id="rpTicketNameInput" class="rp-input" value="50X Money"
-                  placeholder="e.g. 50X Money">
+                <input type="text" id="rpTicketNameInput" class="rp-input" value=""
+                  placeholder="Enter game name">
               </div>
 
               <div class="rp-form-row-2">
                 <div class="rp-form-group">
                   <label for="rpGameNumberInput" class="rp-label">Game number</label>
-                  <input type="text" id="rpGameNumberInput" class="rp-input" value="1711" placeholder="e.g. 1711">
+                  <input type="text" id="rpGameNumberInput" class="rp-input" value="" placeholder="4-digit game #">
                 </div>
                 <div class="rp-form-group">
                   <label for="rpPackNumberInput" class="rp-label">Pack number</label>
-                  <input type="text" id="rpPackNumberInput" class="rp-input" value="403118" placeholder="e.g. 403118">
+                  <input type="text" id="rpPackNumberInput" class="rp-input" value="" placeholder="Pack #">
                 </div>
               </div>
 
@@ -2895,7 +2894,7 @@
                   <button type="button" class="rp-price-pill" data-price="2">$2</button>
                   <button type="button" class="rp-price-pill" data-price="3">$3</button>
                   <button type="button" class="rp-price-pill" data-price="5">$5</button>
-                  <button type="button" class="rp-price-pill active" data-price="10">$10</button>
+                  <button type="button" class="rp-price-pill" data-price="10">$10</button>
                   <button type="button" class="rp-price-pill" data-price="20">$20</button>
                   <button type="button" class="rp-price-pill" data-price="30">$30</button>
                   <button type="button" class="rp-price-pill" data-price="50">$50</button>
@@ -2905,12 +2904,12 @@
               <div class="rp-form-row-2">
                 <div class="rp-form-group">
                   <label for="rpTicketsInPackInput" class="rp-label">Tickets in pack</label>
-                  <input type="number" id="rpTicketsInPackInput" class="rp-input" value="30" min="1" max="1000">
-                  <div class="rp-field-hint" id="rpTicketsHint">Usual for $10: 30 tickets</div>
+                  <input type="number" id="rpTicketsInPackInput" class="rp-input" value="" placeholder="0" min="1" max="1000">
+                  <div class="rp-field-hint" id="rpTicketsHint"></div>
                 </div>
                 <div class="rp-form-group">
                   <label for="rpBookValueInput" class="rp-label">Book value</label>
-                  <input type="text" id="rpBookValueInput" class="rp-input rp-input-readonly" value="$300" readonly>
+                  <input type="text" id="rpBookValueInput" class="rp-input rp-input-readonly" value="$0" readonly>
                   <div class="rp-field-hint">Price x tickets, worked out for you</div>
                 </div>
               </div>
@@ -2928,9 +2927,9 @@
             <div class="rp-delivery-header">
               <div class="rp-delivery-title-cluster">
                 <h2 class="rp-card-title" style="margin-bottom:0;">This batch</h2>
-                <span class="rp-count-badge" id="rpDeliveryCountBadge">2 packs</span>
+                <span class="rp-count-badge" id="rpDeliveryCountBadge">0 packs</span>
               </div>
-              <div class="rp-delivery-total-amount" id="rpDeliveryTotalDisplay">$600 total</div>
+              <div class="rp-delivery-total-amount" id="rpDeliveryTotalDisplay">$0 total</div>
             </div>
 
             <!-- Staged Packs Table -->
@@ -3500,23 +3499,23 @@
 
         <!-- Hidden Compatibility Bridge (Maintains 100% test compatibility for legacy IDs) -->
         <div style="display: none;" aria-hidden="true">
-          <div id="invKpiPacksRack">19</div>
-          <div id="invKpiPacksRackSub">46 boxes empty</div>
-          <div id="invKpiTicketsRack">1,863</div>
+          <div id="invKpiPacksRack">0</div>
+          <div id="invKpiPacksRackSub">0 boxes empty</div>
+          <div id="invKpiTicketsRack">0</div>
           <div id="invKpiTicketsRackSub">not sold yet</div>
-          <div id="invKpiRackValue">$5,883.00</div>
+          <div id="invKpiRackValue">$0.00</div>
           <div id="invKpiRackValueSub">at ticket price</div>
-          <div id="invKpiSafeValue">$1,200.00</div>
-          <div id="invKpiSafeValueSub">4 packs stored</div>
-          <div id="invKpiSoldToday">$1,237.00</div>
-          <div id="invKpiSoldTodaySub">248 tickets</div>
-          <div id="invReconSafeExpected">4</div>
-          <div id="invReconRackExpected">19</div>
-          <div id="invCountRack">19</div>
-          <div id="invCountSafe">4</div>
-          <div id="invCountSold">3</div>
-          <div id="invCountReturned">1</div>
-          <div id="invCountEmpty">46</div>
+          <div id="invKpiSafeValue">$0.00</div>
+          <div id="invKpiSafeValueSub">0 packs stored</div>
+          <div id="invKpiSoldToday">$0.00</div>
+          <div id="invKpiSoldTodaySub">0 tickets</div>
+          <div id="invReconSafeExpected">0</div>
+          <div id="invReconRackExpected">0</div>
+          <div id="invCountRack">0</div>
+          <div id="invCountSafe">0</div>
+          <div id="invCountSold">0</div>
+          <div id="invCountReturned">0</div>
+          <div id="invCountEmpty">0</div>
           <button type="button" id="invBtnStockIntake"></button>
           <div id="invFilterTabs"></div>
         </div>
