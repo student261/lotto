@@ -31,8 +31,8 @@ const shift1 = {
   shiftNumber: 1,
   cashier: 'Daniel',
   date: 'Tue, Oct 14',
-  startedAt: '2026-10-14T07:00:00.000Z',
-  endedAt: '2026-10-14T15:00:00.000Z',
+  startedAt: '2026-10-14T07:00:00',
+  endedAt: '2026-10-14T15:00:00',
   totalTicketsSold: 25,
   totalSalesRevenue: 35.00,
   cashes: 5.00,
@@ -49,8 +49,8 @@ const shift2 = {
   shiftNumber: 2,
   cashier: 'Rosa',
   date: 'Tue, Oct 14',
-  startedAt: '2026-10-14T15:05:00.000Z',
-  endedAt: '2026-10-14T22:00:00.000Z',
+  startedAt: '2026-10-14T15:05:00',
+  endedAt: '2026-10-14T22:00:00',
   totalTicketsSold: 35,
   totalSalesRevenue: 50.00,
   cashes: 7.00,
@@ -76,8 +76,8 @@ const shift3 = {
   shiftNumber: 3,
   cashier: 'Daniel',
   date: 'Wed, Oct 15',
-  startedAt: '2026-10-15T07:00:00.000Z',
-  endedAt: '2026-10-15T15:00:00.000Z',
+  startedAt: '2026-10-15T07:00:00',
+  endedAt: '2026-10-15T15:00:00',
   totalTicketsSold: 70,
   totalSalesRevenue: 75.00, // 65 * $1 + 5 * $2
   cashes: 15.00,
@@ -96,8 +96,8 @@ const shift4 = {
   shiftNumber: 4,
   cashier: 'Rosa',
   date: 'Wed, Oct 15',
-  startedAt: '2026-10-15T15:05:00.000Z',
-  endedAt: '2026-10-15T22:00:00.000Z',
+  startedAt: '2026-10-15T15:05:00',
+  endedAt: '2026-10-15T22:00:00',
   totalTicketsSold: 15,
   totalSalesRevenue: 54.00, // 7 * $2 + 8 * $5
   cashes: 10.00,
@@ -122,8 +122,8 @@ const shift5 = {
   shiftNumber: 5,
   cashier: 'Daniel',
   date: 'Thu, Oct 16',
-  startedAt: '2026-10-16T07:00:00.000Z',
-  endedAt: '2026-10-16T15:00:00.000Z',
+  startedAt: '2026-10-16T07:00:00',
+  endedAt: '2026-10-16T15:00:00',
   totalTicketsSold: 15,
   totalSalesRevenue: 45.00, // 10 * $2 + 5 * $5
   cashes: 20.00,
@@ -141,8 +141,8 @@ const shift6 = {
   shiftNumber: 6,
   cashier: 'Rosa',
   date: 'Thu, Oct 16',
-  startedAt: '2026-10-16T15:05:00.000Z',
-  endedAt: '2026-10-16T22:00:00.000Z',
+  startedAt: '2026-10-16T15:05:00',
+  endedAt: '2026-10-16T22:00:00',
   totalTicketsSold: 14,
   totalSalesRevenue: 76.00, // 8 * $2 + 6 * $10
   cashes: 18.00,
@@ -163,7 +163,7 @@ const historicalState = {
   storeAddress: '2300 MOODY RD WARNER ROBINS, GA, 31088',
   shiftNumber: 7,
   cashierName: 'Anish',
-  shiftStartedAt: '2026-10-17T07:00:00.000Z',
+  shiftStartedAt: '2026-10-17T07:00:00',
   slots: [
     { boxNumber: 1, status: 'ACTIVE', packNumber: 'PACK-B', gameName: '10X Money', price: 2, startTicket: 30, currentTicket: 30, ticketsSold: 0 },
     { boxNumber: 2, status: 'ACTIVE', packNumber: 'PACK-C', gameName: 'Hit 100', price: 2, startTicket: 25, currentTicket: 25, ticketsSold: 0 },
@@ -280,7 +280,7 @@ const activeSlotsNow = [
 const stateAfterLaterSales = {
   ...historicalState,
   slots: activeSlotsNow,
-  shiftStartedAt: '2026-10-17T08:00:00.000Z'
+  shiftStartedAt: '2026-10-17T08:00:00'
 };
 
 // Re-query historical dates 1, 2, and 3
@@ -298,28 +298,20 @@ assert(date3After.totalTickets === 29, `Date 3 remains EXACTLY 29 tickets after 
 assert(date3After.totalInstantSales === 121.00, `Date 3 sales remain EXACTLY $121.00 (got $${date3After.totalInstantSales})`);
 
 // -------------------------------------------------------------------------
-// TEST 5: DATE SELECTION & REFERENCE FALLBACK INTEGRITY
+// TEST 5: EMPTY HISTORY ZERO-MOCK INTEGRITY
 // -------------------------------------------------------------------------
-console.log('\n--- TEST 5: Date Selection & Reference Fallback Integrity ---');
+console.log('\n--- TEST 5: Date Selection & Zero-Mock Empty History Integrity ---');
 
-// Fallback when shiftHistory is empty: REFERENCE_CLOSED_SHIFTS provides Oct 17, 16, 15, 14
+// With zero-mock production history, empty shiftHistory returns zero rows/totals instead of hardcoded sample data
 const emptyState = { shiftHistory: [] };
 const refOct17 = getDailyReportData(emptyState, 'Oct 17');
-assert(refOct17.totalTickets === 449, `Empty history fallback: Oct 17 has 449 tickets (got ${refOct17.totalTickets})`);
-assert(refOct17.totalSales === 2685.00, `Empty history fallback: Oct 17 has $2685.00 sales (got $${refOct17.totalSales})`);
-assert(refOct17.closedCount === 2, `Empty history fallback: Oct 17 has 2 shifts (got ${refOct17.closedCount})`);
+assert(refOct17.totalTickets === 0, `Empty history returns 0 tickets for Oct 17 (got ${refOct17.totalTickets})`);
+assert(refOct17.totalSales === 0, `Empty history returns $0.00 sales for Oct 17 (got $${refOct17.totalSales})`);
+assert(refOct17.closedCount === 0, `Empty history returns 0 shifts for Oct 17 (got ${refOct17.closedCount})`);
 
-const refOct16 = getDailyReportData(emptyState, 'Oct 16');
-assert(refOct16.totalTickets === 409, `Empty history fallback: Oct 16 has 409 tickets (got ${refOct16.totalTickets})`);
-assert(refOct16.totalSales === 2441.00, `Empty history fallback: Oct 16 has $2441.00 sales (got $${refOct16.totalSales})`);
-
-const refOct15 = getDailyReportData(emptyState, 'Oct 15');
-assert(refOct15.totalTickets === 427, `Empty history fallback: Oct 15 has 427 tickets (got ${refOct15.totalTickets})`);
-assert(refOct15.totalSales === 2518.00, `Empty history fallback: Oct 15 has $2518.00 sales (got $${refOct15.totalSales})`);
-
-const refOct14 = getDailyReportData(emptyState, 'Oct 14');
-assert(refOct14.totalTickets === 413, `Empty history fallback: Oct 14 has 413 tickets (got ${refOct14.totalTickets})`);
-assert(refOct14.totalSales === 2436.00, `Empty history fallback: Oct 14 has $2436.00 sales (got $${refOct14.totalSales})`);
+const refOct14 = getScreenDayReportData(emptyState, { targetDate: 'Oct 14, 2026' });
+assert(refOct14.totalTickets === 0, `Empty history Day Report for Oct 14 returns 0 tickets (got ${refOct14.totalTickets})`);
+assert(refOct14.totalInstantSales === 0, `Empty history Day Report for Oct 14 returns $0.00 sales (got $${refOct14.totalInstantSales})`);
 
 console.log(`\n================================================================`);
 console.log(` ALL HISTORICAL REPORTING TESTS PASSED: ${passed} / ${total}`);

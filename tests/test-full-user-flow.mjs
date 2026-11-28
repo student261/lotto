@@ -13,7 +13,7 @@ const p = spawn(CHROME, [
   '--headless=new',
   '--disable-gpu',
   '--no-first-run',
-  'http://localhost:5173'
+  'http://localhost:5173/app/?bypass_login=1'
 ]);
 
 setTimeout(async () => {
@@ -146,12 +146,12 @@ setTimeout(async () => {
 
     ws.close();
     p.kill();
-    try { rmSync(tmp, { recursive: true, force: true }); } catch (e) {}
+    try { rmSync(tmp, { recursive: true, force: true }); } catch (e) { }
     process.exit(0);
   } catch (err) {
     console.error('Test error:', err);
     p.kill();
-    try { rmSync(tmp, { recursive: true, force: true }); } catch (e) {}
+    try { rmSync(tmp, { recursive: true, force: true }); } catch (e) { }
     process.exit(1);
   }
 }, 2500);

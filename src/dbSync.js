@@ -169,12 +169,14 @@ export async function syncPOSStateToDB(state, immediate = false) {
   const doSync = async () => {
     try {
       const headers = getAuthHeaders({ 'x-store-id': storeId });
+      const body = JSON.stringify({ storeId, state });
       const res = await fetch(`/api/sync-pos-state?storeId=${encodeURIComponent(storeId)}`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ storeId, state }),
-        keepalive: true,
-        signal: AbortSignal.timeout(5000)
+        body,
+        // Browsers reject keepalive requests over 64 KB outright; a full rack is bigger, so send those normally
+        keepalive: body.length < 60000,
+        signal: AbortSignal.timeout(15000)
       });
       if (res.status === 403) {
         await handleStoreAccessForbidden(res);
@@ -243,10 +245,11 @@ export async function syncHistoricalShiftsToDB(shiftHistory = []) {
 export async function logTicketScanToDB(scanData) {
   if (!scanData || !scanData.barcode) return;
   try {
+    const storeId = scanData.storeId || (typeof window !== 'undefined' && typeof window.getCurrentStoreId === 'function' ? window.getCurrentStoreId() : 'store_amigo');
     const res = await fetch('/api/log-scan', {
       method: 'POST',
-      headers: getAuthHeaders(),
-      body: JSON.stringify(scanData),
+      headers: getAuthHeaders({ 'x-store-id': storeId }),
+      body: JSON.stringify({ ...scanData, storeId }),
       signal: AbortSignal.timeout(3000)
     });
     if (res.status === 403) {

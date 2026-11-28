@@ -3,7 +3,7 @@
 // Exact Match to User-Provided Reference Designs
 // =============================================================
 
-import { toTitleCaseGameName } from './data.js';
+import { toTitleCaseGameName, calculateSlotSoldTickets, calculateSoldOutRecordTickets, isBoxActive } from './data.js';
 import { sfx } from './audio.js';
 
 // Default reference data matching Image 1
@@ -53,32 +53,65 @@ export function openDaySettlementModal(state, onFullReport = null, onCloseDay = 
   let totalTickets = 0;
   let gamesToRender = [];
 
-  const soldSlots = (state?.slots || []).filter(s => s && s.status === 'ACTIVE' && (s.currentTicket > (s.startTicket || 0) || (s.scannedBarcodes && s.scannedBarcodes.length > 0)));
+  const activeSoldSlots = (state?.slots || []).filter(s => s && isBoxActive(s));
 
-  if (soldSlots.length > 0) {
-    soldSlots.forEach(s => {
-      const start = s.startTicket || 0;
-      const current = s.currentTicket || 0;
-      const sold = Math.max(0, current - start);
-      const amt = sold * (s.price || 1);
-      totalTickets += sold;
-      totalSales += amt;
-      gamesToRender.push({
-        box: s.boxNumber,
-        name: toTitleCaseGameName(s.gameName),
-        isSoldOut: s.status === 'SOLD_OUT',
-        price: s.price || 1,
-        start: String(start).padStart(3, '0'),
-        close: String(current).padStart(3, '0'),
-        sold,
-        amount: amt
-      });
+  activeSoldSlots.forEach(s => {
+    const sold = calculateSlotSoldTickets(s);
+    if (sold <= 0 && !(s.scannedBarcodes && s.scannedBarcodes.length > 0)) return;
+    const price = Number(s.price) || 1;
+    const amt = sold * price;
+    const start = s.startTicket !== undefined ? s.startTicket : 0;
+    const current = s.currentTicket !== undefined ? s.currentTicket : start;
+    totalTickets += sold;
+    totalSales += amt;
+    gamesToRender.push({
+      box: s.boxNumber,
+      name: toTitleCaseGameName(s.gameName),
+      isSoldOut: false,
+      price,
+      start: String(start).padStart(3, '0'),
+      close: String(current).padStart(3, '0'),
+      sold,
+      amount: amt
     });
-  } else {
-    gamesToRender = [];
-    totalTickets = 0;
-    totalSales = 0.00;
+  });
+
+  const isDailyMode = state?.settings?.operationMode !== 'SHIFTS';
+  const nowDate = new Date();
+  const isSameToday = (dStr) => {
+    if (!dStr) return false;
+    const d = new Date(dStr);
+    return d.getFullYear() === nowDate.getFullYear() &&
+      d.getMonth() === nowDate.getMonth() &&
+      d.getDate() === nowDate.getDate();
+  };
+  const todaySoldOuts = [];
+  if (isDailyMode) {
+    (state?.shiftHistory || [])
+      .filter(h => isSameToday(h.endedAt || h.startedAt))
+      .forEach(h => (h.soldOutSnapshot || []).forEach(so => todaySoldOuts.push(so)));
   }
+  (state?.soldOutThisShift || []).forEach(so => todaySoldOuts.push(so));
+  todaySoldOuts.forEach(sp => {
+    const sold = calculateSoldOutRecordTickets(sp);
+    if (sold <= 0) return;
+    const price = Number(sp.price) || 1;
+    const amt = sp.salesAmount !== undefined ? Number(sp.salesAmount) : (sold * price);
+    const start = sp.startTicket !== undefined ? sp.startTicket : 0;
+    const close = sp.closeTicket !== undefined ? sp.closeTicket : (sp.packSize || 0);
+    totalTickets += sold;
+    totalSales += amt;
+    gamesToRender.push({
+      box: sp.boxNumber || '-',
+      name: toTitleCaseGameName(sp.gameName),
+      isSoldOut: true,
+      price,
+      start: String(start).padStart(3, '0'),
+      close: String(close).padStart(3, '0'),
+      sold,
+      amount: amt
+    });
+  });
 
   // 2. Populate 4 KPI cards
   const kpiDay = document.getElementById('dsKpiDay');
@@ -87,8 +120,8 @@ export function openDaySettlementModal(state, onFullReport = null, onCloseDay = 
   const kpiTotalSales = document.getElementById('dsKpiTotalSales');
 
   const todayStr = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-  if (kpiDay) kpiDay.textContent = todayStr.includes('Invalid') ? 'Oct 8, 2026' : todayStr;
-  if (kpiCashier) kpiCashier.textContent = state?.cashierName || 'master';
+  if (kpiDay) kpiDay.textContent = todayStr.includes('Invalid') ? '-' : todayStr;
+  if (kpiCashier) kpiCashier.textContent = state?.cashierName || state?.currentUser?.name || '—';
   if (kpiTickets) kpiTickets.textContent = String(totalTickets);
   if (kpiTotalSales) kpiTotalSales.textContent = `$${Number(totalSales).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -227,9 +260,9 @@ export function openPastDaysModal(state, onViewDayReport = null) {
   const pastDaysData = (state?.shiftHistory && state.shiftHistory.length > 0)
     ? state.shiftHistory.map((s, idx) => ({
         day: s.date || `Day #${s.shiftNumber || idx + 1}`,
-        cashier: s.cashier || s.cashierName || 'Clerk',
-        initial: (s.cashier || s.cashierName || 'C').charAt(0).toUpperCase(),
-        openClose: s.openClose || `${s.openedTime || '7:00 AM'} — ${s.closedTime || '9:30 PM'}`,
+        cashier: s.cashier || s.cashierName || '—',
+        initial: (s.cashier || s.cashierName || '-').charAt(0).toUpperCase(),
+        openClose: s.openClose || ((s.openedTime || s.closedTime) ? `${s.openedTime || '—'} — ${s.closedTime || '—'}` : '—'),
         tickets: Number(s.totalTicketsSold !== undefined ? s.totalTicketsSold : (s.tickets || 0)),
         sales: Number(s.totalSalesRevenue !== undefined ? s.totalSalesRevenue : (s.sales || 0)),
         activated: s.activationsCount || 0

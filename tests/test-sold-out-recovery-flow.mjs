@@ -38,7 +38,7 @@ async function runTests() {
     '--no-first-run',
     '--no-default-browser-check',
     '--window-size=1440,900',
-    'http://127.0.0.1:5173/'
+    'http://127.0.0.1:5173/app/?bypass_login=1'
   ]);
 
   try {
@@ -104,7 +104,12 @@ async function runTests() {
       return res.result ? res.result.value : undefined;
     }
 
-    await sleep(1500);
+    for (let i = 0; i < 40; i++) {
+      const ready = await evaluate(`typeof window.state !== 'undefined' && typeof window.processScannedBarcode === 'function'`);
+      if (ready) break;
+      await sleep(250);
+    }
+    await sleep(600);
 
     // Setup initial state:
     // Shift 1 sold 10 tickets of Pack 777001 ($5 Lucky 7s, packSize 60).
@@ -118,6 +123,7 @@ async function runTests() {
         const shift1End = new Date(now.getTime() - 3600000).toISOString();
 
         state.shiftNumber = 2;
+        state.dataCleared = false;
         state.shiftStatus = 'IN_PROGRESS';
         state.shiftStartedAt = new Date(now.getTime() - 3000000).toISOString();
         state.soldOutThisShift = [];
@@ -461,8 +467,8 @@ async function runTests() {
       })()
     `);
 
-    assert(t14Result.title.toLowerCase().includes('already sold'), `Test 14: Rejected with message that ticket was already sold (got "${t14Result.title}")`);
-    assert(t14Result.display.includes('Cannot be sold again') || t14Result.display.includes('already sold'), `Test 14: Display explains ticket cannot be sold again (got "${t14Result.display}")`);
+    assert(t14Result.title.toLowerCase().includes('already sold') || t14Result.title.toLowerCase().includes('already scanned'), `Test 14: Rejected duplicate ticket scan (got "${t14Result.title}")`);
+    assert(t14Result.display.includes('Cannot be sold again') || t14Result.display.toLowerCase().includes('already sold') || t14Result.display.toLowerCase().includes('already scanned'), `Test 14: Display explains ticket was already scanned/sold (got "${t14Result.display}")`);
     assert(t14Result.slot1Sold === 5, 'Test 14: Sold count was not incremented by the duplicate ticket scan');
 
     // =========================================================================
@@ -482,7 +488,11 @@ async function runTests() {
 
     // Reload page
     await send('Page.reload');
-    await sleep(2000);
+    for (let i = 0; i < 40; i++) {
+      const ready = await evaluate(`typeof window.state !== 'undefined' && typeof window.calculatePackCumulativeSold === 'function'`);
+      if (ready) break;
+      await sleep(250);
+    }
 
     const t15Result = await evaluate(`
       (() => {

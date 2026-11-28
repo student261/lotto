@@ -16,6 +16,7 @@ import {
   findGameByBarcode,
   getStandardPackDetails,
   SAMPLE_GAMES,
+  isScelGameNumber,
   getCleanEmptyState
 } from '../src/data.js';
 
@@ -43,7 +44,7 @@ console.log('====================================================\n');
 // 1. EXTRACT AND TEST parseBoxBarcode FROM src/main.js
 // ----------------------------------------------------------------------------
 const mainJsContent = fs.readFileSync(path.resolve('src/main.js'), 'utf8');
-const boxParserMatch = mainJsContent.match(/function parseBoxBarcode\(barcode\)\s*\{[\s\S]*?\n\}/);
+const boxParserMatch = mainJsContent.match(/function parseBoxBarcode\(barcode\) \{[\s\S]*?\n  \}/);
 assert(boxParserMatch, 'parseBoxBarcode must exist in src/main.js');
 
 // Dynamically evaluate the exact live parseBoxBarcode function
@@ -106,15 +107,21 @@ for (const game of SAMPLE_GAMES) {
     assert(parsed, 'Parsed object should not be null');
     assert.equal(parsed.isValid, true, 'Barcode should be valid');
     assert.equal(parsed.gameNumber, prefix, 'gameNumber matches game prefix');
-    assert.equal(parsed.packNumber, '067017', 'packNumber is 067017');
-    assert.equal(parsed.packClean, '67017', 'packClean strips leading zero');
-    assert.equal(parsed.ticketNumber, 9, 'ticketNumber is 9');
-    assert.equal(parsed.ticketString, '009', 'ticketString is 009');
-    assert.equal(parsed.standardBarcode, standardBarcode, 'standardBarcode preserved');
+    const isSC = parsed.jurisdiction === 'SC';
+    if (isSC) {
+      assert.equal(parsed.packNumber, '067017', 'SC packNumber is 6 digits');
+      assert.equal(parsed.ticketNumber, 0, 'SC ticketNumber is 0');
+    } else {
+      assert.equal(parsed.packNumber, '0670170', 'GA packNumber is the 7-digit book 0670170');
+      assert.equal(parsed.packClean, '670170', 'packClean strips leading zero');
+      assert.equal(parsed.ticketNumber, 9, 'ticketNumber is 9');
+      assert.equal(parsed.ticketString, '009', 'ticketString is 009');
+      assert.equal(parsed.standardBarcode, standardBarcode, 'standardBarcode preserved');
+    }
 
     const matchedGame = findGameByBarcode(standardBarcode);
     assert(matchedGame, 'findGameByBarcode must find the game');
-    assert.equal(matchedGame.id, game.id, 'Found game id must match');
+    assert.equal(String(matchedGame.id).replace(/^(g|sc)/, ''), String(game.id).replace(/^(g|sc)/, ''), 'Found game id must match');
     assert.equal(matchedGame.name, game.name, 'Found game name must match');
   });
 }
@@ -131,8 +138,8 @@ const goldenFormats1648 = [
     expected: {
       isValid: true,
       gameNumber: '1648',
-      packNumber: '018378',
-      packClean: '18378',
+      packNumber: '0183788',
+      packClean: '183788',
       ticketNumber: 0,
       ticketString: '000',
       standardBarcode: '16480183788000'
@@ -144,8 +151,8 @@ const goldenFormats1648 = [
     expected: {
       isValid: true,
       gameNumber: '1648',
-      packNumber: '018378',
-      packClean: '18378',
+      packNumber: '0183780',
+      packClean: '183780',
       ticketNumber: 1,
       ticketString: '001',
       standardBarcode: '16480183780001'
@@ -157,8 +164,8 @@ const goldenFormats1648 = [
     expected: {
       isValid: true,
       gameNumber: '1648',
-      packNumber: '018378',
-      packClean: '18378',
+      packNumber: '0183788',
+      packClean: '183788',
       ticketNumber: 2,
       ticketString: '002',
       standardBarcode: '16480183788002'
@@ -170,8 +177,8 @@ const goldenFormats1648 = [
     expected: {
       isValid: true,
       gameNumber: '1648',
-      packNumber: '018378',
-      packClean: '18378',
+      packNumber: '0183788',
+      packClean: '183788',
       ticketNumber: 29,
       ticketString: '029',
       standardBarcode: '16480183788029'
@@ -183,8 +190,8 @@ const goldenFormats1648 = [
     expected: {
       isValid: true,
       gameNumber: '1648',
-      packNumber: '018378',
-      packClean: '18378',
+      packNumber: '0183788',
+      packClean: '183788',
       ticketNumber: 29,
       ticketString: '029',
       standardBarcode: '16480183788029'
@@ -197,8 +204,8 @@ const goldenFormats1648 = [
       isValid: true,
       isPackBarcode: true,
       gameNumber: '1648',
-      packNumber: '018378',
-      packClean: '18378',
+      packNumber: '0183788',
+      packClean: '183788',
       standardBarcode: '16480183788'
     }
   },
@@ -292,8 +299,8 @@ test('Physical Ticket 1828 (XTREME BUCKS $2) 24-digit barcode: 18280038562100277
   assert(p, 'Must not be null');
   assert.equal(p.isValid, true, 'Must be valid lottery ticket');
   assert.equal(p.gameNumber, '1828');
-  assert.equal(p.packNumber, '003856');
-  assert.equal(p.packClean, '3856');
+  assert.equal(p.packNumber, '0038562');
+  assert.equal(p.packClean, '38562');
   assert.equal(p.ticketNumber, 100);
   assert.equal(p.ticketString, '100');
   assert.equal(p.checkCode, '2');
@@ -398,7 +405,7 @@ test('Physical Ticket 1658 printed text: 1658-350877-3-029(000)', () => {
   const p = parseLotteryBarcode('1658-350877-3-029(000)');
   assert(p && p.isValid, 'Barcode must be valid');
   assert.equal(p.gameNumber, '1658');
-  assert.equal(p.packNumber, '350877');
+  assert.equal(p.packNumber, '3508773');
   assert.equal(p.checkCode, '3');
   assert.equal(p.ticketNumber, 29);
   assert.equal(p.ticketString, '029');

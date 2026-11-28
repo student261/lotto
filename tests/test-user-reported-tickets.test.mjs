@@ -62,7 +62,8 @@ it('Physical ticket printed text "1648-018378-8-029(000)" parses ticket #029', (
   const p = parseLotteryBarcode('1648-018378-8-029(000)');
   assert.ok(p && p.isValid);
   assert.equal(p.gameNumber, '1648');
-  assert.equal(p.packNumber, '018378');
+  assert.equal(p.basePackNumber, '018378');
+  assert.ok(isPackNumberMatch(p.packNumber, '018378'));
   assert.equal(p.ticketNumber, 29, 'Ticket must be 29, NEVER 290');
   assert.equal(p.ticketString, '029');
   assert.equal(p.checkCode, '8');
@@ -98,7 +99,8 @@ it('Physical ticket printed text "1692-091905-0-029(000)" parses ticket #029', (
   const p = parseLotteryBarcode('1692-091905-0-029(000)');
   assert.ok(p && p.isValid);
   assert.equal(p.gameNumber, '1692');
-  assert.equal(p.packNumber, '091905');
+  assert.equal(p.basePackNumber, '091905');
+  assert.ok(isPackNumberMatch(p.packNumber, '091905'));
   assert.equal(p.ticketNumber, 29, 'Ticket must be 29, NEVER 292');
   assert.equal(p.ticketString, '029');
   assert.equal(p.checkCode, '0');
@@ -134,7 +136,8 @@ it('Physical ticket printed text "1658-350877-3-029(000)" parses ticket #029', (
   const p = parseLotteryBarcode('1658-350877-3-029(000)');
   assert.ok(p && p.isValid);
   assert.equal(p.gameNumber, '1658');
-  assert.equal(p.packNumber, '350877');
+  assert.equal(p.basePackNumber, '350877');
+  assert.ok(isPackNumberMatch(p.packNumber, '350877'));
   assert.equal(p.ticketNumber, 29);
   assert.equal(p.ticketString, '029');
   assert.equal(p.checkCode, '3');
@@ -158,7 +161,7 @@ it('Physical 14-digit scanned barcode "16583508770290" parses ticket #029', () =
 console.log('\n--- Ticket 1670: HIT $100 ($2, 150 tickets/pack) ---');
 
 it('Physical ticket printed text "1670-019869-3-000(149)" parses ticket #000, PIN 149', () => {
-  const p = parseLotteryBarcode('1670-019869-3-000(149)');
+  const p = parseLotteryBarcode('1670-019869-3-000(149)', [], 'SC');
   assert.ok(p && p.isValid);
   assert.equal(p.gameNumber, '1670');
   assert.equal(p.packNumber, '019869', 'Pack MUST be clean 6 digits: 019869');
@@ -170,7 +173,7 @@ it('Physical ticket printed text "1670-019869-3-000(149)" parses ticket #000, PI
 });
 
 it('Physical ticket printed text "1670-019869-3-001(148)" parses ticket #001, PIN 148', () => {
-  const p = parseLotteryBarcode('1670-019869-3-001(148)');
+  const p = parseLotteryBarcode('1670-019869-3-001(148)', [], 'SC');
   assert.ok(p && p.isValid);
   assert.equal(p.gameNumber, '1670');
   assert.equal(p.packNumber, '019869');
@@ -182,7 +185,7 @@ it('Physical ticket printed text "1670-019869-3-001(148)" parses ticket #001, PI
 });
 
 it('Continuous 14-digit ticket 000 "16700198693000" parses ticket #000, PIN 149', () => {
-  const p = parseLotteryBarcode('16700198693000');
+  const p = parseLotteryBarcode('16700198693000', [], 'SC');
   assert.ok(p && p.isValid);
   assert.equal(p.gameNumber, '1670');
   assert.equal(p.packNumber, '019869');
@@ -192,7 +195,7 @@ it('Continuous 14-digit ticket 000 "16700198693000" parses ticket #000, PIN 149'
 });
 
 it('Continuous 14-digit ticket 001 "16700198693001" parses ticket #001, PIN 148', () => {
-  const p = parseLotteryBarcode('16700198693001');
+  const p = parseLotteryBarcode('16700198693001', [], 'SC');
   assert.ok(p && p.isValid);
   assert.equal(p.gameNumber, '1670');
   assert.equal(p.packNumber, '019869');
@@ -202,14 +205,14 @@ it('Continuous 14-digit ticket 001 "16700198693001" parses ticket #001, PIN 148'
 });
 
 it('Physical 14-digit scanned barcode "16700198690017" parses ticket #001 (NOT #017!)', () => {
-  const p = parseLotteryBarcode('16700198690017');
+  const p = parseLotteryBarcode('16700198690017', [], 'SC');
   assert.ok(p && p.isValid, 'Must be valid');
   assert.equal(p.gameNumber, '1670');
   assert.equal(p.packNumber, '019869', 'Must be clean 6-digit pack, NEVER 7 digits');
   assert.equal(p.ticketNumber, 1, 'Must parse as Ticket #001 (NOT #017)');
   assert.equal(p.ticketString, '001');
   assert.equal(p.securityCode, '148');
-  assert.equal(p.displayBarcode, '1670-019869-001 (148)');
+  assert.equal(p.displayBarcode, '1670-019869-9-001 (148)');
 });
 
 // ----------------------------------------------------------------------------

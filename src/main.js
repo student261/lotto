@@ -2,7 +2,7 @@
 import './style.css';
 import './design-system.css';
 import './responsive.css';
-import { loadState, saveState, resetToDefaults, resetToCleanState, getCleanEmptyState, SAMPLE_GAMES, findGameByBarcode, getStandardPackDetails, parseLotteryBarcode, normalizePackNumber, isPackNumberMatch, formatLotteryBarcode, computeLotterySeriesCode, DEFAULT_STORES, getStoresList, saveStoresList, getCurrentStoreId, setCurrentStoreId, getStoreStorageKey } from './data.js';
+import { loadState, saveState, shouldUseServerState, resetToDefaults, resetToCleanState, getCleanEmptyState, SAMPLE_GAMES, findGameByBarcode, findGaCatalogGame, getStandardPackDetails, parseLotteryBarcode, normalizePackNumber, isPackNumberMatch, formatDisplayPackNumber, formatLotteryBarcode, computeLotterySeriesCode, inferPackDetailsFromCountdown, DEFAULT_STORES, getStoresList, saveStoresList, getCurrentStoreId, setCurrentStoreId, getStoreStorageKey, normalizeLotteryJurisdiction, getStoreJurisdiction, isScelGameNumber, isBoxActive, calculateSlotSoldTickets, calculateSlotRemainingTickets, calculateSoldOutRecordTickets, stripScannerPrefix } from './data.js';
 import { sfx, voice } from './audio.js';
 import { setupDayReportHandlers, openDayReportModal, printDayReport, populateDayReportDOM } from './dayReportRenderer.js';
 import { getDayReportData, getScreenDayReportData } from './dayReportData.js';
@@ -14,6 +14,7 @@ import { initDatabaseSync, checkMySQLStatus, getAuthHeaders, saveShiftReportToDB
 import { openDaySettlementModal, openPastDaysModal } from './settlementHistoryModals.js';
 import { initAdminDashboardScreen, initManageTicketsScreen } from './adminUiHandlers.js';
 import { checkStoreCanSell, getLocalAdminState, saveLocalAdminState } from './adminStoreSync.js';
+import { findScelGame } from './scel.js';
 
 const BUILD_ID = '2026-10-22-phase0';
 if (typeof document !== 'undefined' && document.documentElement) {
@@ -22,7 +23,11 @@ if (typeof document !== 'undefined' && document.documentElement) {
 console.info(`[LottoTrack Pro] Build ID: ${BUILD_ID}`);
 
 let state = loadState();
-window.state = state;
+Object.defineProperty(window, 'state', {
+  get: () => state,
+  set: (s) => { state = s; },
+  configurable: true
+});
 let undoHistory = [];
 
 // Auto-sanitize existing state to purge any invalid pack numbers (e.g. emojis or non-digits)
@@ -140,7 +145,7 @@ function sanitizeStatePacks(appState) {
           so.startTicket = Math.max(0, so.packSize - 1);
           changed = true;
         }
-        const sold = Math.max(0, (so.closeTicket || 0) - (so.startTicket || 0));
+        const sold = calculateSlotSoldTickets({ ...so, currentTicket: so.closeTicket, status: so.isReturned ? 'RETURNED' : 'SOLD_OUT', isSoldOut: !so.isReturned });
         if (so.ticketsSold !== sold) {
           so.ticketsSold = sold;
           changed = true;
@@ -276,21 +281,16 @@ function sanitizeStatePacks(appState) {
   if (appState && Array.isArray(appState.slots)) {
     appState.slots.forEach(s => {
       if (s && s.status === 'ACTIVE') {
-        if ((s.startTicket === 0 || s.startTicket === null || s.startTicket === undefined) && s.currentTicket > 0) {
+        if (appState.shiftStatus === 'IN_PROGRESS' && (s.startTicket === 0 || s.startTicket === null || s.startTicket === undefined) && s.currentTicket > 0) {
           s.startTicket = s.currentTicket;
           changed = true;
         }
-        if (
-          s.startTicket > 0 &&
-          (s.packStartTicket === 0 || s.packStartTicket === null || s.packStartTicket === undefined) &&
-          !(s.packCumulativeSoldBase > 0) &&
-          !(s.packCumulativeSold > 0) &&
-          !(s.previousShiftSold > 0)
-        ) {
-          s.packStartTicket = s.startTicket;
-          changed = true;
-        }
-        if (appState.shiftStatus === 'IN_PROGRESS' && !s.scannedInEndShift) {
+        if (appState.shiftStatus === 'IN_PROGRESS') {
+          // While shift is IN_PROGRESS, NO box should have scannedInEndShift = true!
+          if (s.scannedInEndShift) {
+            s.scannedInEndShift = false;
+            changed = true;
+          }
           if (s.startTicket !== undefined && s.startTicket !== null && s.currentTicket !== s.startTicket) {
             s.currentTicket = s.startTicket;
             changed = true;
@@ -299,11 +299,13 @@ function sanitizeStatePacks(appState) {
             s.ticketsSold = 0;
             changed = true;
           }
-        } else if (s.scannedInEndShift) {
-          const verified = calculateSlotSoldTickets(s);
-          if (s.ticketsSold !== verified) {
-            s.ticketsSold = verified;
-            changed = true;
+        } else if (appState.shiftStatus === 'SCANNING_END_SHIFT') {
+          if (s.scannedInEndShift) {
+            const verified = calculateSlotSoldTickets(s);
+            if (s.ticketsSold !== verified) {
+              s.ticketsSold = verified;
+              changed = true;
+            }
           }
         }
       }
@@ -318,55 +320,102 @@ function sanitizeStatePacks(appState) {
 }
 sanitizeStatePacks(state);
 
-export const isBoxActive = s => Boolean(s && s.status === 'ACTIVE' && s.packNumber && !s.needsActivation);
-
-/**
- * Calculates tickets sold for a slot, handling both ascending and descending scratch packs.
- * If box was verified in end-shift count, honors the recorded ticketsSold count.
- */
-export function calculateSlotSoldTickets(slot, closingTicket = null, closingSecurityCode = null) {
-  if (!slot) return 0;
-  const start = (slot.startTicket !== undefined && slot.startTicket !== null) ? Number(slot.startTicket) : 0;
-  const current = (closingTicket !== null && closingTicket !== undefined)
-    ? Number(closingTicket)
-    : ((slot.currentTicket !== undefined && slot.currentTicket !== null) ? Number(slot.currentTicket) : start);
-
-  const std = getStandardPackDetails(slot.price || 1);
-  const packSize = slot.packSize || std.packSize || 100;
-
-  // 1. If start equals current, ticket position did not change (0 sales)
-  if (start === current) {
-    const startSec = slot.startSecurityCode || slot.securityCode;
-    const currSec = closingSecurityCode || slot.currentSecurityCode;
-    if (startSec && currSec && String(startSec).trim() !== String(currSec).trim()) {
-      const numStart = parseInt(String(startSec).replace(/[^0-9]/g, ''), 10);
-      const numCurr = parseInt(String(currSec).replace(/[^0-9]/g, ''), 10);
-      if (!isNaN(numStart) && !isNaN(numCurr)) {
-        const pinDelta = Math.abs(numCurr - numStart);
-        // An actual PIN advance for identical ticket number is at most a few tickets (1..5)
-        // If pinDelta > 5 (like 199 vs 000), it is a synthetic mismatch, NEVER 199 tickets sold!
-        if (pinDelta > 0 && pinDelta <= 5) {
-          return pinDelta;
-        }
-      }
-    }
-    return 0;
-  }
-
-  // 2. Fresh countdown pack started at 0, top ticket scanned at end is packSize - 1 (0 sales)
-  if (start === 0 && (current === packSize - 1 || current === 299 || current === 199 || current === 149 || current === 99 || current === 59 || current === 29)) {
-    return 0;
-  }
-
-  // 3. Fresh countdown pack started at 0, top ticket is in upper half of roll
-  if (start === 0 && current > (packSize / 2)) {
-    return Math.max(0, (packSize - 1) - current);
-  }
-
-  return Math.abs(start - current);
-}
+export { isBoxActive, calculateSlotSoldTickets };
 if (typeof window !== 'undefined') {
   window.calculateSlotSoldTickets = calculateSlotSoldTickets;
+}
+
+const SLOT_PACK_META_FIELDS = [
+  'status', 'gameId', 'gameName', 'price', 'packNumber', 'packSize', 'initialTickets',
+  'startTicket', 'currentTicket', 'ticketsInBox', 'scannedBarcodes', 'soldBarcodes',
+  'activatedThisShift', 'daysActive', 'scannedInEndShift', 'declaredOutThere',
+  'barcodePrefix', 'jurisdiction', 'checkDigit', 'basePackNumber', 'packCombined',
+  'needsActivation', 'securityCode', 'startSecurityCode', 'currentSecurityCode',
+  'ticketsSold', 'packCumulativeSold', 'packCumulativeSoldBase', 'previousShiftSold', 'packStartTicket'
+];
+
+function resetSlotToEmpty(slot) {
+  if (!slot) return;
+  slot.status = 'EMPTY';
+  slot.gameId = null;
+  slot.gameName = null;
+  slot.price = null;
+  slot.packNumber = null;
+  slot.packSize = null;
+  slot.initialTickets = 0;
+  slot.startTicket = 0;
+  slot.currentTicket = 0;
+  slot.ticketsInBox = 0;
+  slot.scannedBarcodes = [];
+  slot.soldBarcodes = [];
+  slot.activatedThisShift = false;
+  slot.daysActive = 0;
+  slot.scannedInEndShift = false;
+  slot.declaredOutThere = false;
+  slot.barcodePrefix = '';
+  slot.jurisdiction = null;
+  slot.checkDigit = null;
+  slot.basePackNumber = null;
+  slot.packCombined = null;
+  slot.needsActivation = false;
+  slot.securityCode = null;
+  slot.startSecurityCode = null;
+  slot.currentSecurityCode = null;
+  slot.ticketsSold = 0;
+  slot.packCumulativeSold = 0;
+  slot.packCumulativeSoldBase = 0;
+  slot.previousShiftSold = 0;
+  slot.packStartTicket = 0;
+  delete slot.pendingEndShiftBarcode;
+  delete slot.pendingEndShiftEffectiveBarcode;
+  delete slot.pendingEndShiftParsed;
+}
+
+function swapSlotPackData(slotA, slotB) {
+  if (!slotA || !slotB) return;
+  if (slotB.status === 'EMPTY' && !slotB.packNumber) {
+    moveSlotPackData(slotA, slotB);
+    return;
+  }
+  if (slotA.status === 'EMPTY' && !slotA.packNumber) {
+    moveSlotPackData(slotB, slotA);
+    return;
+  }
+  SLOT_PACK_META_FIELDS.forEach(f => {
+    const tmp = slotA[f];
+    slotA[f] = slotB[f];
+    slotB[f] = tmp;
+  });
+  ['pendingEndShiftBarcode', 'pendingEndShiftEffectiveBarcode', 'pendingEndShiftParsed'].forEach(k => {
+    const tmp = slotA[k];
+    if (slotB[k] !== undefined) slotA[k] = slotB[k]; else delete slotA[k];
+    if (tmp !== undefined) slotB[k] = tmp; else delete slotB[k];
+  });
+}
+
+function moveSlotPackData(srcSlot, dstSlot) {
+  if (!srcSlot || !dstSlot) return;
+  SLOT_PACK_META_FIELDS.forEach(f => {
+    dstSlot[f] = srcSlot[f];
+  });
+  ['pendingEndShiftBarcode', 'pendingEndShiftEffectiveBarcode', 'pendingEndShiftParsed'].forEach(k => {
+    if (srcSlot[k] !== undefined) dstSlot[k] = srcSlot[k];
+    else delete dstSlot[k];
+  });
+  resetSlotToEmpty(srcSlot);
+}
+
+function getUnifiedSafeInventory() {
+  const list = Array.isArray(state?.inStockInventory) ? [...state.inStockInventory] : [];
+  if (Array.isArray(state?.inventory)) {
+    state.inventory.forEach(p => {
+      if (!p || !p.packNumber) return;
+      if (!list.some(x => x && x.packNumber && isPackNumberMatch(x.packNumber, p.packNumber))) {
+        list.push(p);
+      }
+    });
+  }
+  return list.filter(p => !p.boxNumber && p.status !== 'DEPLETED' && p.status !== 'SOLD_OUT');
 }
 
 /**
@@ -426,7 +475,7 @@ export function calculateSlotTodaySold(slot, appState = null) {
     }
     (h.soldOutSnapshot || []).forEach(so => {
       if (so.boxNumber === slot.boxNumber) {
-        const soSold = so.ticketsSold !== undefined ? so.ticketsSold : Math.abs((so.closeTicket || 0) - (so.startTicket || 0));
+        const soSold = calculateSoldOutRecordTickets(so);
         pastTodaySold += soSold;
       }
     });
@@ -454,6 +503,13 @@ function slotMatchesGameNumber(slot, gameNumber) {
 
   // 2. Check direct gameId match (some slots store gameNumber as gameId)
   if (String(slot.gameId).trim() === gNumStr) return true;
+
+  // 2b. SCEL game ID match (e.g. 'sc1714', 'scel_1714', 'sc1705', 'sc1684')
+  if (String(slot.gameId).replace(/^scel_|^sc_?/, '').trim() === gNumStr) return true;
+  const scGame = findScelGame(slot.gameId) || findScelGame(slot.barcodePrefix) || (slot.gameName ? findScelGame(slot.gameName) : null);
+  if (scGame && scGame.barcodePrefix) {
+    if (String(scGame.barcodePrefix).trim() === gNumStr) return true;
+  }
 
   // 3. Look up game definition to get barcodePrefix
   const gameDef = SAMPLE_GAMES.find(g => g.id === slot.gameId) ||
@@ -484,7 +540,7 @@ function slotMatchesGameNumber(slot, gameNumber) {
   if (slot.scannedBarcodes && slot.scannedBarcodes.length > 0) {
     for (const b of slot.scannedBarcodes) {
       const bStr = typeof b === 'string' ? b : b.barcode;
-      const bParsed = parseLotteryBarcode(bStr, state.customGames);
+      const bParsed = parseLotteryBarcode(bStr, state.customGames, state.lotteryJurisdiction);
       if (bParsed && bParsed.gameNumber) {
         return String(bParsed.gameNumber).trim() === gNumStr;
       }
@@ -517,7 +573,7 @@ export function getShiftSalesTotals() {
   });
 
   (state.soldOutThisShift || []).forEach(so => {
-    const sold = so.ticketsSold !== undefined ? so.ticketsSold : Math.abs((so.closeTicket || 0) - (so.startTicket || 0));
+    const sold = calculateSoldOutRecordTickets(so);
     const amt = so.salesAmount !== undefined ? so.salesAmount : (sold * (so.price || 0));
     totalSold += sold;
     totalRevenue += amt;
@@ -538,7 +594,8 @@ export function recordSoldOutPack(slot, closeOverride = null) {
     : ((slot.currentTicket !== undefined && slot.currentTicket !== null) ? slot.currentTicket : packSize);
 
   if (close > packSize) close = packSize;
-  const sold = Math.abs(close - start);
+  const isSoldOut = closeOverride === packSize || slot.status === 'SOLD_OUT';
+  const sold = calculateSlotSoldTickets({ ...slot, startTicket: start, currentTicket: close, packSize, status: isSoldOut ? 'SOLD_OUT' : slot.status });
   const amount = sold * (slot.price || 0);
 
   const existingIdx = state.soldOutThisShift.findIndex(
@@ -836,6 +893,46 @@ export function toTitleCaseGameName(name) {
 // 3. Clean up any duplicated dollar signs or prices in game names (e.g. "$1 $1 5X MONEY" -> "5X MONEY")
 function sanitizeAndMigrateSlots() {
   let modified = false;
+
+  const stores = getStoresList();
+  const currentSid = getCurrentStoreId();
+  const currentStore = (stores || []).find(s => s.id === currentSid || s.storeId === currentSid) || DEFAULT_STORES.find(s => s.id === currentSid);
+  const configuredBoxes = Math.max(65, currentStore?.totalBoxes || 65);
+  if (!state.totalSlots || state.totalSlots < configuredBoxes) {
+    state.totalSlots = configuredBoxes;
+    modified = true;
+  }
+  if (!Array.isArray(state.slots)) {
+    state.slots = [];
+    modified = true;
+  }
+  if (state.slots.length < state.totalSlots) {
+    const existingNums = new Set(state.slots.map(s => Number(s.boxNumber)));
+    for (let b = 1; b <= state.totalSlots; b++) {
+      if (!existingNums.has(b)) {
+        state.slots.push({
+          boxNumber: b,
+          status: 'EMPTY',
+          gameId: null,
+          gameName: null,
+          price: null,
+          packNumber: null,
+          packSize: null,
+          startTicket: 0,
+          currentTicket: 0,
+          ticketsInBox: 0,
+          scannedBarcodes: [],
+          soldBarcodes: [],
+          activatedThisShift: false,
+          daysActive: 0,
+          scannedInEndShift: false
+        });
+        modified = true;
+      }
+    }
+    state.slots.sort((a, b) => Number(a.boxNumber) - Number(b.boxNumber));
+  }
+
   state.slots.forEach(slot => {
     if (slot.gameName) {
       const cleaned = cleanGameTitle(slot.gameName);
@@ -930,6 +1027,8 @@ let _setupKeypadDone = false;
 let _setupHardwareScannerListenerDone = false;
 let _setupModernMockupDialogsDone = false;
 let _eventListenersInitialized = false;
+let currentInventoryTab = 'in_stock';
+let _renderInventoryViewFn = null;
 
 function showSystemLoadErrorBanner(failedStepName, error) {
   try {
@@ -1008,12 +1107,14 @@ let rbState = {
   pos: '000',
   name: '',
   price: '',
+  packSize: null,
+  parsedMeta: null,
   focus: 'gid'
 };
 
 const RB_FOCUS = {
   gid: { label: 'Game ID', max: 4 },
-  pack: { label: 'Pack #', max: 7 },
+  pack: { label: 'Pack #', max: 6 },
   pos: { label: 'Start ticket', max: 3 },
   price: { label: 'Ticket price', max: 6 }
 };
@@ -1021,11 +1122,41 @@ const RB_FOCUS = {
 function lookupRbGame(gid) {
   if (!gid) return null;
   const str = String(gid).trim();
+  const cgArr = Array.isArray(state.customGames)
+    ? state.customGames
+    : (state.customGames && typeof state.customGames === 'object' ? Object.values(state.customGames) : []);
+  if (state.lotteryJurisdiction === 'SC') {
+    const scGame = findScelGame(str);
+    if (scGame) return { name: cleanGameTitle(scGame.name), price: scGame.price, packSize: scGame.packSize };
+    const scCustom = cgArr.find(g => g && (!g.jurisdiction || normalizeLotteryJurisdiction(g.jurisdiction) === 'SC') &&
+      (String(g.barcodePrefix || '') === str || String(g.gameNumber || '') === str || String(g.id || '').replace(/^(g|sc|cg_)/, '') === str));
+    if (scCustom) return scCustom;
+    if (state.customGames && !Array.isArray(state.customGames) && state.customGames[str]) return state.customGames[str];
+    return null;
+  }
   if (RB_DESIGN_GAMES[str]) return RB_DESIGN_GAMES[str];
-  if (state.customGames && state.customGames[str]) return state.customGames[str];
+  const gaCustom = cgArr.find(g => g && (!g.jurisdiction || normalizeLotteryJurisdiction(g.jurisdiction) === 'GA') &&
+    (String(g.barcodePrefix || '') === str || String(g.gameNumber || '') === str || String(g.id || '').replace(/^(g|sc|cg_)/, '') === str));
+  if (gaCustom) return gaCustom;
+  if (state.customGames && !Array.isArray(state.customGames) && state.customGames[str]) return state.customGames[str];
+  const gaCatalog = findGaCatalogGame(str, cgArr);
+  if (gaCatalog) {
+    return {
+      name: toTitleCaseGameName(gaCatalog.name) || cleanGameTitle(gaCatalog.name),
+      price: gaCatalog.price,
+      packSize: gaCatalog.packSize
+    };
+  }
   if (Array.isArray(window.LOTTO_GAMES_DATABASE)) {
     const f = window.LOTTO_GAMES_DATABASE.find(g => String(g.gameNumber) === str || String(g.barcodePrefix) === str);
     if (f) return { name: cleanGameTitle(f.name), price: f.price };
+  }
+  if (rbState.parsedMeta?.jurisdiction === 'SC' && String(rbState.parsedMeta?.gameNumber || '') === str) {
+    const scCustom = cgArr.find(g => g && normalizeLotteryJurisdiction(g.jurisdiction) === 'SC' &&
+      (String(g.barcodePrefix || '') === str || String(g.gameNumber || '') === str || String(g.id || '').replace(/^(g|sc|cg_)/, '') === str));
+    if (scCustom) return scCustom;
+    const scGame = findScelGame(str);
+    if (scGame) return { name: cleanGameTitle(scGame.name), price: scGame.price, packSize: scGame.packSize };
   }
   return null;
 }
@@ -1124,18 +1255,19 @@ function renderReceiveBookModal() {
     otherInput.readOnly = Boolean(known && /^\d{4}$/.test(rbState.gid));
   }
 
-  const packVal = rbDefaultPackValue(priceN);
-  const size = rbSizeFor(priceN, packVal);
+  const basePackVal = rbDefaultPackValue(priceN);
+  const size = rbState.packSize || (known?.packSize || rbSizeFor(priceN, basePackVal));
+  const packVal = (priceN > 0 && size > 0 && (rbState.packSize || known?.packSize)) ? (priceN * size) : basePackVal;
   if (packValueAmount) packValueAmount.textContent = priceN > 0 ? `$${packVal}` : '—';
   if (packValueEq) {
     packValueEq.textContent = priceN > 0 ? `$${packVal} ÷ $${priceN} = ${size} tickets in this pack` : 'Pick a ticket price — the pack value is set for you';
   }
   if (packValueTag) {
-    packValueTag.textContent = packVal === 900 ? '$50 ticket → $900 pack' : 'Standard $300 pack';
-    packValueTag.className = packVal === 900 ? 'tag tag-brand' : 'tag tag-muted';
+    packValueTag.textContent = packVal === 300 ? 'Standard $300 pack' : `$${priceN} ticket → $${packVal} pack`;
+    packValueTag.className = packVal === 300 ? 'tag tag-muted' : 'tag tag-brand';
   }
   if (packValueBox) {
-    if (packVal === 900) packValueBox.classList.add('big');
+    if (packVal > 300) packValueBox.classList.add('big');
     else packValueBox.classList.remove('big');
   }
 
@@ -1168,32 +1300,84 @@ function renderReceiveBookModal() {
 }
 
 function rbFillFromBarcode(raw) {
-  const clean = String(raw || '').trim();
+  const rawStr = String(raw || '').trim();
+  const clean = stripScannerPrefix(rawStr) || rawStr;
   if (!clean) return;
-  const m = clean.replace(/\s/g, '').match(/^(\d{4})-?(\d{6,7})-?(\d{3})?/);
+  const cgList = Array.isArray(state.customGames)
+    ? state.customGames
+    : (state.customGames && typeof state.customGames === 'object' ? Object.values(state.customGames) : []);
   let gid = '', pack = '', pos = '000';
-  if (m) {
-    gid = m[1];
-    pack = m[2];
-    pos = m[3] ? m[3].padStart(3, '0') : '000';
+  let parsed = null;
+  if (state.lotteryJurisdiction === 'SC') {
+    parsed = parseLotteryBarcode(clean, cgList, state.lotteryJurisdiction);
+    if (!parsed || !parsed.isValid) {
+      return;
+    }
+    gid = parsed.gameNumber || '';
+    pack = formatDisplayPackNumber(parsed.basePackNumber || parsed.packNumber || '');
+    pos = (parsed.ticketString || '000').padStart(3, '0');
   } else {
-    const parsed = parseLotteryBarcode(clean, state.customGames);
-    if (parsed) {
+    const m = clean.replace(/\s/g, '').match(/^(\d{4})-?(\d{6,7})-?(\d{3})?/);
+    parsed = parseLotteryBarcode(clean, cgList, state.lotteryJurisdiction);
+    if (parsed && parsed.isValid) {
       gid = parsed.gameNumber || '';
-      pack = parsed.packNumber || '';
-      pos = (parsed.ticketString || '000').padStart(3, '0');
+      pack = formatDisplayPackNumber(parsed.basePackNumber || parsed.packNumber || '');
+      pos = parsed.ticketString ? String(parsed.ticketString).padStart(3, '0') : '000';
+    } else {
+      const fourUncat = clean.match(/^(\d{4})[-_/\s.:]+(\d{6})[-_/\s.:]+(\d)[-_/\s.:]+(\d{3})(?:[-_/\s.:]*[([{]?(\d{1,4})[)\]}]?)?$/);
+      if (fourUncat) {
+        gid = fourUncat[1];
+        pack = fourUncat[2];
+        pos = fourUncat[4].padStart(3, '0');
+        const tixNum = parseInt(pos, 10);
+        const inferred = fourUncat[5] ? inferPackDetailsFromCountdown(tixNum, fourUncat[5]) : null;
+        parsed = {
+          isValid: true,
+          jurisdiction: 'GA',
+          gameNumber: gid,
+          basePackNumber: pack,
+          checkCode: fourUncat[3],
+          ticketNumber: tixNum,
+          ticketString: pos,
+          inferredDetails: inferred,
+          standardBarcode: `${gid}${pack}${fourUncat[3]}${pos}`,
+          displayBarcode: clean
+        };
+      } else if (m) {
+        gid = m[1];
+        pack = formatDisplayPackNumber(m[2]);
+        pos = m[3] ? m[3].padStart(3, '0') : '000';
+      }
     }
   }
+  rbState.code = (parsed && parsed.isValid && parsed.displayBarcode) ? parsed.displayBarcode : clean;
   if (gid) rbState.gid = gid;
-  if (pack) rbState.pack = pack;
+  if (pack) rbState.pack = formatDisplayPackNumber(pack);
   if (pos) rbState.pos = pos;
+  rbState.name = '';
+  rbState.price = '';
+  rbState.packSize = null;
+  rbState.parsedMeta = parsed ? {
+    gameNumber: parsed.gameNumber || gid || '',
+    jurisdiction: parsed.jurisdiction || normalizeLotteryJurisdiction(state.lotteryJurisdiction),
+    checkDigit: parsed.checkDigit || parsed.checkCode || null,
+    standardBarcode: parsed.standardBarcode || clean,
+    displayBarcode: parsed.displayBarcode || clean
+  } : null;
+
   const g = lookupRbGame(rbState.gid);
   if (g) {
-    rbState.name = g.name;
-    rbState.price = String(g.price);
+    rbState.name = cleanGameTitle(g.name || '');
+    rbState.price = g.price ? String(g.price) : '';
+    rbState.packSize = g.packSize || parsed?.packSize || parsed?.inferredDetails?.packSize || null;
     rbState.focus = 'pos';
   } else if (gid) {
-    rbState.focus = 'price';
+    const inferredPrice = parsed?.price ?? parsed?.inferredDetails?.price ?? null;
+    const inferredSize = parsed?.packSize ?? parsed?.inferredDetails?.packSize ?? null;
+    if (parsed?.gameName) rbState.name = toTitleCaseGameName(parsed.gameName);
+    if (inferredPrice) rbState.price = String(inferredPrice);
+    if (inferredSize) rbState.packSize = inferredSize;
+    rbState.focus = rbState.price ? 'pos' : 'price';
   }
   renderReceiveBookModal();
 }
@@ -1226,7 +1410,7 @@ function handleRbKeyPress(k) {
       rbState.price = String(g.price);
     }
     rbState.focus = 'pack';
-  } else if (key === 'pack' && cur.length === 7) {
+  } else if (key === 'pack' && cur.length === 6) {
     rbState.focus = 'pos';
   }
 
@@ -1276,8 +1460,8 @@ function setupReceiveBookModernModal() {
   packInput?.addEventListener('focus', () => { rbState.focus = 'pack'; renderReceiveBookModal(); });
   packInput?.addEventListener('click', () => { rbState.focus = 'pack'; renderReceiveBookModal(); });
   packInput?.addEventListener('input', (e) => {
-    rbState.pack = e.target.value.replace(/\D/g, '').slice(0, 7);
-    if (rbState.pack.length === 7) rbState.focus = 'pos';
+    rbState.pack = e.target.value.replace(/\D/g, '').slice(0, 6);
+    if (rbState.pack.length === 6) rbState.focus = 'pos';
     renderReceiveBookModal();
   });
 
@@ -1352,12 +1536,13 @@ function setupReceiveBookModernModal() {
 
   saveBtn?.addEventListener('click', () => {
     const gid = rbState.gid;
-    const pack = rbState.pack;
-    const pos = rbState.pos || '000';
+    const pack = formatDisplayPackNumber(rbState.pack);
+    const pos = (rbState.pos || '000').padStart(3, '0');
     const name = rbState.name.trim();
     const priceN = parseFloat(rbState.price) || 0;
+    const known = lookupRbGame(gid);
     const packVal = rbDefaultPackValue(priceN);
-    const packSize = rbSizeFor(priceN, packVal);
+    const packSize = rbState.packSize || (known?.packSize || rbSizeFor(priceN, packVal));
 
     if (!/^\d{4}$/.test(gid) || !/^\d{6,7}$/.test(pack) || !(priceN > 0) || !name) {
       sfx.alert();
@@ -1365,7 +1550,7 @@ function setupReceiveBookModernModal() {
     }
 
     if (!Array.isArray(state.inStockInventory)) {
-      state.inStockInventory = (!state.dataCleared && (!state.storeId || state.storeId === 'store_amigo')) ? JSON.parse(JSON.stringify(REFERENCE_IN_STOCK_PACKS)) : [];
+      state.inStockInventory = [];
     }
 
     if (state.inStockInventory.some(p => isPackNumberMatch(p.packNumber, pack))) {
@@ -1374,11 +1559,20 @@ function setupReceiveBookModernModal() {
       return;
     }
 
+    const jur = normalizeLotteryJurisdiction(rbState.parsedMeta?.jurisdiction || state.lotteryJurisdiction);
     const newPack = {
       id: 'stock_' + Date.now(),
+      barcode: rbState.parsedMeta?.standardBarcode || rbState.code || '',
+      originalBarcode: rbState.code || '',
+      standardBarcode: rbState.parsedMeta?.standardBarcode || rbState.code || '',
+      barcodePrefix: gid,
       gameName: name,
       gameNumber: `Game ${gid}`,
       packNumber: pack,
+      basePackNumber: pack,
+      checkDigit: rbState.parsedMeta?.checkDigit || null,
+      jurisdiction: jur,
+      displayBarcode: rbState.parsedMeta?.displayBarcode || rbState.code || '',
       price: priceN,
       packSize: `${packSize} tickets`,
       packSizeNum: packSize,
@@ -1391,19 +1585,34 @@ function setupReceiveBookModernModal() {
     };
 
     state.inStockInventory.unshift(newPack);
-    if (!state.customGames) state.customGames = {};
-    state.customGames[gid] = { name: name, price: priceN, packSize: packSize };
+    if (!Array.isArray(state.customGames)) {
+      state.customGames = (state.customGames && typeof state.customGames === 'object') ? Object.values(state.customGames) : [];
+    }
+    const existingCgIdx = state.customGames.findIndex(cg => cg && (cg.barcodePrefix === gid || cg.gameNumber === gid) && (!cg.jurisdiction || normalizeLotteryJurisdiction(cg.jurisdiction) === jur));
+    const cgEntry = {
+      id: (jur === 'SC' ? 'sc' : 'g') + gid,
+      barcodePrefix: gid,
+      gameNumber: gid,
+      name: cleanGameTitle(name),
+      price: priceN,
+      packSize: packSize,
+      bookValue: packSize * priceN,
+      jurisdiction: jur
+    };
+    if (existingCgIdx !== -1) state.customGames[existingCgIdx] = cgEntry;
+    else state.customGames.push(cgEntry);
     saveState(state);
 
     modal?.close();
     sfx.success?.() || sfx.beep();
-    showToast(`✓ ${name} pack #${pack} added to inventory as In stock.`, 'success');
+    showToast(`✓ ${name} pack #${formatDisplayPackNumber(pack)} added to inventory as In stock.`, 'success');
     currentInventoryTab = 'in_stock';
-    renderInventoryView();
+    (_renderInventoryViewFn || window.renderInventoryView)?.();
+    renderHeaderAndMetrics?.();
   });
 }
 
-function openReceiveBookModernModal() {
+function openReceiveBookModernModal(initialBarcode = null) {
   rbState = {
     code: '',
     gid: '',
@@ -1411,14 +1620,26 @@ function openReceiveBookModernModal() {
     pos: '000',
     name: '',
     price: '',
+    packSize: null,
+    parsedMeta: null,
     focus: 'gid'
   };
   renderReceiveBookModal();
   const modal = document.getElementById('receiveBookModernModal');
   if (modal) {
     if (!modal.open) modal.showModal();
+    if (typeof initialBarcode === 'string' && initialBarcode.trim()) {
+      rbFillFromBarcode(initialBarcode.trim());
+    }
     setTimeout(() => {
-      document.getElementById('rbCodeInput')?.focus();
+      const rbSaveEl = document.getElementById('rbSaveBtn');
+      if (rbState.gid && !rbState.name) {
+        document.getElementById('rbNameInput')?.focus();
+      } else if (rbState.gid && rbState.pack && rbState.name && rbState.price && rbSaveEl && !rbSaveEl.disabled) {
+        rbSaveEl.focus();
+      } else {
+        document.getElementById('rbCodeInput')?.focus();
+      }
     }, 100);
   }
 }
@@ -1652,14 +1873,10 @@ function initPOS() {
           serverState.retailerNumber = 'GA-ADM01';
           if (serverState.cashierName === 'master') serverState.cashierName = 'Platform Administrator';
         }
-        const serverTime = serverState.lastSavedAt ? new Date(serverState.lastSavedAt).getTime() : 0;
-        const localTime = state.lastSavedAt ? new Date(state.lastSavedAt).getTime() : 0;
-        const isServerNewer = serverTime >= localTime;
-        const isDifferent = JSON.stringify(serverState.slots) !== JSON.stringify(state.slots) ||
-          (serverState.shiftNumber || 1) !== (state.shiftNumber || 1) ||
-          (serverState.soldBarcodes || []).length !== (state.soldBarcodes || []).length ||
-          (serverState.inStockInventory || []).length !== (state.inStockInventory || []).length;
-        if (isServerNewer || isDifferent) {
+        if (!shouldUseServerState(serverState, state)) {
+          // This device holds newer work the server never received: keep it and push it up now
+          saveState(state, currentSid);
+        } else {
           Object.assign(state, serverState);
           state.storeId = currentSid;
           state.dataCleared = Boolean(serverState.dataCleared);
@@ -1690,6 +1907,7 @@ function initPOS() {
     if (!activeSid || state.shiftStatus === 'SCANNING_END_SHIFT' || state.isUpdatingInventory) return;
     loadPOSStateFromDB(activeSid).then(serverState => {
       if (getCurrentStoreId() !== activeSid) return;
+      if (state.shiftStatus === 'SCANNING_END_SHIFT') return;
       if (serverState && Array.isArray(serverState.slots) && (!serverState.storeId || serverState.storeId === activeSid)) {
         if (serverState.dataCleared && !state.dataCleared) {
           state = resetToCleanState(state);
@@ -1775,12 +1993,23 @@ function renderHeaderAndMetrics() {
   const barcodeInp = document.getElementById('barcodeInput');
   const microLabel = document.querySelector('.last-scan-micro-label');
 
+  if (btnRefresh) {
+    btnRefresh.innerHTML = `
+      <svg class="ctrl-icon-blue" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+      </svg>
+      <span>Refresh</span>
+    `;
+    btnRefresh.title = 'Refresh Screen';
+  }
+
   if (state.shiftStatus === 'IN_PROGRESS') {
     if (shiftStatusBadge) shiftStatusBadge.className = 'btn-lt-green-progress';
     if (shiftStatusText) shiftStatusText.textContent = isDailyMode ? `DAY IN PROGRESS · ${cashierUpper}` : `SHIFT #${shiftNumStr} · ${cashierUpper}`;
     if (shiftHeadline) shiftHeadline.textContent = isDailyMode ? 'Day in progress' : `Shift #${shiftNumStr} in progress`;
     if (mainShiftActionBtn) {
       mainShiftActionBtn.className = 'btn-ctrl-end-shift';
+      mainShiftActionBtn.title = isDailyMode ? 'End Day' : 'End Shift';
       mainShiftActionBtn.innerHTML = `
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
           <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"></path>
@@ -1789,24 +2018,15 @@ function renderHeaderAndMetrics() {
         <span id="mainShiftBtnLabel">End Shift</span>
       `;
     }
-    if (btnRefresh) {
-      btnRefresh.innerHTML = `
-        <svg class="ctrl-icon-blue" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
-        </svg>
-        <span>Refresh</span>
-      `;
-      btnRefresh.title = 'Refresh Screen';
-    }
     if (btnCancel) {
       btnCancel.className = 'btn-ctrl-cancel';
       btnCancel.disabled = false;
     }
-    if (microLabel) microLabel.textContent = 'LAST SCAN';
+    if (microLabel && !state.isUpdatingInventory) microLabel.textContent = 'LAST SCAN';
     document.getElementById('viewSellCounter')?.classList.remove('shift-ended-mode');
     if (toastEndShift) toastEndShift.style.display = 'none';
     if (secShiftReport) secShiftReport.style.display = 'none';
-    if (dispenserCont) dispenserCont.style.display = 'block';
+    if (dispenserCont) dispenserCont.style.display = state.isUpdatingInventory ? 'none' : 'block';
     if (kpiBar) {
       kpiBar.style.removeProperty('display');
       kpiBar.style.display = '';
@@ -1836,7 +2056,6 @@ function renderHeaderAndMetrics() {
     if (barcodeInp) barcodeInp.placeholder = 'Scan the top ticket in each box...';
     document.getElementById('viewSellCounter')?.classList.remove('shift-ended-mode');
     if (toastEndShift) toastEndShift.style.display = 'none';
-    showToast('📋 Scan the top ticket in each box. Boxes turn green as you scan, then tap Get Report.', 'info');
     if (secShiftReport) secShiftReport.style.display = 'none';
     if (dispenserCont) dispenserCont.style.display = 'block';
     if (kpiBar) {
@@ -1850,6 +2069,7 @@ function renderHeaderAndMetrics() {
     if (shiftHeadline) shiftHeadline.textContent = isDailyMode ? 'Day Closed' : 'Shift Closed';
     if (mainShiftActionBtn) {
       mainShiftActionBtn.className = 'btn-ctrl-end-shift btn-ctrl-start-shift';
+      mainShiftActionBtn.title = isDailyMode ? 'Start Day' : 'Start Shift';
       mainShiftActionBtn.innerHTML = `
         <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
           <polygon points="5 3 19 12 5 21 5 3"></polygon>
@@ -1858,27 +2078,6 @@ function renderHeaderAndMetrics() {
       `;
     }
     const isFreshOrCleared = Boolean(state.dataCleared || (totalSold === 0 && totalRevenue === 0 && activeCount === 0));
-    if (btnRefresh) {
-      if (isFreshOrCleared) {
-        btnRefresh.innerHTML = `
-          <svg class="ctrl-icon-blue" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
-          </svg>
-          <span>Refresh</span>
-        `;
-        btnRefresh.title = 'Refresh Screen';
-      } else {
-        btnRefresh.innerHTML = `
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="6 9 6 2 18 2 18 9"></polyline>
-            <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path>
-            <rect width="12" height="8" x="6" y="14"></rect>
-          </svg>
-          <span>Print</span>
-        `;
-        btnRefresh.title = 'Print Shift Report';
-      }
-    }
     if (btnCancel) {
       btnCancel.className = isFreshOrCleared ? 'btn-ctrl-cancel' : 'btn-ctrl-cancel cancel-disabled';
       btnCancel.disabled = !isFreshOrCleared;
@@ -1918,34 +2117,40 @@ function renderHeaderAndMetrics() {
     }
   }
 
-  // Update Readout if not currently in an alert yellow state
-  if (!lastScanReadoutContainer?.classList.contains('alert-yellow')) {
+  // Update Readout if not currently in an alert yellow state or active Updating Inventory scan
+  if (!lastScanReadoutContainer?.classList.contains('alert-yellow') && !state.isUpdatingInventory) {
     if (state.shiftStatus === 'SCANNING_END_SHIFT') {
       const verifiedCount = state.slots.filter(s => isBoxActive(s) && s.scannedInEndShift).length;
-      if (state.lastScanData) {
-        const d = state.lastScanData;
-        const cleanName = cleanGameTitle(d.gameName);
+      if (activeGetReportNotice) {
+        if (scanActionTitle) scanActionTitle.textContent = activeGetReportNotice.message;
+        if (lastScanDisplay) lastScanDisplay.textContent = activeGetReportNotice.detail || (state.lastScanData?.boxNumber ? `Box ${state.lastScanData.boxNumber}` : 'End Shift Scan');
+        if (microLabel) microLabel.textContent = `SHIFT #${shiftNumStr}`;
         if (largeStatReadout) {
-          largeStatReadout.textContent = String(d.boxNumber || verifiedCount);
-          largeStatReadout.style.color = '';
-        }
-        if (d.action === 'NEEDS_ACTIVATION') {
-          if (scanActionTitle) scanActionTitle.textContent = `Box #${d.boxNumber} Added`;
-          if (lastScanDisplay) lastScanDisplay.innerHTML = `${cleanName} &middot; Tap Activate on Box #${d.boxNumber}`;
-        } else if (d.action === 'VERIFIED') {
-          if (scanActionTitle) scanActionTitle.textContent = `Box #${d.boxNumber} Verified`;
-          if (lastScanDisplay) lastScanDisplay.innerHTML = `$${Number(d.price).toFixed(2)} &middot; ${cleanName} (${d.soldCount} sold)`;
-        } else {
-          if (scanActionTitle) scanActionTitle.textContent = cleanName;
-          if (lastScanDisplay) lastScanDisplay.innerHTML = `Box ${d.boxNumber}`;
+          largeStatReadout.textContent = `${verifiedCount}/${activeCount}`;
         }
       } else {
+        if (lastScanReadoutContainer) {
+          lastScanReadoutContainer.classList.remove('card-msg-success', 'card-msg-error', 'card-msg-warning', 'card-msg-info', 'alert-yellow');
+        }
+        if (state.lastScanData) {
+          const d = state.lastScanData;
+          const cleanName = cleanGameTitle(d.gameName);
+          if (d.action === 'NEEDS_ACTIVATION') {
+            if (scanActionTitle) scanActionTitle.textContent = `Box #${d.boxNumber} Added`;
+            if (lastScanDisplay) lastScanDisplay.innerHTML = `${cleanName} &middot; Tap Activate on Box #${d.boxNumber}`;
+          } else {
+            if (scanActionTitle) scanActionTitle.textContent = cleanName;
+            if (lastScanDisplay) lastScanDisplay.innerHTML = `Box ${d.boxNumber}`;
+          }
+        } else {
+          if (scanActionTitle) scanActionTitle.textContent = 'Scan top ticket in each box';
+          if (lastScanDisplay) lastScanDisplay.innerHTML = 'Boxes turn green as you scan, then tap Get Report';
+        }
+        if (microLabel) microLabel.textContent = `SHIFT #${shiftNumStr}`;
         if (largeStatReadout) {
-          largeStatReadout.textContent = String(verifiedCount);
+          largeStatReadout.textContent = `${verifiedCount}/${activeCount}`;
           largeStatReadout.style.color = '';
         }
-        if (scanActionTitle) scanActionTitle.textContent = 'New shift in progress';
-        if (lastScanDisplay) lastScanDisplay.innerHTML = 'Last closing numbers are now the opening numbers';
       }
     } else if (state.shiftStatus === 'SHIFT_ENDED') {
       const { totalSold, totalRevenue } = getShiftSalesTotals();
@@ -1983,7 +2188,7 @@ function renderHeaderAndMetrics() {
       } else {
         if (scanActionTitle) scanActionTitle.textContent = cleanName || '$2 Hit 100';
         if (lastScanDisplay) {
-          lastScanDisplay.innerHTML = `Box ${d.boxNumber || '4'} &middot; ticket ${tixNumStr}`;
+          lastScanDisplay.innerHTML = `Box ${d.boxNumber || '4'} &middot; ticket ${tixNumStr}${secStr ? ' ' + secStr : ''}`;
         }
       }
     } else if (state.dataCleared || activeCount === 0) {
@@ -2010,7 +2215,7 @@ function renderHeaderAndMetrics() {
 
   const remainingPacksCount = document.getElementById('remainingPacksCount');
   if (remainingPacksCount) {
-    remainingPacksCount.textContent = state.inventory ? state.inventory.length : 0;
+    remainingPacksCount.textContent = getUnifiedSafeInventory().length;
   }
 
   // Count active vs empty: any box with an active pack is considered active and ready to sell
@@ -2071,9 +2276,8 @@ function renderHeaderAndMetrics() {
   const totalMonthTickets = monthPastTickets + currentShiftTickets;
 
   const hasLiveSales = Boolean(totalTodayRevenue > 0 || currentShiftSales > 0);
-  const isCleared = Boolean(state.dataCleared || (activeCount === 0 && (state.shiftHistory || []).length === 0));
-  const displayRevenue = hasLiveSales ? (isDailyMode ? totalTodayRevenue : currentShiftSales) : (isCleared ? 0 : 1293.00);
-  const displayTickets = hasLiveSales ? totalTodayTickets : (isCleared ? 0 : 264);
+  const displayRevenue = hasLiveSales ? (isDailyMode ? totalTodayRevenue : currentShiftSales) : 0;
+  const displayTickets = hasLiveSales ? totalTodayTickets : 0;
 
   if (metricSettlement) metricSettlement.textContent = `$${displayRevenue.toFixed(2)}`;
 
@@ -2086,7 +2290,7 @@ function renderHeaderAndMetrics() {
   const activePacksEl = document.getElementById('activePacksCount');
   if (activePacksEl) {
     const actPacks = (state.slots || []).filter(s => isBoxActive(s) && s.activatedThisShift).length;
-    activePacksEl.textContent = String(isCleared ? 0 : (actPacks || 2));
+    activePacksEl.textContent = String(actPacks);
   }
 
   const rackInUseCountSub = document.getElementById('rackInUseCountSub');
@@ -2102,7 +2306,7 @@ function renderHeaderAndMetrics() {
   const countToday = activeSlots.filter(s => (s.daysActive || 0) === 0 || s.activatedThisShift).length;
   const countWeek = activeSlots.filter(s => (s.daysActive || 0) <= 7).length;
   const countMonth = activeSlots.filter(s => (s.daysActive || 0) <= 30).length;
-  const inStockPacks = (state.inStockInventory || []).filter(p => !p.boxNumber);
+  const inStockPacks = getUnifiedSafeInventory();
   const countInactive = inStockPacks.length;
 
   if (metricToday) metricToday.textContent = String(countToday);
@@ -2117,7 +2321,7 @@ function renderHeaderAndMetrics() {
     const currentStore = stores.find(s => s.id === currentSid);
     const storeLabel = (state.storeName && state.storeName.trim() && state.storeName.trim().toLowerCase() !== 'store')
       ? state.storeName.trim()
-      : (currentStore?.name || 'Amigo Food Mart');
+      : (currentStore?.name || 'Store');
     const dateFormatted = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
     dashboardSubtitle.textContent = `${storeLabel} \u00B7 ${dateFormatted}`;
   }
@@ -2134,13 +2338,13 @@ function renderHeaderAndMetrics() {
   } else {
     const shiftNum = state.shiftNumber || 1;
     if (shiftPillTitle) shiftPillTitle.textContent = `Shift #${shiftNum} in progress`;
-    const timeStr = state.shiftStartedAt ? new Date(state.shiftStartedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '7:02 AM';
-    if (shiftPillTime) shiftPillTime.textContent = `started ${timeStr}`;
+    const timeStr = state.shiftStartedAt ? new Date(state.shiftStartedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '';
+    if (shiftPillTime) shiftPillTime.textContent = timeStr ? `started ${timeStr}` : 'Active';
     if (shiftStatusPill) shiftStatusPill.classList.remove('shift-closed');
   }
 
   if (shiftPillCashier) {
-    shiftPillCashier.textContent = state.cashierName || 'Maulik';
+    shiftPillCashier.textContent = state.cashierName || '—';
   }
 
   const metricBoxesInUse = document.getElementById('metricBoxesInUse');
@@ -2149,9 +2353,9 @@ function renderHeaderAndMetrics() {
   const metricBoxesEmpty = document.getElementById('metricBoxesEmpty');
   if (metricBoxesEmpty) metricBoxesEmpty.textContent = `${emptyCount} empty`;
 
-  const safePacks = (state.inventory || []).filter(p => p.status === 'STORED' || !p.boxNumber);
+  const safePacks = getUnifiedSafeInventory();
   const safePacksCount = safePacks.length;
-  const safePacksVal = safePacks.reduce((acc, p) => acc + (p.bookValue || ((p.price || 1) * (p.packSize || 100)) || 300), 0);
+  const safePacksVal = safePacks.reduce((acc, p) => acc + (Number(p.bookValue) || ((Number(p.price) || 0) * (Number(p.packSize) || getStandardPackDetails(p.price || 1).packSize)) || 0), 0);
 
   const metricSafePacks = document.getElementById('metricSafePacks');
   if (metricSafePacks) metricSafePacks.textContent = `${safePacksCount} packs`;
@@ -2161,10 +2365,11 @@ function renderHeaderAndMetrics() {
 
   const sellCounterSubtitle = document.getElementById('sellCounterSubtitle');
   if (sellCounterSubtitle) {
+    const openSince = state.shiftStartedAt ? new Date(state.shiftStartedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '';
     if (isDailyMode) {
-      sellCounterSubtitle.textContent = 'Day open since 7:02 AM';
+      sellCounterSubtitle.textContent = openSince ? `Day open since ${openSince}` : 'Ready';
     } else {
-      sellCounterSubtitle.textContent = `Shift #${state.shiftNumber || 13} open since 7:02 AM`;
+      sellCounterSubtitle.textContent = openSince ? `Shift #${state.shiftNumber || 1} open since ${openSince}` : `Shift #${state.shiftNumber || 1}`;
     }
   }
 
@@ -2174,7 +2379,7 @@ function renderHeaderAndMetrics() {
   }
 
   const sidebarUserName = document.getElementById('sidebarUserName');
-  if (sidebarUserName) sidebarUserName.textContent = state.cashierName || 'Maulik';
+  if (sidebarUserName) sidebarUserName.textContent = state.cashierName || '—';
 
   const sidebarAvatar = document.getElementById('sidebarAvatar');
   if (sidebarAvatar) sidebarAvatar.textContent = (state.cashierName || 'M').charAt(0).toUpperCase();
@@ -2230,7 +2435,6 @@ function renderHeaderAndMetrics() {
 const VISIBLE_RACK_CAPACITY = 100;
 
 function ensureVisibleBoxesInitialized() {
-  const isBoxActive = s => Boolean(s && s.status === 'ACTIVE' && s.packNumber && !s.needsActivation);
   const activeNums = (state.slots || []).filter(s => isBoxActive(s) || Boolean(s && s.needsActivation)).map(s => Number(s.boxNumber));
 
   if (!Array.isArray(state.visibleBoxNumbers)) {
@@ -2363,12 +2567,7 @@ function renderDispenserRack() {
     const isScanning = state.shiftStatus === 'SCANNING_END_SHIFT';
     const isLastScanned = state.lastScannedSlot === slot.boxNumber;
 
-    // During End Shift scanning, dispenser boxes stay empty/hidden.
-    // When cashier scans the closing ticket of a box, THAT box activates on the rack with its sales count!
-    // Pending activation boxes are also shown so cashier can tap "Activate" to start the 2-step setup!
-    if (isScanning && !slot.scannedInEndShift && !slot.needsActivation) {
-      return;
-    }
+
 
     const card = document.createElement('div');
 
@@ -2397,7 +2596,7 @@ function renderDispenserRack() {
     const soldThisShift = calculateSlotSoldTickets(slot);
     const packCumulativeSold = calculatePackCumulativeSold(slot);
     const todaySold = calculateSlotTodaySold(slot, state);
-    const remainingInBox = Math.max(0, packSize - packCumulativeSold);
+    const remainingInBox = calculateSlotRemainingTickets(slot);
     const isNewActivationZeroSell = Boolean(
       packCumulativeSold === 0 ||
       (slot.activatedThisShift && packCumulativeSold === 0)
@@ -2417,13 +2616,11 @@ function renderDispenserRack() {
     } else if (isScanning && slot.scannedInEndShift) {
       displaySoldNumber = calculateSlotSoldTickets(slot);
     } else if (state.shiftStatus === 'IN_PROGRESS') {
-      displaySoldNumber = packCumulativeSold;
+      displaySoldNumber = calculateSlotSoldTickets(slot);
     } else if (state.shiftStatus === 'SHIFT_ENDED') {
-      displaySoldNumber = slot.scannedInEndShift ? (slot.ticketsSold || calculateSlotSoldTickets(slot)) : packCumulativeSold;
-    } else if (slot.ticketsSold > 0) {
-      displaySoldNumber = packCumulativeSold;
+      displaySoldNumber = slot.scannedInEndShift ? (slot.ticketsSold !== undefined ? slot.ticketsSold : calculateSlotSoldTickets(slot)) : calculateSlotSoldTickets(slot);
     } else {
-      displaySoldNumber = packCumulativeSold;
+      displaySoldNumber = calculateSlotSoldTickets(slot);
     }
 
     card.innerHTML = `
@@ -2444,7 +2641,7 @@ function renderDispenserRack() {
       </div>
       <div class="card-dashed-line"></div>
       <div class="card-footer-cluster ${isScanning ? 'is-scanning' : ''}">
-        ${(!isScanning && slot.needsActivation) ? `<button type="button" class="btn-card-activate" data-box="${slot.boxNumber}">Activate</button>` : ''}
+        ${slot.needsActivation ? `<button type="button" class="btn-card-activate" data-box="${slot.boxNumber}">Activate</button>` : ''}
         <span class="ticket-number-display ticket-sold-count ${isScanning ? 'scanning-num' : ''}">${displaySoldNumber}</span>
         <div style="display:none;">
           <div class="tile-ticket-info-top">
@@ -2459,13 +2656,13 @@ function renderDispenserRack() {
             <span class="count-total">of ${packSize}</span>
           </div>
         </div>
-        ${isScanning ? (slot.scannedInEndShift ? '<span class="card-scan-badge done" style="margin-top:4px;">✓ SCANNED</span>' : (slot.needsActivation ? '<span class="card-scan-badge pending" style="margin-top:4px;background:#2563eb;color:#fff;">ACTIVATE</span>' : '<span class="card-scan-badge pending" style="margin-top:4px;">SCAN</span>')) : ''}
+        ${(isScanning && !slot.needsActivation) ? (slot.scannedInEndShift ? '<span class="card-scan-badge done" style="margin-top:4px;">✓ SCANNED</span>' : '<span class="card-scan-badge pending" style="margin-top:4px;">SCAN</span>') : ''}
       </div>
     `;
 
     card.addEventListener('click', (e) => {
       const activateBtn = e.target.closest('.btn-card-activate');
-      if (activateBtn || (isScanning && slot.needsActivation)) {
+      if (activateBtn) {
         e.stopPropagation();
         if (isScanning) {
           handleActivateEndShiftSlot(slot);
@@ -2522,36 +2719,97 @@ function renderSlotsRibbon() {
   if (allBoxesMap) allBoxesMap.style.display = 'block';
 
   if (!slotsRibbon) return;
+
+  const stores = getStoresList();
+  const currentSid = getCurrentStoreId();
+  const currentStore = (stores || []).find(s => s.id === currentSid || s.storeId === currentSid) || DEFAULT_STORES.find(s => s.id === currentSid);
+  const configuredBoxes = Math.max(65, currentStore?.totalBoxes || 65);
+  if (!state.totalSlots || state.totalSlots < configuredBoxes || !Array.isArray(state.slots) || state.slots.length < configuredBoxes) {
+    sanitizeAndMigrateSlots();
+    saveState(state);
+  }
+
   slotsRibbon.innerHTML = '';
+
+  const isScanning = state.shiftStatus === 'SCANNING_END_SHIFT';
+  const activeSlots = (state.slots || []).filter(s => s && s.status === 'ACTIVE' && s.packNumber);
+  const scannedSlots = activeSlots.filter(s => s.scannedInEndShift);
+  const pendingCount = Math.max(0, activeSlots.length - scannedSlots.length);
+
+  // Header is strictly 'All 65 boxes' (or configured store boxes)
+  const mapTitle = allBoxesMap?.querySelector('.all-boxes-map-title');
+  const mapLegend = allBoxesMap?.querySelector('.all-boxes-map-legend');
+  const totalBoxCount = state.totalSlots || configuredBoxes;
+  if (mapTitle) {
+    mapTitle.textContent = `All ${totalBoxCount} boxes`;
+  }
+
+  if (isScanning) {
+    if (mapLegend) {
+      mapLegend.innerHTML = `
+        <div class="map-legend-item">
+          <span class="legend-swatch scanned"></span>
+          <span class="legend-label-text"><strong>${scannedSlots.length}</strong> Scanned</span>
+        </div>
+        <div class="map-legend-item">
+          <span class="legend-swatch pending-scan"></span>
+          <span class="legend-label-text"><strong>${pendingCount}</strong> Left to scan</span>
+        </div>
+        <div class="map-legend-item">
+          <span class="legend-swatch empty"></span>
+          <span class="legend-label-text">Empty</span>
+        </div>
+      `;
+    }
+  } else {
+    if (mapLegend) {
+      mapLegend.innerHTML = `
+        <div class="map-legend-item">
+          <span class="legend-swatch selling"></span>
+          <span class="legend-swatch older" style="display:none;"></span>
+          <span class="legend-label-text">Active book</span>
+        </div>
+        <div class="map-legend-item">
+          <span class="legend-swatch empty"></span>
+          <span class="legend-label-text">Empty &mdash; tap to activate a book</span>
+        </div>
+      `;
+    }
+  }
 
   state.slots.forEach(slot => {
     const cell = document.createElement('div');
-    const isScanning = state.shiftStatus === 'SCANNING_END_SHIFT';
     const isBoxEmpty = slot.status !== 'ACTIVE' || !slot.packNumber;
-
-    const isSelected = Boolean(state.shiftStatus === 'SCANNING_END_SHIFT' && state.lastScannedSlot === slot.boxNumber);
+    const isSelected = Boolean(isScanning && state.lastScannedSlot === slot.boxNumber);
     const daysActive = slot.daysActive || 0;
 
     if (!isBoxEmpty) {
-      if (isSelected) {
-        cell.className = 'ribbon-cell selected-slot';
-      } else if (daysActive >= 7) {
-        cell.className = 'ribbon-cell older-slot';
+      if (isScanning) {
+        if (slot.scannedInEndShift) {
+          cell.className = `ribbon-cell scanned-slot ${isSelected ? 'selected-slot' : ''}`;
+        } else {
+          cell.className = `ribbon-cell pending-scan-slot ${isSelected ? 'selected-slot' : ''}`;
+        }
       } else {
-        cell.className = 'ribbon-cell active-slot';
+        if (isSelected) {
+          cell.className = 'ribbon-cell selected-slot';
+        } else if (daysActive >= 7) {
+          cell.className = 'ribbon-cell older-slot';
+        } else {
+          cell.className = 'ribbon-cell active-slot';
+        }
       }
     } else {
       cell.className = `ribbon-cell empty-slot ${isSelected ? 'selected-slot' : ''}`;
+      if (isScanning && slot.boxNumber === 16 && isBoxEmpty && !isSelected) {
+        cell.classList.add('dashed-focus-slot');
+      }
     }
 
-    // Special dashed focus border (matching Box 16 in reference screenshot when scanning)
-    if (state.shiftStatus === 'SCANNING_END_SHIFT' && slot.boxNumber === 16 && isBoxEmpty && !isSelected) {
-      cell.classList.add('dashed-focus-slot');
-    }
-
+    // Pure number only, NO tick sign ✓
     cell.textContent = slot.boxNumber;
     cell.dataset.box = slot.boxNumber;
-    cell.title = `Box #${slot.boxNumber}: ${!isBoxEmpty ? `${slot.gameName || 'Active'} ($${slot.price || 0})` : 'Empty (Tap to load pack)'}`;
+    cell.title = `Box #${slot.boxNumber}: ${!isBoxEmpty ? `${slot.gameName || 'Active'} (${slot.price || 0})` : 'Empty (Tap to load pack)'}`;
 
     cell.addEventListener('click', () => {
       if (isBoxEmpty) {
@@ -2583,51 +2841,29 @@ function handleBoxCardClick(slot) {
   if (slot && slot.boxNumber) {
     bringBoxToVisibleRack(slot.boxNumber);
   }
-  const isBoxActive = Boolean(slot && slot.status === 'ACTIVE' && slot.packNumber);
+  const isBoxActive = Boolean(slot && slot.status === 'ACTIVE' && (slot.packNumber || slot.needsActivation));
 
   if (state.shiftStatus === 'SCANNING_END_SHIFT') {
+    // In End Shift verification mode: clicking/selecting a box must NEVER mark it scanned or increase verification count.
+    // Display actual ticket information and allow explicit cashier decisions (Sold Out, Return to Safe, Declare Out There).
     if (isBoxActive) {
-      const prevTicket = slot.currentTicket;
-      const prevScanned = slot.scannedInEndShift;
-      slot.scannedInEndShift = true;
-      const verifiedSold = calculateSlotSoldTickets(slot);
-      slot.ticketsSold = verifiedSold;
-      recordUndoAction({
-        type: 'VERIFY_END_SHIFT',
-        boxNumber: slot.boxNumber,
-        prevTicket: prevTicket,
-        prevScannedInEndShift: prevScanned
-      });
-      const cleanName = cleanGameTitle(slot.gameName);
       state.lastScannedSlot = slot.boxNumber;
-      const simBarcode = slot.packNumber ? `${slot.gameId || '1417'}-${slot.packNumber}-${String(slot.currentTicket || 0).padStart(3, '0')}` : `BOX-${slot.boxNumber}`;
-      state.lastScanData = {
-        barcode: simBarcode,
-        boxNumber: slot.boxNumber,
-        gameName: cleanName,
-        price: slot.price,
-        packNumber: slot.packNumber || '---',
-        ticketNumber: slot.currentTicket || 0,
-        soldCount: verifiedSold,
-        action: 'VERIFIED'
-      };
-      state.lastScannedBarcode = `[${simBarcode}] Box #${slot.boxNumber} Verified: $${Number(slot.price).toFixed(2)} · ${cleanName} (${verifiedSold} sold, #${String(slot.currentTicket || 0).padStart(2, '0')})`;
-      sfx.beep();
-      showToast(`✓ Box #${slot.boxNumber} Verified (${verifiedSold} sold, $${Number(slot.price).toFixed(2)} · ${cleanName})`, 'info');
-      saveState(state);
-      renderHeaderAndMetrics();
       renderDispenserRack();
       renderSlotsRibbon();
-    } else {
+      openEndShiftBoxReviewModal(slot);
+    } else if (slot && slot.needsActivation) {
+      handleActivateEndShiftSlot(slot);
+    } else if (slot && slot.boxNumber) {
       openActivationForBox(slot.boxNumber);
     }
+    return;
+  }
+
+  if (isBoxActive) {
+    // Open Box Adjust Modal so user can view details or adjust count or set to 0 (make empty)
+    openBoxAdjustModal(slot);
   } else {
-    if (isBoxActive) {
-      // Open Box Adjust Modal so user can view details or adjust count or set to 0 (make empty)
-      openBoxAdjustModal(slot);
-    } else {
-      openActivationForBox(slot.boxNumber);
-    }
+    openActivationForBox(slot.boxNumber);
   }
 }
 
@@ -2727,8 +2963,8 @@ function updateAdjustModalDynamicStats() {
   if (curr < 0) curr = 0;
   if (curr > packSize) curr = packSize;
 
-  const soldThisShift = Math.abs(curr - start);
-  const remainingInBox = Math.max(0, packSize - soldThisShift);
+  const soldThisShift = calculateSlotSoldTickets({ ...currentAdjustingSlot, startTicket: start, currentTicket: curr, packSize });
+  const remainingInBox = calculateSlotRemainingTickets({ ...currentAdjustingSlot, startTicket: start, currentTicket: curr, packSize });
   const price = currentAdjustingSlot.price || 0;
 
   const adjustSoldLabel = document.getElementById('adjustSoldLabel');
@@ -2751,19 +2987,19 @@ function renderBoxPackHistory(slot) {
 
   const currentTicket = slot.currentTicket !== undefined && slot.currentTicket !== null ? slot.currentTicket : 0;
   let startTicket = slot.startTicket !== undefined && slot.startTicket !== null ? slot.startTicket : 0;
-  const soldThisShift = Math.abs(currentTicket - startTicket);
-  const daysActive = slot.daysActive || 2;
+  const soldThisShift = calculateSlotSoldTickets(slot);
+  const daysActive = slot.daysActive || 0;
   const shiftNum = state.shiftNumber || 1;
-  const cashier = state.cashierName || 'master';
+  const cashier = state.cashierName || '—';
 
-  let lastShiftSummary = 'Yesterday 3:41 PM · Report v1 - Carlos';
+  let lastShiftSummary = 'No previous shift recorded';
   if (Array.isArray(state.shiftHistory) && state.shiftHistory.length > 0) {
     const lastShift = state.shiftHistory[state.shiftHistory.length - 1];
     const d = lastShift.endedAt ? new Date(lastShift.endedAt) : (lastShift.startedAt ? new Date(lastShift.startedAt) : null);
     if (d) {
       const dStr = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
       const tStr = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-      lastShiftSummary = `${dStr} ${tStr} · Report v${lastShift.shiftNumber || 1} - ${lastShift.cashier || 'Carlos'}`;
+      lastShiftSummary = `${dStr} ${tStr} · Report v${lastShift.shiftNumber || 1}${lastShift.cashier ? ' - ' + lastShift.cashier : ''}`;
     }
   }
 
@@ -2854,8 +3090,8 @@ function openBoxAdjustModal(slot) {
   }
 
   const cleanName = cleanGameTitle(slot.gameName);
-  const soldThisShift = Math.abs(currentTicket - startTicket);
-  const remainingInBox = Math.max(0, packSize - soldThisShift);
+  const soldThisShift = calculateSlotSoldTickets({ ...slot, startTicket, currentTicket, packSize });
+  const remainingInBox = calculateSlotRemainingTickets({ ...slot, startTicket, currentTicket, packSize });
   const soldAmt = (soldThisShift * (slot.price || 0)).toFixed(2);
   const leftAmt = (remainingInBox * (slot.price || 0)).toFixed(2);
   const daysActive = slot.daysActive || 1;
@@ -2880,7 +3116,7 @@ function openBoxAdjustModal(slot) {
   if (boxDetailGameName) boxDetailGameName.textContent = cleanName;
   if (boxDetailPrice) boxDetailPrice.textContent = `$${slot.price || 1}`;
   if (boxDetailSubtitle) {
-    boxDetailSubtitle.textContent = `Box ${slot.boxNumber} · Pack ${slot.packNumber || '935561'} · ${packSize} tickets per pack`;
+    boxDetailSubtitle.textContent = `Box ${slot.boxNumber} · Pack ${formatDisplayPackNumber(slot, '935561')} · ${packSize} tickets per pack`;
   }
   if (boxDetailNextTicket) {
     boxDetailNextTicket.textContent = `#${String(currentTicket).padStart(3, '0')}`;
@@ -3090,7 +3326,7 @@ function openBoxAdjustModal(slot) {
     rmPosInput.oninput = () => {
       let val = rmPosInput.value.replace(/\D/g, '');
       if (val.length > 3) {
-        const parsed = parseLotteryBarcode(val);
+        const parsed = parseLotteryBarcode(val, state.customGames, state.lotteryJurisdiction);
         if (parsed && parsed.isValid && typeof parsed.ticketNumber === 'number') {
           val = String(parsed.ticketNumber).padStart(3, '0');
         } else {
@@ -3298,10 +3534,10 @@ function openBoxAdjustModal(slot) {
 
       if (selectedRemoveReason === 'Returned') {
         sfx.success?.();
-        showToast(`↩️ Pack ${packNum} returned from Box ${boxNum} to In-Stock Inventory (${remainingCount} tickets left). Box is now empty.`, 'success');
+        showToast(`↩️ Pack ${formatDisplayPackNumber(packNum)} returned from Box ${boxNum} to In-Stock Inventory (${remainingCount} tickets left). Box is now empty.`, 'success');
       } else {
         sfx.alert?.();
-        showToast(`✓ Removed Pack ${packNum} from Box ${boxNum} (${selectedRemoveReason}) at ticket #${String(rmTicket).padStart(3, '0')}. Box is now empty.`, 'warn');
+        showToast(`✓ Removed Pack ${formatDisplayPackNumber(packNum)} from Box ${boxNum} (${selectedRemoveReason}) at ticket #${String(rmTicket).padStart(3, '0')}. Box is now empty.`, 'warn');
       }
     };
   }
@@ -3361,7 +3597,7 @@ function openBoxAdjustModal(slot) {
       if (typeof renderInventoryTable === 'function') renderInventoryTable();
       boxAdjustModal.close();
       sfx.success?.();
-      showToast(`✓ Updated Book details for ${newName} (Pack ${currentAdjustingSlot.packNumber || ''}).`, 'success');
+      showToast(`✓ Updated Book details for ${newName} (Pack ${formatDisplayPackNumber(currentAdjustingSlot.packNumber, '')}).`, 'success');
     };
   }
 
@@ -3408,7 +3644,7 @@ function openBoxAdjustModal(slot) {
     adjustPriceTag.textContent = `$${slot.price}`;
   }
   if (adjustPriceTag) adjustPriceTag.className = `price-tag p${slot.price}`;
-  if (adjustPackNum) adjustPackNum.textContent = `#${slot.packNumber || '884901'}`;
+  if (adjustPackNum) adjustPackNum.textContent = `#${formatDisplayPackNumber(slot, '884901')}`;
   if (adjustPackSize) adjustPackSize.textContent = `${packSize} pk`;
   if (adjustStartTicket) adjustStartTicket.textContent = `#${String(startTicket).padStart(2, '0')}`;
   if (adjustDaysActive) adjustDaysActive.textContent = `${daysActive} Day${daysActive === 1 ? '' : 's'}`;
@@ -3460,7 +3696,7 @@ export function openInStockDetailModal(item) {
   if (boxDetailBoxNumText) boxDetailBoxNumText.textContent = 'Stock';
   if (boxDetailGameName) boxDetailGameName.textContent = cleanName;
   if (boxDetailSubtitle) {
-    boxDetailSubtitle.textContent = `Pack ${item.packNumber} · $${price} a ticket · ${packSize} tickets per pack`;
+    boxDetailSubtitle.textContent = `Pack ${formatDisplayPackNumber(item)} · $${price} a ticket · ${packSize} tickets per pack`;
   }
 
   // Stats
@@ -3548,6 +3784,10 @@ export function openInStockDetailModal(item) {
       targetSlot.ticketsInBox = Math.max(0, packSize - curVal);
       targetSlot.activatedThisShift = true;
       targetSlot.daysActive = 1;
+      targetSlot.jurisdiction = normalizeLotteryJurisdiction(item.jurisdiction || state.lotteryJurisdiction);
+      targetSlot.checkDigit = item.checkDigit || null;
+      targetSlot.basePackNumber = item.basePackNumber || item.packNumber;
+      targetSlot.packCombined = item.packCombined || (item.checkDigit ? `${item.packNumber}-${item.checkDigit}` : item.packNumber);
       targetSlot.scannedBarcodes = [];
       targetSlot.soldBarcodes = [];
       targetSlot.ticketsSold = 0;
@@ -3622,7 +3862,7 @@ export function openInStockDetailModal(item) {
       if (typeof renderInventoryStatusModal === 'function') renderInventoryStatusModal();
       boxAdjustModal.close();
       sfx.success?.();
-      showToast(`✓ Updated Book details for ${newName} (Pack ${item.packNumber}).`, 'success');
+      showToast(`✓ Updated Book details for ${newName} (Pack ${formatDisplayPackNumber(item)}).`, 'success');
     };
   }
 
@@ -3712,7 +3952,7 @@ export function openInStockDetailModal(item) {
         if (typeof renderInventoryStatusModal === 'function') renderInventoryStatusModal();
         boxAdjustModal.close();
         sfx.success?.();
-        showToast(`✓ Pack ${item.packNumber} (${cleanName}) is saved In-Stock in inventory.`, 'success');
+        showToast(`✓ Pack ${formatDisplayPackNumber(item)} (${cleanName}) is saved In-Stock in inventory.`, 'success');
       } else {
         if (Array.isArray(state.inStockInventory)) {
           state.inStockInventory = state.inStockInventory.filter(p => String(p.packNumber) !== String(item.packNumber));
@@ -3745,7 +3985,7 @@ export function openInStockDetailModal(item) {
         if (typeof renderInventoryStatusModal === 'function') renderInventoryStatusModal();
         boxAdjustModal.close();
         sfx.alert?.();
-        showToast(`✓ Removed Pack ${item.packNumber} (${selectedInStockRemoveReason}) from inventory.`, 'warn');
+        showToast(`✓ Removed Pack ${formatDisplayPackNumber(item)} (${selectedInStockRemoveReason}) from inventory.`, 'warn');
       }
     };
   }
@@ -3805,7 +4045,7 @@ function openChangeTicketValueModal(slot) {
 
   const currentPrice = slot.price || 1;
   const currentName = cleanGameTitle(slot.gameName || 'Scratch-Off Game');
-  const cleanPack = String(slot.packNumber || '---').replace(/[^0-9]/g, '') || '---';
+  const cleanPack = formatDisplayPackNumber(slot, '---');
 
   if (title) title.textContent = `Change Ticket Value (Box #${slot.boxNumber})`;
   if (currentGame) currentGame.textContent = currentName;
@@ -3903,7 +4143,7 @@ function openReturnPackModal(slot) {
     if (curr > packSize) curr = packSize;
     if (curr < 0) curr = 0;
 
-    const sold = Math.abs(curr - start);
+    const sold = calculateSlotSoldTickets({ ...slot, startTicket: start, currentTicket: curr, packSize });
     const returned = Math.max(0, packSize - sold);
     const price = slot.price || 0;
     const soldAmt = sold * price;
@@ -3917,14 +4157,14 @@ function openReturnPackModal(slot) {
     if (returnPackBoxBadge) returnPackBoxBadge.textContent = slot.boxNumber;
     if (returnPackModalTitle) returnPackModalTitle.textContent = `Take ${cleanName} off the rack`;
     if (returnPackModalSubtitle) {
-      returnPackModalSubtitle.textContent = `Box ${slot.boxNumber} · Pack ${slot.packNumber || '---'} · ${returned} tickets left ($${returnedAmt.toFixed(2)})`;
+      returnPackModalSubtitle.textContent = `Box ${slot.boxNumber} · Pack ${formatDisplayPackNumber(slot, '---')} · ${returned} tickets left ($${returnedAmt.toFixed(2)})`;
     }
 
     const headerBox = document.getElementById('returnPackBoxNumHeader');
     if (headerBox) headerBox.textContent = slot.boxNumber;
 
     if (returnPackGameTitle) returnPackGameTitle.textContent = cleanName;
-    if (returnPackSerial) returnPackSerial.textContent = slot.packNumber || '---';
+    if (returnPackSerial) returnPackSerial.textContent = formatDisplayPackNumber(slot, '---');
     if (returnPackBoxNum) returnPackBoxNum.textContent = slot.boxNumber;
     if (returnPackPriceTag) {
       returnPackPriceTag.textContent = `$${price}`;
@@ -4004,7 +4244,7 @@ function handleConfirmReturnPack() {
     if (curr > packSize) curr = packSize;
     if (curr < 0) curr = 0;
 
-    const sold = Math.abs(curr - start);
+    const sold = calculateSlotSoldTickets({ ...slot, startTicket: start, currentTicket: curr, packSize });
     const returned = Math.max(0, packSize - sold);
     const price = slot.price || 0;
     const soldAmt = sold * price;
@@ -4108,7 +4348,7 @@ function handleConfirmPartialTakeOut() {
     if (curr > packSize) curr = packSize;
     if (curr < 0) curr = 0;
 
-    const sold = Math.abs(curr - start);
+    const sold = calculateSlotSoldTickets({ ...slot, startTicket: start, currentTicket: curr, packSize });
     const availableTix = Math.max(0, packSize - sold);
     const price = slot.price || 0;
     const soldAmt = sold * price;
@@ -4187,7 +4427,7 @@ function handleConfirmPartialTakeOut() {
     renderInventoryTable();
     if (typeof renderInventoryStatusModal === 'function') renderInventoryStatusModal();
 
-    showToast(`📦 Partial Take Out: ${ptoCount} tickets of Pack #${ptoRecord.packNumber} kept in store inventory (Not For Sale). Box #${ptoRecord.fromBoxNumber} is now empty.`, 'success');
+    showToast(`📦 Partial Take Out: ${ptoCount} tickets of Pack #${formatDisplayPackNumber(ptoRecord.packNumber)} kept in store inventory (Not For Sale). Box #${ptoRecord.fromBoxNumber} is now empty.`, 'success');
   } catch (err) {
     console.error('Partial Take Out Error:', err);
     sfx.alert();
@@ -4213,7 +4453,7 @@ function openPartialTakeOutActionModal(pto, rawBarcode = '', parsedTicket = null
   if (titleEl) titleEl.textContent = cleanGameTitle(pto.gameName);
 
   const packEl = document.getElementById('ptoScannedPackNumber');
-  if (packEl) packEl.textContent = pto.packNumber;
+  if (packEl) packEl.textContent = formatDisplayPackNumber(pto.packNumber);
 
   const tixEl = document.getElementById('ptoScannedTicketNumber');
   if (tixEl) tixEl.textContent = String(tixNum).padStart(2, '0');
@@ -4304,14 +4544,14 @@ function handlePtoActivate() {
   renderInventoryTable();
   if (typeof renderInventoryStatusModal === 'function') renderInventoryStatusModal();
 
-  showToast(`✓ Pack #${pto.packNumber} activated into Box #${targetBox} at ticket #${String(slot.currentTicket).padStart(2, '0')}. Now ON SALE!`, 'success');
+  showToast(`✓ Pack #${formatDisplayPackNumber(pto.packNumber)} activated into Box #${targetBox} at ticket #${String(slot.currentTicket).padStart(2, '0')}. Now ON SALE!`, 'success');
   currentPtoActionItem = null;
 }
 
 function handlePtoDelete() {
   if (!currentPtoActionItem) return;
   const pto = currentPtoActionItem;
-  if (!confirm(`Are you sure you want to permanently delete/discard partial pack #${pto.packNumber} (${pto.ticketsCount} tickets) from inventory?`)) {
+  if (!confirm(`Are you sure you want to permanently delete/discard partial pack #${formatDisplayPackNumber(pto.packNumber)} (${pto.ticketsCount} tickets) from inventory?`)) {
     return;
   }
 
@@ -4750,10 +4990,6 @@ function setupBoxAdjustModal() {
       if (isStarting) {
         currentAdjustingSlot.startTicket = newCount;
         currentAdjustingSlot.currentTicket = newCount;
-        if (!(currentAdjustingSlot.packCumulativeSoldBase > 0) && !(currentAdjustingSlot.previousShiftSold > 0)) {
-          currentAdjustingSlot.packStartTicket = newCount;
-          currentAdjustingSlot.packCumulativeSold = 0;
-        }
         currentAdjustingSlot.status = 'ACTIVE';
         currentAdjustingSlot.activatedThisShift = (newCount === 0);
         showToast(`✓ Box #${currentAdjustingSlot.boxNumber} set to start at Ticket #${String(newCount).padStart(2, '0')} (0 sold this shift)`, 'success');
@@ -4831,17 +5067,8 @@ function handleConfirmSwitchBox() {
     targetSlot = state.slots.find(s => s.boxNumber === targetBoxNum);
   }
 
-  // Swap all pack data between currentAdjustingSlot and targetSlot
-  const fields = [
-    'status', 'gameId', 'gameName', 'price', 'packNumber', 'packSize',
-    'startTicket', 'currentTicket', 'ticketsInBox', 'scannedBarcodes',
-    'activatedThisShift', 'daysActive', 'scannedInEndShift'
-  ];
-  fields.forEach(f => {
-    const tmp = currentAdjustingSlot[f];
-    currentAdjustingSlot[f] = targetSlot[f];
-    targetSlot[f] = tmp;
-  });
+  // Swap all pack data & metadata between currentAdjustingSlot and targetSlot
+  swapSlotPackData(currentAdjustingSlot, targetSlot);
 
   saveState(state);
   sfx.success();
@@ -4872,7 +5099,7 @@ function openChangeBoxModal(slot) {
   if (pricePill) pricePill.textContent = `$${price}`;
   if (packTitle) packTitle.textContent = cleanName;
   if (packSub) {
-    packSub.textContent = `Pack ${slot.packNumber || '550840'} · ${packSize} tickets · $${packBookVal} pack`;
+    packSub.textContent = `Pack ${formatDisplayPackNumber(slot, '550840')} · ${packSize} tickets · $${packBookVal} pack`;
   }
   if (changeBoxSourceInfo) {
     changeBoxSourceInfo.textContent = `Box #${slot.boxNumber} · ${cleanName}`;
@@ -4955,32 +5182,10 @@ function handleConfirmChangeBox() {
     return;
   }
 
-  // Move pack data from currentAdjustingSlot to targetSlot
-  const fields = [
-    'status', 'gameId', 'gameName', 'price', 'packNumber', 'packSize',
-    'startTicket', 'currentTicket', 'ticketsInBox', 'scannedBarcodes',
-    'activatedThisShift', 'daysActive', 'scannedInEndShift'
-  ];
-  fields.forEach(f => {
-    targetSlot[f] = currentAdjustingSlot[f];
-  });
+  // Move pack data & metadata from currentAdjustingSlot to targetSlot and clear source
+  moveSlotPackData(currentAdjustingSlot, targetSlot);
 
   const fromBox = currentAdjustingSlot.boxNumber;
-
-  // Reset source slot to EMPTY
-  currentAdjustingSlot.status = 'EMPTY';
-  currentAdjustingSlot.gameId = null;
-  currentAdjustingSlot.gameName = null;
-  currentAdjustingSlot.price = null;
-  currentAdjustingSlot.packNumber = null;
-  currentAdjustingSlot.packSize = null;
-  currentAdjustingSlot.startTicket = 0;
-  currentAdjustingSlot.currentTicket = 0;
-  currentAdjustingSlot.ticketsInBox = 0;
-  currentAdjustingSlot.scannedBarcodes = [];
-  currentAdjustingSlot.activatedThisShift = false;
-  currentAdjustingSlot.daysActive = 0;
-  currentAdjustingSlot.scannedInEndShift = false;
 
   saveState(state);
   sfx.success();
@@ -5092,10 +5297,6 @@ function handleConfirmFixTicketPosition() {
   if (currentAdjustingSlot.currentTicket === currentAdjustingSlot.startTicket || currentAdjustingSlot.activatedThisShift) {
     currentAdjustingSlot.startTicket = newPos;
     currentAdjustingSlot.currentTicket = newPos;
-    if (!(currentAdjustingSlot.packCumulativeSoldBase > 0) && !(currentAdjustingSlot.previousShiftSold > 0)) {
-      currentAdjustingSlot.packStartTicket = newPos;
-      currentAdjustingSlot.packCumulativeSold = 0;
-    }
     currentAdjustingSlot.activatedThisShift = (newPos === 0);
   } else {
     currentAdjustingSlot.currentTicket = newPos;
@@ -5136,14 +5337,14 @@ function showCalculatingSpinner(title, subtext, onDone, duration = 1200) {
   if (!calculatingSpinnerModal.open) {
     try {
       calculatingSpinnerModal.showModal();
-    } catch (_) { }
+    } catch (_) {}
   }
   setTimeout(() => {
     try {
       if (calculatingSpinnerModal.open) {
         calculatingSpinnerModal.close();
       }
-    } catch (_) { }
+    } catch (_) {}
     if (onDone) onDone();
   }, duration);
 }
@@ -5633,7 +5834,7 @@ function openActivationForBox(boxNumber, preselectedPack = null) {
 }
 
 function findFirstEmptyBox() {
-  const empty = (state.slots || []).find(s => s.status !== 'ACTIVE' || !s.packNumber);
+  const empty = (state.slots || []).find(s => (s.status !== 'ACTIVE' && !s.needsActivation) || !s.packNumber);
   return empty ? Number(empty.boxNumber) : ((state.slots?.length || 0) + 1);
 }
 
@@ -5746,7 +5947,7 @@ function setupKeypad() {
         saveState(state);
       }
     }
-    showToast(`✓ Pack #${pendingActivationPack?.packNumber || '0000'} added to In-Stock inventory.`, 'success');
+    showToast(`✓ Pack #${pendingActivationPack?.packNumber ? formatDisplayPackNumber(pendingActivationPack.packNumber) : '0000'} added to In-Stock inventory.`, 'success');
   });
 
   closeActivationBtn.addEventListener('click', () => {
@@ -5865,6 +6066,10 @@ function commitBoxActivation() {
   targetSlot.gameName = cleanName;
   targetSlot.price = chosenPrice;
   targetSlot.packNumber = chosenPack;
+  targetSlot.jurisdiction = normalizeLotteryJurisdiction(pack.jurisdiction || state.lotteryJurisdiction);
+  targetSlot.checkDigit = pack.checkDigit || null;
+  targetSlot.basePackNumber = pack.basePackNumber || chosenPack;
+  targetSlot.packCombined = pack.packCombined || (pack.checkDigit ? `${chosenPack}-${pack.checkDigit}` : chosenPack);
   targetSlot.barcodePrefix = pack.barcodePrefix || pack.gameNumber || (pack.gameId ? String(pack.gameId).replace(/[^0-9]/g, '') : '');
   const actSec = pack.securityCode || null;
   if (actSec) {
@@ -5890,7 +6095,7 @@ function commitBoxActivation() {
 
   state.lastScannedSlot = boxNum;
   bringBoxToVisibleRack(boxNum);
-  state.lastScannedBarcode = `Box #${boxNum} Activated: $${Number(chosenPrice).toFixed(2)} · ${cleanName} (Pack #${chosenPack})`;
+  state.lastScannedBarcode = `Box #${boxNum} Activated: $${Number(chosenPrice).toFixed(2)} · ${cleanName} (Pack #${formatDisplayPackNumber(chosenPack)})`;
 
   // Clear the dataCleared flag since user is now actively using the system
   if (state.dataCleared) delete state.dataCleared;
@@ -5941,11 +6146,11 @@ function quickSellTicket(slot, barcodeScanned = null, skipIncrement = false, exp
   }
   state.lastScannedSlot = slot.boxNumber;
   bringBoxToVisibleRack(slot.boxNumber);
-  const parsedBarcode = barcodeScanned ? parseLotteryBarcode(barcodeScanned, state.customGames) : null;
+  const parsedBarcode = barcodeScanned ? parseLotteryBarcode(barcodeScanned, state.customGames, state.lotteryJurisdiction) : null;
   const effectiveSec = (parsedBarcode && parsedBarcode.securityCode) || slot.securityCode || '000';
   const secSuffix = effectiveSec ? `(${effectiveSec})` : '';
   const displayBarcode = barcodeScanned
-    ? formatLotteryBarcode(barcodeScanned, state.customGames, effectiveSec)
+    ? formatLotteryBarcode(barcodeScanned, state.customGames, effectiveSec, state.lotteryJurisdiction)
     : (slot.packNumber ? `${slot.barcodePrefix || slot.gameId || '1417'}-${slot.packNumber}-${String(slot.currentTicket).padStart(3, '0')} (${effectiveSec})` : `BOX-${slot.boxNumber}`);
   const bcPrefix = `[${displayBarcode}] `;
   const padLen = (slot.packSize || 100) >= 100 ? 3 : 2;
@@ -6081,10 +6286,15 @@ function handleUndoAction() {
       showToast(`↩️ Undid adjustment on Box #${slot.boxNumber}.`, 'info');
     }
   } else if (action.type === 'VERIFY_END_SHIFT') {
-    const slot = state.slots.find(s => s.boxNumber === action.boxNumber);
+    const slot = state.slots.find(s => Number(s.boxNumber) === Number(action.boxNumber));
     if (slot) {
-      slot.scannedInEndShift = action.prevScannedInEndShift;
+      slot.scannedInEndShift = Boolean(action.prevScannedInEndShift);
       slot.currentTicket = action.prevTicket;
+      if (!slot.scannedInEndShift) {
+        slot.ticketsSold = 0;
+      } else {
+        slot.ticketsSold = calculateSlotSoldTickets(slot);
+      }
       saveState(state);
       sfx.keypad();
       renderHeaderAndMetrics();
@@ -6152,10 +6362,13 @@ function executeTrimRack() {
     }
   });
 
-  const targetSlots = Math.max(20, highestActiveBox);
+  const stores = getStoresList();
+  const currentStore = (stores || []).find(s => s.id === state.storeId || s.storeId === state.storeId) || DEFAULT_STORES.find(s => s.id === state.storeId);
+  const configuredBoxes = Math.max(65, currentStore?.totalBoxes || 65);
+  const targetSlots = Math.max(configuredBoxes, highestActiveBox);
   if (state.totalSlots <= targetSlots) {
     sfx.alert();
-    showToast(`Rack is already trimmed to ${targetSlots} boxes (preserving all active boxes).`, 'info');
+    showToast(`Rack is already at ${targetSlots} boxes (preserving store capacity and active boxes).`, 'info');
     return;
   }
 
@@ -6255,6 +6468,87 @@ function addNewBox() {
 // -------------------------------------------------------------
 // Shift Management Workflows
 // -------------------------------------------------------------
+// End Shift Box & Ticket Review Modal (Click to inspect, manual dispositions)
+// -------------------------------------------------------------
+let currentEndShiftReviewSlot = null;
+
+function openEndShiftBoxReviewModal(slot) {
+  if (!slot) return;
+  currentEndShiftReviewSlot = slot;
+  const modal = document.getElementById('endShiftTicketReviewModal');
+  if (!modal) return;
+
+  const std = getStandardPackDetails(slot.price || 2);
+  const packSize = slot.packSize || std.packSize || 100;
+  const gameName = cleanGameTitle(slot.gameName || 'Scratch Off');
+  const gameNum = slot.gameId || (slot.packNumber ? String(slot.packNumber).split('-')[0] : '---');
+  const price = slot.price || 1;
+  const packNum = formatDisplayPackNumber(slot, '---');
+  const boxNum = slot.boxNumber || 1;
+  const currTicket = slot.currentTicket !== undefined ? slot.currentTicket : 0;
+  const startTicket = slot.startTicket !== undefined ? slot.startTicket : 0;
+  const soldThisShift = calculateSlotSoldTickets(slot);
+  const shiftNum = state.shiftNumber || 1;
+  const cumulativeSold = (slot.packCumulativeSoldBase || 0) + (slot.scannedInEndShift ? soldThisShift : 0);
+
+  const titleEl = document.getElementById('esrModalTitle');
+  if (titleEl) titleEl.textContent = `Box #${boxNum} · ${gameName}`;
+
+  const setEl = (id, val) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = String(val);
+  };
+  setEl('esrGameName', gameName);
+  setEl('esrGameNumber', gameNum);
+  setEl('esrPrice', `${price}`);
+  setEl('esrPackNumber', packNum);
+  setEl('esrBoxNumber', `#${boxNum}`);
+  setEl('esrPackSize', packSize);
+  setEl('esrCurrentTicket', `#${String(currTicket).padStart(3, '0')}`);
+  setEl('esrCumulativeSold', cumulativeSold);
+  setEl('esrShiftInfo', `Shift #${shiftNum} · Start #${String(startTicket).padStart(3, '0')} · Sold: ${slot.scannedInEndShift ? soldThisShift : 0}`);
+
+  const statusEl = document.getElementById('esrVerificationStatus');
+  const unscannedActions = document.getElementById('esrUnscannedActions');
+  const scannedActions = document.getElementById('esrScannedActions');
+
+  if (slot.scannedInEndShift) {
+    if (statusEl) {
+      statusEl.textContent = 'VERIFIED / SCANNED';
+      statusEl.style.background = '#10b981';
+      statusEl.style.color = '#fff';
+    }
+    if (unscannedActions) unscannedActions.style.display = 'none';
+    if (scannedActions) scannedActions.style.display = 'flex';
+  } else if (slot.declaredOutThere) {
+    if (statusEl) {
+      statusEl.textContent = 'MANUALLY DECLARED OUT THERE — NOT SCANNED';
+      statusEl.style.background = '#f59e0b';
+      statusEl.style.color = '#fff';
+    }
+    if (unscannedActions) unscannedActions.style.display = 'flex';
+    if (scannedActions) scannedActions.style.display = 'none';
+  } else if (slot.needsActivation) {
+    if (statusEl) {
+      statusEl.textContent = 'PENDING ACTIVATION';
+      statusEl.style.background = '#2563eb';
+      statusEl.style.color = '#fff';
+    }
+    if (unscannedActions) unscannedActions.style.display = 'flex';
+    if (scannedActions) scannedActions.style.display = 'none';
+  } else {
+    if (statusEl) {
+      statusEl.textContent = 'UNSCANNED';
+      statusEl.style.background = '#64748b';
+      statusEl.style.color = '#fff';
+    }
+    if (unscannedActions) unscannedActions.style.display = 'flex';
+    if (scannedActions) scannedActions.style.display = 'none';
+  }
+
+  sfx.keypad();
+  modal.showModal();
+}
 
 function executeGetReportWithLoading() {
   // Block report if any boxes still need activation
@@ -6262,20 +6556,12 @@ function executeGetReportWithLoading() {
   if (pendingActivation.length > 0) {
     sfx.alert();
     const boxNums = pendingActivation.map(s => '#' + s.boxNumber).join(', ');
-    showToast(`⚠️ ${pendingActivation.length} ticket${pendingActivation.length > 1 ? 's' : ''} need activation (Box ${boxNums}). Tap Activate on each box first.`, 'error');
+    showToast(`Cannot generate report: Box ${boxNums} needs activation first.`, 'error', 'Tap Activate on each box first');
     return;
   }
 
-  sfx.beep();
-  const toastEndShift = document.getElementById('endShiftScanningToast');
-  if (toastEndShift) toastEndShift.style.setProperty('display', 'none', 'important');
-
-  const modal = document.getElementById('endShiftConfirmModal');
-  if (modal && modal.open) modal.close();
-
-  showCalculatingSpinner('Calculating', 'Generating Georgia Lottery Report...', () => {
-    confirmEndShift();
-  }, 1200);
+  // Open Step 1 (Activations & Empty Slots) manual-entry review
+  openEndShiftConfirmation();
 }
 
 function handleMainShiftAction() {
@@ -6307,8 +6593,38 @@ function handleMainShiftAction() {
   }
 }
 
+function updateManualTotalSalesPreview() {
+  const inputScratch = document.getElementById('inputManualScratchSales');
+  const inputOnline = document.getElementById('inputManualOnlineSales');
+  const inputCashes = document.getElementById('confTerminalCashes');
+  const inputOnlineCashes = document.getElementById('confTerminalOnlineCashes');
+
+  const sVal = parseFloat(inputScratch ? inputScratch.value : 0) || 0;
+  const oVal = parseFloat(inputOnline ? inputOnline.value : 0) || 0;
+  const cVal = parseFloat(inputCashes ? inputCashes.value : 0) || 0;
+  const ocVal = parseFloat(inputOnlineCashes ? inputOnlineCashes.value : 0) || 0;
+
+  const totalSales = sVal + oVal;
+  const totalCashes = cVal + ocVal;
+  const netDrop = totalSales - totalCashes;
+
+  const fmt = val => '$' + (Number(val) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  const salesEl = document.getElementById('manualTotalSalesPreview');
+  if (salesEl) salesEl.textContent = fmt(totalSales);
+
+  const cashesEl = document.getElementById('manualTotalCashesPreview');
+  if (cashesEl) cashesEl.textContent = fmt(totalCashes);
+
+  const dropEl = document.getElementById('manualNetDropPreview');
+  if (dropEl) dropEl.textContent = fmt(netDrop);
+
+  const confTo = document.getElementById('confTerminalOnline');
+  if (confTo && inputOnline) confTo.value = inputOnline.value;
+}
+window.updateManualTotalSalesPreview = updateManualTotalSalesPreview;
+
 function openEndShiftConfirmation() {
-  const isBoxActive = s => Boolean(s && s.status === 'ACTIVE' && s.packNumber);
   const activeCount = state.slots.filter(isBoxActive).length;
   const activations = state.slots.filter(s => isBoxActive(s) && s.activatedThisShift).length;
   const emptySlots = state.totalSlots - activeCount;
@@ -6356,24 +6672,51 @@ function openEndShiftConfirmation() {
     }
   });
 
-  const confTitle = document.getElementById('endShiftModalTitleText');
-  if (confTitle) confTitle.textContent = 'Check before closing the shift';
-  const confSub = document.getElementById('endShiftModalSubtitle');
-  if (confSub) confSub.textContent = 'Count the boxes on your dispenser that are not green. It should match Empty slots.';
-  const confConfirmBtn = document.getElementById('confConfirmBtn');
-  if (confConfirmBtn) {
-    const span = confConfirmBtn.querySelector('span');
-    if (span) span.textContent = 'Confirm';
-  }
+  // Switch to Step 1 view by default
+  const step1View = document.getElementById('endShiftStep1View');
+  const step2View = document.getElementById('endShiftStep2View');
+  if (step1View) step1View.style.display = 'block';
+  if (step2View) step2View.style.display = 'none';
 
-  const confActiveSlotsCount = document.getElementById('confActiveSlotsCount');
-  if (confActiveSlotsCount) confActiveSlotsCount.textContent = activeCount;
-  const confActivationCount = document.getElementById('confActivationCount');
-  if (confActivationCount) confActivationCount.textContent = activations;
-  const confEmptySlotsCount = document.getElementById('confEmptySlotsCount');
-  if (confEmptySlotsCount) confEmptySlotsCount.textContent = emptySlots;
+  // Step 1: Pre-fill manual activations & empty slots (preserved across nav)
+  const inputAct = document.getElementById('inputManualActivations');
+  if (inputAct) {
+    inputAct.value = (state.manualActivations !== undefined && state.manualActivations !== null)
+      ? String(state.manualActivations)
+      : String(activations);
+  }
+  const confAct = document.getElementById('confActivationCount');
+  if (confAct) confAct.textContent = String(activations);
+
+  const inputEmpty = document.getElementById('inputManualEmptySlots');
+  if (inputEmpty) {
+    inputEmpty.value = (state.manualEmptySlots !== undefined && state.manualEmptySlots !== null)
+      ? String(state.manualEmptySlots)
+      : String(emptySlots);
+  }
+  const confEmpty = document.getElementById('confEmptySlotsCount');
+  if (confEmpty) confEmpty.textContent = String(emptySlots);
+
   const confTotalSlots = document.getElementById('confTotalSlots');
   if (confTotalSlots) confTotalSlots.textContent = state.totalSlots || 65;
+
+  // Step 2: Pre-fill manual scratch-off and online sales (preserved across nav)
+  const inputScratch = document.getElementById('inputManualScratchSales');
+  if (inputScratch) {
+    if (state.manualScratchOffSales !== undefined && state.manualScratchOffSales !== null && state.manualScratchOffSales !== '') {
+      inputScratch.value = String(state.manualScratchOffSales);
+    } else {
+      const { totalRevenue } = (typeof getShiftSalesTotals === 'function' ? getShiftSalesTotals() : { totalRevenue: 0 });
+      inputScratch.value = totalRevenue > 0 ? totalRevenue.toFixed(2) : '';
+    }
+  }
+  const inputOnline = document.getElementById('inputManualOnlineSales');
+  if (inputOnline) {
+    inputOnline.value = (state.manualOnlineSales !== undefined && state.manualOnlineSales !== null && state.manualOnlineSales !== '')
+      ? String(state.manualOnlineSales)
+      : (state.onlineSales ? String(state.onlineSales) : '');
+  }
+  updateManualTotalSalesPreview();
 
   const confSoldOutCount = document.getElementById('confSoldOutCount');
   if (confSoldOutCount) confSoldOutCount.textContent = soldOutItems.length;
@@ -6400,6 +6743,8 @@ function openEndShiftConfirmation() {
   const tcEl = document.getElementById('confTerminalCashes');
   if (tcEl) tcEl.value = (state.cashes !== undefined && state.cashes !== null && state.cashes !== 0) ? String(state.cashes) : '';
 
+  updateManualTotalSalesPreview();
+
   sfx.keypad();
   const toastEndShift = document.getElementById('endShiftScanningToast');
   if (toastEndShift) toastEndShift.style.setProperty('display', 'none', 'important');
@@ -6407,13 +6752,59 @@ function openEndShiftConfirmation() {
   if (modal) modal.showModal();
 }
 
-function confirmEndShift() {
-  const rawOnline = document.getElementById('confTerminalOnline')?.value ?? document.getElementById('terminalInputOnline')?.value;
+let _isGeneratingEndShiftReport = false;
+
+function parseExplicitCurrencyInput(val, fallback = 0) {
+  if (val === null || val === undefined) return fallback;
+  const trimmed = String(val).trim();
+  if (trimmed === '') return fallback;
+  const num = parseFloat(trimmed);
+  return isNaN(num) ? fallback : num;
+}
+
+export function executeEndShiftFinalReportWorkflow() {
+  if (_isGeneratingEndShiftReport) return;
+  _isGeneratingEndShiftReport = true;
+
+  const btn = document.getElementById('confConfirmBtn');
+  if (btn) btn.disabled = true;
+
+  // 1. Capture Step 2 manual reconciliation inputs (strictly preserving explicit 0 values)
+  const rawOnline = document.getElementById('inputManualOnlineSales')?.value ?? document.getElementById('confTerminalOnline')?.value ?? document.getElementById('terminalInputOnline')?.value;
   const rawOnlineCashes = document.getElementById('confTerminalOnlineCashes')?.value ?? document.getElementById('terminalInputOc')?.value;
   const rawCashes = document.getElementById('confTerminalCashes')?.value ?? document.getElementById('terminalInputCashes')?.value;
-  state.onlineSales = parseFloat(rawOnline) || 0;
-  state.onlineCashes = parseFloat(rawOnlineCashes) || 0;
-  state.cashes = parseFloat(rawCashes) || 0;
+
+  state.onlineSales = parseExplicitCurrencyInput(rawOnline, (state.manualOnlineSales !== undefined && state.manualOnlineSales !== null) ? Number(state.manualOnlineSales) : 0);
+  state.onlineCashes = parseExplicitCurrencyInput(rawOnlineCashes, 0);
+  state.cashes = parseExplicitCurrencyInput(rawCashes, 0);
+
+  // 2. Close confirmation modal before displaying animation
+  const modal = document.getElementById('endShiftConfirmModal');
+  if (modal && modal.open) modal.close();
+
+  // 3. Select jurisdiction-specific report message
+  const reportSubtext = (state.lotteryJurisdiction === 'SC')
+    ? 'Generating South Carolina Lottery Report...'
+    : 'Generating Georgia Lottery Report...';
+
+  // 4. Display calculating animation; execute report generation only on completion
+  showCalculatingSpinner('Calculating', reportSubtext, () => {
+    try {
+      confirmEndShift();
+    } finally {
+      _isGeneratingEndShiftReport = false;
+      if (btn) btn.disabled = false;
+    }
+  }, 1200);
+}
+
+function confirmEndShift() {
+  const rawOnline = document.getElementById('inputManualOnlineSales')?.value ?? document.getElementById('confTerminalOnline')?.value ?? document.getElementById('terminalInputOnline')?.value;
+  const rawOnlineCashes = document.getElementById('confTerminalOnlineCashes')?.value ?? document.getElementById('terminalInputOc')?.value;
+  const rawCashes = document.getElementById('confTerminalCashes')?.value ?? document.getElementById('terminalInputCashes')?.value;
+  state.onlineSales = parseExplicitCurrencyInput(rawOnline, (state.onlineSales !== undefined && state.onlineSales !== null) ? state.onlineSales : (state.manualOnlineSales || 0));
+  state.onlineCashes = parseExplicitCurrencyInput(rawOnlineCashes, state.onlineCashes || 0);
+  state.cashes = parseExplicitCurrencyInput(rawCashes, state.cashes || 0);
 
   // Transition shiftStatus to SHIFT_ENDED
   state.shiftStatus = 'SHIFT_ENDED';
@@ -6427,9 +6818,11 @@ function confirmEndShift() {
           s.previousShiftSold = s.ticketsSold;
           s.packCumulativeSold = (s.packCumulativeSoldBase || 0) + s.ticketsSold;
         } else {
-          s.ticketsSold = (s.ticketsSold !== undefined && s.ticketsSold !== null && s.ticketsSold > 0) ? s.ticketsSold : 0;
-          s.previousShiftSold = s.ticketsSold;
-          s.packCumulativeSold = (s.packCumulativeSoldBase || 0) + s.ticketsSold;
+          // Untouched unscanned or manually declared out there:
+          // Never calculate sold tickets, never invent sales, preserve pack cumulative sold
+          s.ticketsSold = 0;
+          s.previousShiftSold = 0;
+          s.packCumulativeSold = (s.packCumulativeSoldBase || s.packCumulativeSold || 0);
         }
       }
     });
@@ -6456,10 +6849,15 @@ function populateShiftReportBreakdown(prefix = '', customSales = null, customSol
 
   // Real terminal figures entered by user during shift close (or from shift history)
   const cashes = customReport?.cashes !== undefined ? Number(customReport.cashes) : Number(state.cashes || 0);
-  const online = customReport?.onlineSales !== undefined ? Number(customReport.onlineSales) : Number(state.onlineSales || 0);
+  const online = (state.manualOnlineSales !== undefined && state.manualOnlineSales !== null && state.manualOnlineSales !== '')
+    ? Number(state.manualOnlineSales)
+    : (customReport?.onlineSales !== undefined ? Number(customReport.onlineSales) : Number(state.onlineSales || 0));
   const onlineCashes = customReport?.onlineCashes !== undefined ? Number(customReport.onlineCashes) : Number(state.onlineCashes || 0);
 
-  const scratchTotal = Number(salesVal) || 0;
+  // Use manually entered scratch-off sales if provided, otherwise calculated salesVal (no double counting!)
+  const scratchTotal = (state.manualScratchOffSales !== undefined && state.manualScratchOffSales !== null && state.manualScratchOffSales !== '')
+    ? Number(state.manualScratchOffSales)
+    : (Number(salesVal) || 0);
   const totalSales = scratchTotal + online;
   const totalCashes = cashes + onlineCashes;
   const totalDrop = totalSales - totalCashes;
@@ -6486,10 +6884,13 @@ function populateShiftReportBreakdown(prefix = '', customSales = null, customSol
   setTxt('repDocTotalDrop', null, fmt(totalDrop));
   setTxt('repDocScratchProfit', null, fmt(scratchProfit));
 
-  // Inventory stats
-  const activeBoxes = (state.slots || []).filter(s => s && (s.status === 'ACTIVE' || s.packNumber)).length;
-  const opCount = activeBoxes > 0 ? activeBoxes : 42;
-  const clCount = activeBoxes > 0 ? activeBoxes + 1 : 43;
+  // Inventory stats (real store data only, zero hardcoded fallbacks)
+  const activeBoxesList = (state.slots || []).filter(isBoxActive);
+  const activeBoxes = activeBoxesList.length;
+  const opCount = (state.shiftOpeningActiveCount !== undefined && state.shiftOpeningActiveCount !== null)
+    ? Number(state.shiftOpeningActiveCount)
+    : activeBoxes;
+  const clCount = activeBoxes;
 
   const opEl = document.getElementById(getId('repStatOpeningCount'));
   if (opEl) opEl.textContent = String(opCount);
@@ -6497,8 +6898,16 @@ function populateShiftReportBreakdown(prefix = '', customSales = null, customSol
   const clEl = document.getElementById(getId('repStatClosingCount'));
   if (clEl) clEl.textContent = String(clCount);
 
+  const realActivations = activeBoxesList.filter(s => s.activatedThisShift);
+  const manualAct = (state.manualActivations !== undefined && state.manualActivations !== null)
+    ? Number(state.manualActivations)
+    : realActivations.length;
   const actEl = document.getElementById(getId('repStatActivations'));
-  if (actEl) actEl.textContent = '1';
+  if (actEl) actEl.textContent = String(manualAct);
+  const modalActEl = document.getElementById('modalRepStatActivations');
+  if (modalActEl) modalActEl.textContent = String(manualAct);
+  const drStatAct = document.getElementById('drStatActivations');
+  if (drStatAct) drStatAct.textContent = String(manualAct);
 
   const soldEl = document.getElementById(getId('repStatSold'));
   if (soldEl) soldEl.textContent = String(soldVal || 0);
@@ -6507,29 +6916,38 @@ function populateShiftReportBreakdown(prefix = '', customSales = null, customSol
   if (transEl) transEl.textContent = '0';
 
   const remEl = document.getElementById(getId('repStatRemoved'));
-  if (remEl) remEl.textContent = '0';
+  if (remEl) remEl.textContent = String((state.partialTakeOuts || []).length);
 
+  const safePacksList = getUnifiedSafeInventory();
   const safeEl = document.getElementById(getId('repStatSafeInv'));
-  if (safeEl) safeEl.textContent = '85';
+  if (safeEl) safeEl.textContent = String(safePacksList.length);
 
   const totEl = document.getElementById(getId('repStatTotalInv'));
-  if (totEl) totEl.textContent = '128';
+  if (totEl) totEl.textContent = String(activeBoxes + safePacksList.length);
 
+  const activeRackValue = activeBoxesList.reduce((sum, s) => {
+    const rem = calculateSlotRemainingTickets(s);
+    return sum + (rem * (Number(s.price) || 0));
+  }, 0);
   const valEl = document.getElementById(getId('repStatActiveVal'));
-  if (valEl) valEl.textContent = '$ 7,650.00';
+  if (valEl) valEl.textContent = `$${activeRackValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
   // Activations Table
   const actBody = document.getElementById(getId('repDocActivationsBody'));
   if (actBody && !actBody.children.length) {
-    actBody.innerHTML = `
-      <tr>
-        <td>2</td>
-        <td>10:21 PM</td>
-        <td>1411-0184022</td>
-        <td>$2</td>
-        <td>Jr Jumbo</td>
-      </tr>
-    `;
+    if (realActivations.length > 0) {
+      actBody.innerHTML = realActivations.map(s => `
+        <tr>
+          <td>${s.boxNumber}</td>
+          <td>${s.activatedAt || '-'}</td>
+          <td>${s.barcodePrefix ? `${s.barcodePrefix}-${formatDisplayPackNumber(s)}` : formatDisplayPackNumber(s, '')}</td>
+          <td>$${Number(s.price || 0)}</td>
+          <td>${cleanGameTitle(s.gameName || '')}</td>
+        </tr>
+      `).join('');
+    } else {
+      actBody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:#64748b;">No packs activated this shift</td></tr>`;
+    }
   }
 
   // Sold Table
@@ -6539,33 +6957,14 @@ function populateShiftReportBreakdown(prefix = '', customSales = null, customSol
     if (soldOuts.length > 0) {
       soldBody.innerHTML = soldOuts.map(so => `
         <tr>
-          <td>${so.boxNumber || 1}</td>
-          <td>${so.packNumber || '1417-0128842'}</td>
-          <td>$${so.price || 1}</td>
+          <td>${so.boxNumber || ''}</td>
+          <td>${formatDisplayPackNumber(so, '')}</td>
+          <td>$${so.price ?? 0}</td>
           <td>${cleanGameTitle(so.gameName || 'Scratch Off')}</td>
         </tr>
       `).join('');
     } else if (!soldBody.children.length) {
-      soldBody.innerHTML = `
-        <tr>
-          <td>1</td>
-          <td>1417-0128842</td>
-          <td>$1</td>
-          <td>5X Money</td>
-        </tr>
-        <tr>
-          <td>5</td>
-          <td>1418-0331977</td>
-          <td>$2</td>
-          <td>10X Money</td>
-        </tr>
-        <tr>
-          <td>14</td>
-          <td>1411-0672257</td>
-          <td>$10</td>
-          <td>Jumbo Bucks</td>
-        </tr>
-      `;
+      soldBody.innerHTML = `<tr><td colspan="4" style="text-align:center;color:#64748b;">No packs sold out this shift</td></tr>`;
     }
   }
 }
@@ -6580,7 +6979,7 @@ function renderShiftClosedReportPreview() {
   if (!reportSec) return;
 
   const { totalSold, totalRevenue } = getShiftSalesTotals();
-  const shiftNum = state.shiftNumber || 13;
+  const shiftNum = state.shiftNumber || 1;
 
   // Dynamic Store Name & Address
   const stores = getStoresList();
@@ -6588,61 +6987,146 @@ function renderShiftClosedReportPreview() {
   const currentStore = stores.find(s => s.id === currentSid);
   const dynamicStoreName = (state.storeName && state.storeName.trim() && state.storeName.trim().toLowerCase() !== 'store')
     ? state.storeName.trim()
-    : (currentStore?.name || 'AMIGO FOOD MART');
+    : (currentStore?.name || '');
   const dynamicStoreAddr = (state.storeAddress && state.storeAddress.trim())
     ? state.storeAddress.trim()
-    : (currentStore?.address || '2300 MOODY RD, WARNER ROBINS, GA 31088');
+    : (currentStore?.address || '');
+  const dynamicStorePhone = (state.storePhone && state.storePhone.trim())
+    ? state.storePhone.trim()
+    : (currentStore?.phone || '');
 
   reportSec.querySelectorAll('.rep-doc-store-name').forEach(el => el.textContent = dynamicStoreName.toUpperCase());
   reportSec.querySelectorAll('.rep-doc-store-addr').forEach(el => el.textContent = dynamicStoreAddr.toUpperCase());
 
   const totalEl = document.getElementById('repDocTotalAmount');
   if (totalEl) {
-    totalEl.textContent = `Total $${(totalRevenue || 5883).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    totalEl.textContent = `Total $${(totalRevenue || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   }
 
   const metaEl = document.getElementById('repDocMetaLine');
   if (metaEl) {
     const now = new Date();
     const dateStr = now.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
-    metaEl.innerHTML = `Phone: 478-922-4567 &nbsp; Shift #${shiftNum} &nbsp; Cashier: ${state.cashierName || 'Rosa'} &nbsp; Date: ${dateStr}`;
+    const phonePart = dynamicStorePhone ? `Phone: ${dynamicStorePhone} &nbsp; ` : '';
+    metaEl.innerHTML = `${phonePart}Shift #${shiftNum} &nbsp; Cashier: ${state.cashierName || '—'} &nbsp; Date: ${dateStr}`;
   }
 
   const timesEl = document.getElementById('repDocShiftTimes');
   if (timesEl) {
+    const openTime = state.shiftStartedAt
+      ? new Date(state.shiftStartedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+      : '-';
     const closeTime = new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-    timesEl.innerHTML = `Opened: 7:00 AM &middot; Closed: ${closeTime}`;
+    timesEl.innerHTML = `Opened: ${openTime} &middot; Closed: ${closeTime}`;
   }
 
   // Render 2-Page dispenser boxes table with pink/red sold row highlights (Matching Reference Image 1)
   const tbody1 = document.getElementById('repDocTableBody1') || document.getElementById('repDocTableBody');
   const tbody2 = document.getElementById('repDocTableBody2');
-  const totalSlots = state.totalSlots || 65;
+  const configuredBoxes = Math.max(65, currentStore?.totalBoxes || 65);
+  if (!state.totalSlots || state.totalSlots < configuredBoxes || !Array.isArray(state.slots) || state.slots.length < configuredBoxes) {
+    sanitizeAndMigrateSlots();
+    saveState(state);
+  }
+  const totalSlots = state.totalSlots || configuredBoxes;
   const splitPoint = 30; // Boxes 1 to 30 on Page 1, Boxes 31+ on Page 2
 
   function buildReportRow(box, slot) {
-    const isBoxActive = Boolean(slot && slot.status === 'ACTIVE' && slot.packNumber);
-    if (isBoxActive) {
-      const sold = calculateSlotSoldTickets(slot);
-      const amount = sold * (slot.price || 0);
-      const startStr = String(slot.startTicket !== undefined ? slot.startTicket : 0).padStart(3, '0');
-      const closeStr = String(slot.currentTicket !== undefined ? slot.currentTicket : 0).padStart(3, '0');
+    let rowsHtml = '';
+
+    // 1. Any sold-out packs for this box during this shift
+    const boxSoldOuts = (state.soldOutThisShift || []).filter(so => so && Number(so.boxNumber) === box);
+    boxSoldOuts.forEach(so => {
+      const sold = calculateSoldOutRecordTickets(so);
+      const amount = so.salesAmount !== undefined ? so.salesAmount : (sold * (so.price || 0));
+      const startStr = String(so.startTicket !== undefined ? so.startTicket : 0).padStart(3, '0');
+      const closeStr = String(so.closeTicket ?? ((so.startTicket || 0) + sold)).padStart(3, '0');
       const isSold = sold > 0;
       const rowClass = isSold ? 'row-sold' : '';
       const rowStyle = isSold ? 'background-color: #fee2e2 !important; color: #991b1b !important; font-weight: 600;' : '';
-      return `
+      const badgeText = so.isReturned ? 'RETURNED' : 'SOLD OUT';
+      const badgeColor = so.isReturned ? '#b45309' : '#dc2626';
+      rowsHtml += `
         <tr class="${rowClass}" style="${rowStyle}">
           <td style="font-weight:700;">${box}</td>
-          <td style="font-family:monospace;">${slot.packNumber || ''}</td>
-          <td>${cleanGameTitle(slot.gameName)}</td>
+          <td style="font-family:monospace;">${formatDisplayPackNumber(so, '')}</td>
+          <td>${cleanGameTitle(so.gameName)} <span style="font-size:0.75rem; color:${badgeColor}; font-weight:700;">(${badgeText})</span></td>
           <td class="td-rep-num">${startStr}</td>
           <td class="td-rep-num">${closeStr}</td>
-          <td class="td-rep-num">$${slot.price || 1}</td>
-          <td class="td-rep-num" style="font-weight:700;">$${amount.toFixed(2)}</td>
+          <td class="td-rep-num">${so.price || 1}</td>
+          <td class="td-rep-num" style="font-weight:700;">${amount.toFixed(2)}</td>
         </tr>
       `;
-    } else {
-      return `
+    });
+
+    // Also include slot itself if slot.status === 'SOLD_OUT' and not already in boxSoldOuts
+    if (slot && slot.status === 'SOLD_OUT' && slot.packNumber && !boxSoldOuts.some(so => so.packNumber === slot.packNumber)) {
+      const sold = slot.ticketsSold !== undefined ? slot.ticketsSold : calculateSlotSoldTickets(slot);
+      const amount = sold * (slot.price || 0);
+      const startStr = String(slot.startTicket !== undefined ? slot.startTicket : 0).padStart(3, '0');
+      const closeStr = String(slot.currentTicket ?? ((slot.startTicket || 0) + sold)).padStart(3, '0');
+      const isSold = sold > 0;
+      const rowClass = isSold ? 'row-sold' : '';
+      const rowStyle = isSold ? 'background-color: #fee2e2 !important; color: #991b1b !important; font-weight: 600;' : '';
+      rowsHtml += `
+        <tr class="${rowClass}" style="${rowStyle}">
+          <td style="font-weight:700;">${box}</td>
+          <td style="font-family:monospace;">${formatDisplayPackNumber(slot, '')}</td>
+          <td>${cleanGameTitle(slot.gameName)} <span style="font-size:0.75rem; color:#dc2626; font-weight:700;">(SOLD OUT)</span></td>
+          <td class="td-rep-num">${startStr}</td>
+          <td class="td-rep-num">${closeStr}</td>
+          <td class="td-rep-num">${slot.price || 1}</td>
+          <td class="td-rep-num" style="font-weight:700;">${amount.toFixed(2)}</td>
+        </tr>
+      `;
+    }
+
+    // 2. Active slot for this box (if not already rendered as sold-out with same packNumber; pending activation excluded)
+    const slotIsReportActive = Boolean(isBoxActive(slot) && !boxSoldOuts.some(so => so.packNumber === slot.packNumber));
+    if (slotIsReportActive) {
+      if (slot.scannedInEndShift) {
+        const sold = calculateSlotSoldTickets(slot);
+        const amount = sold * (slot.price || 0);
+        const startStr = String(slot.startTicket !== undefined ? slot.startTicket : 0).padStart(3, '0');
+        const closeStr = String(slot.currentTicket !== undefined ? slot.currentTicket : 0).padStart(3, '0');
+        const isSold = sold > 0;
+        const rowClass = isSold ? 'row-sold' : '';
+        const rowStyle = isSold ? 'background-color: #fee2e2 !important; color: #991b1b !important; font-weight: 600;' : '';
+        rowsHtml += `
+          <tr class="${rowClass}" style="${rowStyle}">
+            <td style="font-weight:700;">${box}</td>
+            <td style="font-family:monospace;">${formatDisplayPackNumber(slot, '')}</td>
+            <td>${cleanGameTitle(slot.gameName)}</td>
+            <td class="td-rep-num">${startStr}</td>
+            <td class="td-rep-num">${closeStr}</td>
+            <td class="td-rep-num">${slot.price || 1}</td>
+            <td class="td-rep-num" style="font-weight:700;">${amount.toFixed(2)}</td>
+          </tr>
+        `;
+      } else if (slot.declaredOutThere) {
+        rowsHtml += `
+          <tr style="background-color: #fffbeb !important; color: #b45309 !important;">
+            <td style="font-weight:700;">${box}</td>
+            <td style="font-family:monospace;">${formatDisplayPackNumber(slot, '')}</td>
+            <td>${cleanGameTitle(slot.gameName)}</td>
+            <td colspan="4" style="text-align:center; font-weight:700; color:#b45309; font-size:0.8rem;">
+              MANUALLY DECLARED OUT THERE &mdash; NOT SCANNED
+            </td>
+          </tr>
+        `;
+      } else {
+        rowsHtml += `
+          <tr style="opacity: 0.5;">
+            <td style="font-weight:700;">${box}</td>
+            <td></td>
+            <td class="td-rep-empty" colspan="5" style="color:#94a3b8; font-style:italic;">
+              EXCLUDED &mdash; NOT SCANNED
+            </td>
+          </tr>
+        `;
+      }
+    } else if (boxSoldOuts.length === 0 && (!slot || slot.status !== 'SOLD_OUT')) {
+      rowsHtml += `
         <tr>
           <td style="font-weight:700;">${box}</td>
           <td></td>
@@ -6654,6 +7138,8 @@ function renderShiftClosedReportPreview() {
         </tr>
       `;
     }
+
+    return rowsHtml;
   }
 
   if (tbody1) {
@@ -6687,11 +7173,14 @@ export function buildShiftReportRows(slots = [], soldOutList = []) {
   const rows = [];
   const processedKeys = new Set();
 
-  // Find all unique box numbers that have an active/sold-out slot or a sold-out pack
+  // Find all unique box numbers that have a verified/dispositioned slot or sold-out pack
+  // Untouched unscanned slots are completely excluded from boxNumSet and the report
   const boxNumSet = new Set();
   (slots || []).forEach(s => {
-    if (s && s.boxNumber && (s.status === 'ACTIVE' || s.status === 'SOLD_OUT' || (s.currentTicket > (s.startTicket || 0)))) {
-      boxNumSet.add(s.boxNumber);
+    if (s && s.boxNumber) {
+      if (s.scannedInEndShift || s.declaredOutThere || s.status === 'SOLD_OUT') {
+        boxNumSet.add(s.boxNumber);
+      }
     }
   });
   (soldOutList || []).forEach(so => {
@@ -6734,29 +7223,52 @@ export function buildShiftReportRows(slots = [], soldOutList = []) {
       // Deduplicate if active slot has the exact same packNumber as a sold-out pack already processed
       const alreadyAsSoldOut = boxSoldOuts.some(so => so.packNumber === slot.packNumber);
       if (!alreadyAsSoldOut) {
-        const sold = calculateSlotSoldTickets(slot);
-        const amount = sold * (slot.price || 0);
-        const startNum = slot.startTicket !== undefined ? slot.startTicket : 0;
-        const closeNum = slot.currentTicket !== undefined ? slot.currentTicket : 0;
-        const key = `${boxNum}_act_${slot.packNumber}_${startNum}_${closeNum}`;
-        if (!processedKeys.has(key)) {
-          processedKeys.add(key);
-          rows.push({
-            boxNumber: boxNum,
-            gameName: slot.gameName || 'Scratch Off',
-            price: slot.price || 0,
-            startTicket: startNum,
-            closeTicket: closeNum,
-            sold: sold,
-            amount: amount,
-            statusTag: null,
-            isReturned: false,
-            isSoldOut: false
-          });
+        if (slot.scannedInEndShift) {
+          const sold = calculateSlotSoldTickets(slot);
+          const amount = sold * (slot.price || 0);
+          const startNum = slot.startTicket !== undefined ? slot.startTicket : 0;
+          const closeNum = slot.currentTicket !== undefined ? slot.currentTicket : 0;
+          const key = `${boxNum}_act_${slot.packNumber}_${startNum}_${closeNum}`;
+          if (!processedKeys.has(key)) {
+            processedKeys.add(key);
+            rows.push({
+              boxNumber: boxNum,
+              gameName: slot.gameName || 'Scratch Off',
+              price: slot.price || 0,
+              startTicket: startNum,
+              closeTicket: closeNum,
+              sold: sold,
+              amount: amount,
+              statusTag: null,
+              isReturned: false,
+              isSoldOut: false
+            });
+          }
+        } else if (slot.declaredOutThere) {
+          const startNum = slot.startTicket !== undefined ? slot.startTicket : 0;
+          const closeNum = slot.currentTicket !== undefined ? slot.currentTicket : 0;
+          const key = `${boxNum}_decl_${slot.packNumber}_${startNum}_${closeNum}`;
+          if (!processedKeys.has(key)) {
+            processedKeys.add(key);
+            rows.push({
+              boxNumber: boxNum,
+              gameName: slot.gameName || 'Scratch Off',
+              price: slot.price || 0,
+              startTicket: startNum,
+              closeTicket: closeNum,
+              sold: 0,
+              amount: 0,
+              statusTag: 'MANUALLY DECLARED OUT THERE — NOT SCANNED',
+              isReturned: false,
+              isSoldOut: false,
+              isDeclaredOutThere: true
+            });
+          }
         }
+        // Untouched unscanned slot: completely excluded from report rows
       }
     } else if (slot && slot.status === 'SOLD_OUT' && boxSoldOuts.length === 0) {
-      const sold = Math.max(0, (slot.currentTicket || 0) - (slot.startTicket || 0));
+      const sold = slot.ticketsSold !== undefined ? slot.ticketsSold : calculateSlotSoldTickets(slot);
       const amount = sold * (slot.price || 0);
       const startNum = slot.startTicket !== undefined ? slot.startTicket : 0;
       const closeNum = slot.currentTicket !== undefined ? slot.currentTicket : 0;
@@ -6863,7 +7375,13 @@ function openShiftReportModal() {
     row.className = 'report-row';
     let tagHtml = '';
     if (item.statusTag) {
-      tagHtml = `<span class="settle-sold-out-badge">${item.statusTag === 'SOLD OUT' ? 'Sold out' : item.statusTag}</span>`;
+      const isOutThere = item.statusTag.includes('MANUALLY DECLARED OUT THERE');
+      const badgeStyle = isOutThere
+        ? 'background:#fef3c7; color:#b45309; border:1px solid #fde68a; padding:2px 8px; border-radius:4px; font-weight:700; font-size:0.75rem;'
+        : '';
+      const badgeClass = isOutThere ? 'settle-out-there-badge' : 'settle-sold-out-badge';
+      const badgeText = item.statusTag === 'SOLD OUT' ? 'Sold out' : item.statusTag;
+      tagHtml = `<span class="${badgeClass}" style="${badgeStyle}">${badgeText}</span>`;
     }
     row.innerHTML = `
       <td class="col-box"><span class="settle-box-badge">${item.boxNumber}</span></td>
@@ -6923,13 +7441,21 @@ function openShiftReportModal() {
   if (prActiveCountEl) prActiveCountEl.textContent = activeCount;
 
   const prEmptyCountEl = document.getElementById('prEmptyCount');
-  if (prEmptyCountEl) prEmptyCountEl.textContent = emptyCount;
+  if (prEmptyCountEl) {
+    prEmptyCountEl.textContent = (state.manualEmptySlots !== undefined && state.manualEmptySlots !== null)
+      ? state.manualEmptySlots
+      : emptyCount;
+  }
 
   const prActivationLabel = document.getElementById('prActivationLabel');
   if (prActivationLabel) prActivationLabel.textContent = isDailyMode ? 'DAY ACTIVATIONS:' : 'SHIFT ACTIVATIONS:';
 
   const prActivationCountEl = document.getElementById('prActivationCount');
-  if (prActivationCountEl) prActivationCountEl.textContent = activationCount;
+  if (prActivationCountEl) {
+    prActivationCountEl.textContent = (state.manualActivations !== undefined && state.manualActivations !== null)
+      ? state.manualActivations
+      : activationCount;
+  }
 
   const prEmailsEl = document.getElementById('prEmails');
   if (prEmailsEl) prEmailsEl.textContent = state.settings.targetEmails;
@@ -6981,7 +7507,7 @@ function openShiftReportModal() {
 
       // Also include sold-out packs on the printed 80mm receipt
       soldOutPacks.forEach(so => {
-        const sold = so.ticketsSold !== undefined ? so.ticketsSold : Math.max(0, (so.closeTicket || 0) - (so.startTicket || 0));
+        const sold = calculateSoldOutRecordTickets(so);
         const amt = so.salesAmount !== undefined ? so.salesAmount : (sold * (so.price || 0));
         const row = document.createElement('div');
         row.className = 'receipt-row has-sales';
@@ -7167,9 +7693,7 @@ function executeStartNewShift(newCashier = null, newFloat = 0) {
     startShiftConfirmModal.close();
   }
 
-  const isBoxActive = s => Boolean(s && s.status === 'ACTIVE' && s.packNumber);
-
-  // Compute shift summary before closing (including active slots + sold out packs)
+  // Compute shift summary before closing (must run before slot counters reset below)
   const { totalSold, totalRevenue } = getShiftSalesTotals();
   const shiftActivations = state.slots.filter(s => isBoxActive(s) && s.activatedThisShift).length;
   const shiftSlotsSnapshot = JSON.parse(JSON.stringify(state.slots));
@@ -7198,17 +7722,7 @@ function executeStartNewShift(newCashier = null, newFloat = 0) {
       s.scannedInEndShift = false;
       s.daysActive = (s.daysActive || 0) + 1;
     } else {
-      s.status = 'EMPTY';
-      s.currentTicket = 0;
-      s.startTicket = 0;
-      s.packStartTicket = 0;
-      s.packCumulativeSold = 0;
-      s.packCumulativeSoldBase = 0;
-      s.ticketsSold = 0;
-      s.previousShiftSold = 0;
-      s.activatedThisShift = false;
-      s.scannedInEndShift = false;
-      s.soldBarcodes = [];
+      resetSlotToEmpty(s);
     }
   });
 
@@ -7376,7 +7890,7 @@ function renderInventoryStatusModal() {
   });
 
   soldOutList.forEach(so => {
-    const sold = so.ticketsSold !== undefined ? so.ticketsSold : Math.max(0, (so.closeTicket || 0) - (so.startTicket || 0));
+    const sold = calculateSoldOutRecordTickets(so);
     totalSoldUnits += sold;
     totalSoldValue += sold * (so.price || 1);
   });
@@ -7432,7 +7946,7 @@ function renderInventoryStatusModal() {
       // In Storage filter selected: display stored packs directly in the unified table
       ptos.forEach(pto => {
         const cleanName = cleanGameTitle(pto.gameName);
-        const cleanPack = String(pto.packNumber || '---').replace(/[^0-9]/g, '') || '---';
+        const cleanPack = formatDisplayPackNumber(pto, '---');
         const remVal = (pto.totalValue !== undefined && pto.totalValue !== null) ? Number(pto.totalValue) : ((pto.ticketsCount || 0) * (pto.price || 1));
 
         if (!matchesQuery(pto.fromBoxNumber, cleanName, pto.price, cleanPack)) return;
@@ -7499,7 +8013,7 @@ function renderInventoryStatusModal() {
           const sold = calculateSlotSoldTickets(slot);
           const remaining = Math.max(0, totalPackSize - sold);
           const remVal = remaining * (slot.price || 1);
-          const cleanPack = String(slot.packNumber || '---').replace(/[^0-9]/g, '') || '---';
+          const cleanPack = formatDisplayPackNumber(slot, '---');
           const isNewPack = Boolean(current === 0 || (slot.activatedThisShift && sold === 0));
 
           row.innerHTML = `
@@ -7530,7 +8044,7 @@ function renderInventoryStatusModal() {
           const soCleanName = cleanGameTitle(soldOutRecord.gameName || 'Scratch-Off Game');
           const soPackSize = soldOutRecord.packSize || (soldOutRecord.price === 1 ? 300 : soldOutRecord.price === 2 ? 150 : 30);
           const soSold = soldOutRecord.ticketsSold !== undefined ? soldOutRecord.ticketsSold : Math.max(0, (soldOutRecord.closeTicket || 0) - (soldOutRecord.startTicket || 0));
-          const soPack = String(soldOutRecord.packNumber || '---').replace(/[^0-9]/g, '') || '---';
+          const soPack = formatDisplayPackNumber(soldOutRecord, '---');
 
           row.className = 'inv-row-soldout';
           row.innerHTML = `
@@ -7625,8 +8139,9 @@ function renderInventoryTable() {
   if (countSoldOut) countSoldOut.textContent = soldOutList.length;
   if (countPto) countPto.textContent = (state.partialTakeOuts || []).length;
 
-  const safePacksCount = (state.inventory || []).length;
-  const safeVal = (state.inventory || []).reduce((acc, p) => acc + (p.packSize || 100) * (p.price || 1), 0);
+  const safeList = getUnifiedSafeInventory();
+  const safePacksCount = safeList.length;
+  const safeVal = safeList.reduce((acc, p) => acc + (Number(p.packSize) || getStandardPackDetails(p.price || 1).packSize) * (Number(p.price) || 0), 0);
   const elSafePacks = document.getElementById('invModalSafePacks');
   if (elSafePacks) elSafePacks.textContent = `${safePacksCount} packs`;
   const elSafeVal = document.getElementById('invModalSafeVal');
@@ -7650,7 +8165,7 @@ function renderInventoryTable() {
       return true;
     }
     if (query.length >= 8) {
-      const parsedQuery = parseLotteryBarcode(query, state.customGames);
+      const parsedQuery = parseLotteryBarcode(query, state.customGames, state.lotteryJurisdiction);
       if (parsedQuery && parsedQuery.packNumber && isPackNumberMatch(pk, parsedQuery.packNumber)) {
         return true;
       }
@@ -7666,7 +8181,7 @@ function renderInventoryTable() {
     const ptos = state.partialTakeOuts || [];
     ptos.forEach(pto => {
       const cleanName = cleanGameTitle(pto.gameName);
-      const cleanPack = String(pto.packNumber || '---').replace(/[^0-9]/g, '') || '---';
+      const cleanPack = formatDisplayPackNumber(pto, '---');
 
       if (!matchesQuery(pto.fromBoxNumber, cleanName, pto.price, cleanPack)) return;
 
@@ -7730,7 +8245,7 @@ function renderInventoryTable() {
         const totalPackSize = slot.packSize || (slot.price === 1 ? 300 : slot.price === 2 ? 150 : slot.price === 3 ? 100 : slot.price === 5 ? 60 : slot.price >= 50 ? 20 : 30);
         const current = slot.currentTicket !== undefined ? slot.currentTicket : 0;
         const remaining = Math.max(0, totalPackSize - current);
-        const cleanPack = String(slot.packNumber || '---').replace(/[^0-9]/g, '') || '---';
+        const cleanPack = formatDisplayPackNumber(slot, '---');
         const isNewPack = Boolean(current === 0 || (slot.activatedThisShift && current === (slot.startTicket || 0)));
 
         row.innerHTML = `
@@ -7761,7 +8276,7 @@ function renderInventoryTable() {
         `;
       } else if (soldOutRecord) {
         const soCleanName = cleanGameTitle(soldOutRecord.gameName || 'Scratch-Off Game');
-        const soPack = String(soldOutRecord.packNumber || '---').replace(/[^0-9]/g, '') || '---';
+        const soPack = formatDisplayPackNumber(soldOutRecord, '---');
 
         row.className = 'inv-row-soldout';
         row.innerHTML = `
@@ -7843,6 +8358,7 @@ let pendingSetBoxBarcode = null;
 let pendingSetBoxGame = null;
 let pendingSetBoxSecurityCode = null;
 let pendingSetBoxDisplayBarcode = null;
+let pendingSetBoxJurisdiction = null;
 let isTransitioningSetBoxStep = false;
 
 function isBarcodeAlreadyScanned(barcode) {
@@ -7850,7 +8366,7 @@ function isBarcodeAlreadyScanned(barcode) {
   const clean = String(barcode).trim();
   if (!clean) return false;
 
-  const parsed = parseLotteryBarcode(barcode, state.customGames);
+  const parsed = parseLotteryBarcode(barcode, state.customGames, state.lotteryJurisdiction);
   const targetCanonical = parsed?.canonicalId;
   const targetStandard = parsed?.standardBarcode;
   const targetPack = parsed?.packCombined || parsed?.packNumber;
@@ -7869,7 +8385,7 @@ function isBarcodeAlreadyScanned(barcode) {
         if (rawStr === clean) return true;
         if (targetStandard && rawStr === targetStandard) return true;
         if (targetCanonical) {
-          const bParsed = parseLotteryBarcode(rawStr, state.customGames);
+          const bParsed = parseLotteryBarcode(rawStr, state.customGames, state.lotteryJurisdiction);
           if (bParsed) {
             if (bParsed.canonicalId === targetCanonical) return true;
             if (targetStandard && bParsed.standardBarcode === targetStandard) return true;
@@ -7908,7 +8424,7 @@ function isBarcodeAlreadyScanned(barcode) {
 function findScannedBarcodeInfo(barcode) {
   if (!barcode) return null;
   const clean = String(barcode).trim();
-  const parsed = parseLotteryBarcode(barcode, state.customGames);
+  const parsed = parseLotteryBarcode(barcode, state.customGames, state.lotteryJurisdiction);
   const targetCanonical = parsed?.canonicalId;
   const targetStandard = parsed?.standardBarcode;
   const targetPack = parsed?.packCombined || parsed?.packNumber;
@@ -7927,7 +8443,7 @@ function findScannedBarcodeInfo(barcode) {
         if (rawStr === clean) return true;
         if (targetStandard && rawStr === targetStandard) return true;
         if (targetCanonical) {
-          const bParsed = parseLotteryBarcode(rawStr, state.customGames);
+          const bParsed = parseLotteryBarcode(rawStr, state.customGames, state.lotteryJurisdiction);
           if (bParsed) {
             if (bParsed.canonicalId === targetCanonical) return true;
             if (targetStandard && bParsed.standardBarcode === targetStandard) return true;
@@ -7981,7 +8497,7 @@ export function findInStockPack(parsed, barcode) {
   if (!parsed && !barcode) return null;
 
   if (!Array.isArray(state.inStockInventory)) {
-    state.inStockInventory = (!state.dataCleared && (!state.storeId || state.storeId === 'store_amigo')) ? JSON.parse(JSON.stringify(REFERENCE_IN_STOCK_PACKS)) : [];
+    state.inStockInventory = [];
   }
 
   const cleanB = barcode ? String(barcode).trim() : '';
@@ -8025,12 +8541,14 @@ export function findInStockPack(parsed, barcode) {
 export function openSetBoxForInStockPack(inStockPack, parsed = null, barcode = null) {
   if (!inStockPack) return;
   const rawBarcode = barcode || inStockPack.barcode || inStockPack.originalBarcode || '';
-  const parsedTicket = parsed || (rawBarcode ? parseLotteryBarcode(rawBarcode, state.customGames) : null);
+  const parsedTicket = parsed || (rawBarcode ? parseLotteryBarcode(rawBarcode, state.customGames, state.lotteryJurisdiction) : null);
   const cleanPack = inStockPack.packNumber || inStockPack.pack || (parsedTicket ? (parsedTicket.packCombined || parsedTicket.packNumber) : '');
 
   // Guard: If this pack is ALREADY active in a dispenser box, focus that box
   const existingActiveSlot = (state.slots || []).find(s => {
     if (!s || s.status !== 'ACTIVE' || !s.packNumber) return false;
+    if (s.needsActivation) return false;
+    if (s.isSoldOut || s.status === 'SOLD_OUT') return false;
     if (parsedTicket?.gameNumber && !slotMatchesGameNumber(s, parsedTicket.gameNumber)) return false;
     return isPackNumberMatch(s.packNumber, cleanPack);
   });
@@ -8047,12 +8565,12 @@ export function openSetBoxForInStockPack(inStockPack, parsed = null, barcode = n
   const effectiveBarcode = (parsedTicket && parsedTicket.standardBarcode)
     ? parsedTicket.standardBarcode
     : (rawBarcode || cleanPack);
-  const cleanName = cleanGameTitle(inStockPack.gameName || inStockPack.game || (parsedTicket ? findGameByBarcode(rawBarcode, state.customGames)?.name : null) || 'Scratch-Off Game');
-  const chosenPrice = Number(inStockPack.price) || (parsedTicket ? (findGameByBarcode(rawBarcode, state.customGames)?.price || 1) : 1);
+  const cleanName = cleanGameTitle(inStockPack.gameName || inStockPack.game || (parsedTicket ? findGameByBarcode(rawBarcode, state.customGames, state.lotteryJurisdiction)?.name : null) || 'Scratch-Off Game');
+  const chosenPrice = Number(inStockPack.price) || (parsedTicket ? (findGameByBarcode(rawBarcode, state.customGames, state.lotteryJurisdiction)?.price || 1) : 1);
   const std = getStandardPackDetails(chosenPrice);
   const packSize = Number(inStockPack.packSizeNum) || parseInt(inStockPack.packSize, 10) || std.packSize || 100;
   const packValue = packSize * chosenPrice;
-  const secCode = parsedTicket?.securityCode || '000';
+  const secCode = parsedTicket?.securityCode || null;
 
   pendingChosenName = cleanName;
   pendingChosenPrice = chosenPrice;
@@ -8061,19 +8579,20 @@ export function openSetBoxForInStockPack(inStockPack, parsed = null, barcode = n
   pendingSetBoxBarcode = effectiveBarcode;
   pendingNewTicketBarcode = effectiveBarcode;
   pendingSetBoxSecurityCode = secCode;
-  pendingSetBoxDisplayBarcode = formatLotteryBarcode(rawBarcode || effectiveBarcode, state.customGames, secCode);
+  pendingSetBoxDisplayBarcode = parsedTicket?.displayBarcode || formatLotteryBarcode(rawBarcode || effectiveBarcode, state.customGames, secCode, state.lotteryJurisdiction);
+  pendingSetBoxJurisdiction = inStockPack.jurisdiction || parsedTicket?.jurisdiction || null;
 
   openSetBoxModal(effectiveBarcode);
   sfx.beep();
-  showToast(`📦 Pack #${cleanPack} (${cleanName}, $${chosenPrice}): Choose dispenser box.`, 'info');
+  showToast(`📦 Pack #${formatDisplayPackNumber(cleanPack)} (${cleanName}, $${chosenPrice}): Choose dispenser box.`, 'info');
 }
 
 export function autoAddInStockPackToDispenser(inStockPack, parsed = null, barcode = null) {
   if (!inStockPack) return;
 
   const chosenPack = String(inStockPack.packNumber || (parsed ? (parsed.packCombined || parsed.packNumber) : ''));
-  const cleanName = cleanGameTitle(inStockPack.gameName || (parsed ? findGameByBarcode(barcode, state.customGames)?.name : null) || 'Scratch-Off Game');
-  const chosenPrice = Number(inStockPack.price) || (parsed ? (findGameByBarcode(barcode, state.customGames)?.price || 1) : 1);
+  const cleanName = cleanGameTitle(inStockPack.gameName || (parsed ? findGameByBarcode(barcode, state.customGames, state.lotteryJurisdiction)?.name : null) || 'Scratch-Off Game');
+  const chosenPrice = Number(inStockPack.price) || (parsed ? (findGameByBarcode(barcode, state.customGames, state.lotteryJurisdiction)?.price || 1) : 1);
   const std = getStandardPackDetails(chosenPrice);
   const packSize = Number(inStockPack.packSizeNum) || parseInt(inStockPack.packSize, 10) || std.packSize || 100;
 
@@ -8088,6 +8607,8 @@ export function autoAddInStockPackToDispenser(inStockPack, parsed = null, barcod
   // Check if this pack is already placed on a dispenser slot
   const existingSlot = (state.slots || []).find(s => {
     if (!s || s.status !== 'ACTIVE' || !s.packNumber) return false;
+    if (s.needsActivation) return false;
+    if (s.isSoldOut || s.status === 'SOLD_OUT') return false;
     if (parsed?.gameNumber && !slotMatchesGameNumber(s, parsed.gameNumber)) return false;
     return isPackNumberMatch(s.packNumber, chosenPack);
   });
@@ -8148,6 +8669,10 @@ export function autoAddInStockPackToDispenser(inStockPack, parsed = null, barcod
   targetSlot.gameName = cleanName;
   targetSlot.price = chosenPrice;
   targetSlot.packNumber = chosenPack;
+  targetSlot.jurisdiction = normalizeLotteryJurisdiction(inStockPack.jurisdiction || state.lotteryJurisdiction);
+  targetSlot.checkDigit = inStockPack.checkDigit || null;
+  targetSlot.basePackNumber = inStockPack.basePackNumber || chosenPack;
+  targetSlot.packCombined = inStockPack.packCombined || (inStockPack.checkDigit ? `${chosenPack}-${inStockPack.checkDigit}` : chosenPack);
   targetSlot.barcodePrefix = inStockPack.barcodePrefix || (parsed?.gameNumber || '');
   targetSlot.packSize = packSize;
   targetSlot.initialTickets = packSize;
@@ -8197,7 +8722,7 @@ export function autoAddInStockPackToDispenser(inStockPack, parsed = null, barcod
     soldCount: 0,
     action: 'IN_STOCK_LOADED'
   };
-  state.lastScannedBarcode = `Box #${targetBox} Loaded: $${Number(chosenPrice).toFixed(2)} · ${cleanName} (Pack #${chosenPack}) - Tap Activate`;
+  state.lastScannedBarcode = `Box #${targetBox} Loaded: $${Number(chosenPrice).toFixed(2)} · ${cleanName} (Pack #${formatDisplayPackNumber(chosenPack)}) - Tap Activate`;
 
   saveState(state);
   sfx.beep();
@@ -8212,9 +8737,17 @@ export function autoAddInStockPackToDispenser(inStockPack, parsed = null, barcod
     if (typeof renderInventoryView === 'function') renderInventoryView();
   }
 
-  showToast(`📦 Pack #${chosenPack} automatically added to Box #${targetBox}! Tap "Activate" to activate.`, 'info');
+  showToast(`📦 Pack #${formatDisplayPackNumber(chosenPack)} automatically added to Box #${targetBox}! Tap "Activate" to activate.`, 'info');
 }
 
+
+function clearPendingEndShiftActivation(slot) {
+  if (!slot) return;
+  slot.needsActivation = false;
+  delete slot.pendingEndShiftBarcode;
+  delete slot.pendingEndShiftEffectiveBarcode;
+  delete slot.pendingEndShiftParsed;
+}
 
 export function handleActivateEndShiftSlot(slot) {
   if (!slot) return;
@@ -8222,8 +8755,18 @@ export function handleActivateEndShiftSlot(slot) {
   if (!targetSlot) return;
 
   window.__activatingEndShiftSlot = targetSlot;
-  const barcodeToUse = targetSlot.pendingEndShiftBarcode || targetSlot.pendingEndShiftEffectiveBarcode || targetSlot.packNumber;
-  openSetTicketDetailsModal(barcodeToUse, targetSlot.pendingEndShiftEffectiveBarcode);
+  const fallbackBarcode = (targetSlot.barcodePrefix && targetSlot.packNumber)
+    ? `${targetSlot.barcodePrefix}-${targetSlot.packNumber}-${String(targetSlot.currentTicket ?? 0).padStart(3, '0')}`
+    : (targetSlot.pendingEndShiftEffectiveBarcode || targetSlot.packNumber || '');
+  const barcode = targetSlot.pendingEndShiftBarcode || fallbackBarcode;
+  if (!barcode) {
+    window.__activatingEndShiftSlot = null;
+    sfx.alert?.();
+    showToast(`⚠️ Box #${targetSlot.boxNumber} is missing pack barcode details.`, 'warning');
+    return;
+  }
+
+  openSetTicketDetailsModal(barcode, targetSlot.pendingEndShiftEffectiveBarcode || barcode);
 }
 
 export function activateSlotPack(slot) {
@@ -8309,7 +8852,12 @@ export function handleTicketBarcodeScan(rawBarcode, source = 'main') {
     return;
   }
 
-  const parsed = parseLotteryBarcode(barcode, state.customGames);
+  const parsed = parseLotteryBarcode(barcode, state.customGames, state.lotteryJurisdiction);
+  if (parsed && parsed.isAmbiguous) {
+    sfx.alert();
+    showToast(`⚠️ ${parsed.error}`, 'warning');
+    return;
+  }
   if (!parsed || !parsed.isValid || parsed.isRetailProduct || parsed.isNonLotteryBarcode) {
     sfx.alert();
     const msg = (parsed && parsed.isRetailProduct)
@@ -8409,7 +8957,10 @@ function updatePricePillsSelection(price) {
   // Dynamically recalculate accurate 3-digit series code from barcode & pack size!
   const targetBarcode = pendingSetBoxBarcode || setTicketDetailsModal?.dataset.barcode;
   if (targetBarcode) {
-    const parsedCurrent = parseLotteryBarcode(targetBarcode, state.customGames);
+    const parsedCurrent = parseLotteryBarcode(targetBarcode, state.customGames, state.lotteryJurisdiction);
+    if (parsedCurrent?.jurisdiction === 'SC' || state.lotteryJurisdiction === 'SC') {
+      return;
+    }
     const gamePrefix = parsedCurrent?.gameNumber || '';
     const tixNum = (parsedCurrent?.ticketNumber !== null && parsedCurrent?.ticketNumber !== undefined) ? parsedCurrent.ticketNumber : 0;
     const hasExplicitSec = parsedCurrent?.hasExplicitSecurityCode;
@@ -8427,7 +8978,7 @@ function updatePricePillsSelection(price) {
     if (metaFirstTicket) {
       metaFirstTicket.textContent = `${displayTicketNum} (${accurateSec})`;
     }
-    const formatted = formatLotteryBarcode(targetBarcode, state.customGames, accurateSec);
+    const formatted = formatLotteryBarcode(targetBarcode, state.customGames, accurateSec, state.lotteryJurisdiction);
     pendingSetBoxDisplayBarcode = formatted;
     if (barcodeDisplay) {
       barcodeDisplay.textContent = formatted;
@@ -8440,16 +8991,20 @@ function updatePricePillsSelection(price) {
 // -------------------------------------------------------------
 function openSetTicketDetailsModal(barcode, standardCode = null) {
   if (!barcode) return;
-  const parsed = parseLotteryBarcode(barcode, state.customGames);
+  const parsed = parseLotteryBarcode(barcode, state.customGames, state.lotteryJurisdiction);
+  if (parsed && parsed.isAmbiguous) {
+    sfx.alert();
+    showToast(`⚠️ ${parsed.error}`, 'warning');
+    return;
+  }
   if (!parsed || !parsed.isValid || parsed.isRetailProduct || parsed.isNonLotteryBarcode) {
     sfx.alert();
     showToast(`❌ [${barcode}] is not a valid scratch-off lottery ticket.`, 'error');
     return;
   }
 
-  // Check if this pack/ticket is in stock!
-  // If so, ask for Set in Box screen!
-  const inStock = findInStockPack(parsed, barcode);
+  // Check if this pack/ticket is in stock (unless user explicitly invoked Activate details flow for staged End Shift box)!
+  const inStock = !window.__activatingEndShiftSlot ? findInStockPack(parsed, barcode) : null;
   if (inStock && inStock.item) {
     openSetBoxForInStockPack(inStock.item, parsed, barcode);
     return;
@@ -8493,8 +9048,8 @@ function openSetTicketDetailsModal(barcode, standardCode = null) {
 
   // Use accurate normalized standard 14-digit lottery barcode (e.g. "14170670170009")
   const standardBarcode = (parsed && parsed.standardBarcode) ? parsed.standardBarcode : (standardCode || barcode);
-  pendingSetBoxBarcode = standardBarcode;
-  pendingNewTicketBarcode = standardBarcode;
+  pendingSetBoxBarcode = (parsed?.jurisdiction === 'SC') ? barcode : standardBarcode;
+  pendingNewTicketBarcode = (parsed?.jurisdiction === 'SC') ? barcode : standardBarcode;
 
   const barcodeDisplay = document.getElementById('setTicketBarcodeDisplay');
   const nameInput = document.getElementById('setBoxGameNameInput');
@@ -8508,7 +9063,9 @@ function openSetTicketDetailsModal(barcode, standardCode = null) {
   const metaFirstTicket = document.getElementById('setTicketMetaFirstTicket');
 
   // Auto-detect game and barcode details
-  const matchedGame = findGameByBarcode(standardBarcode, state.customGames) || findGameByBarcode(barcode, state.customGames);
+  const matchedGame = (parsed?.jurisdiction === 'SC' && (parsed.game || findScelGame(parsed.gameNumber)))
+    ? (parsed.game || findScelGame(parsed.gameNumber))
+    : (findGameByBarcode(standardBarcode, state.customGames, state.lotteryJurisdiction) || findGameByBarcode(barcode, state.customGames, state.lotteryJurisdiction));
   pendingSetBoxGame = matchedGame;
 
   let initialName = '';
@@ -8543,15 +9100,22 @@ function openSetTicketDetailsModal(barcode, standardCode = null) {
     }
   }
 
+  const isSC = state.lotteryJurisdiction === 'SC' || parsed?.jurisdiction === 'SC';
   const std = getStandardPackDetails(initialPrice);
-  const effectivePackSize = matchedGame?.packSize || parsed?.inferredDetails?.packSize || std.packSize;
+  const effectivePackSize = (matchedGame && matchedGame.packSize !== undefined)
+    ? matchedGame.packSize
+    : (isSC ? null : (parsed?.inferredDetails?.packSize || std.packSize));
 
-  const initialSec = (parsed && parsed.hasExplicitSecurityCode && parsed.securityCode)
-    ? parsed.securityCode
-    : (parsed?.securityCode || computeLotterySeriesCode(parsed?.gameNumber || (matchedGame ? matchedGame.barcodePrefix : ''), parsed?.ticketNumber, state.customGames, effectivePackSize));
+  const initialSec = isSC
+    ? null
+    : ((parsed && parsed.hasExplicitSecurityCode && parsed.securityCode)
+      ? parsed.securityCode
+      : (parsed?.securityCode || computeLotterySeriesCode(parsed?.gameNumber || (matchedGame ? matchedGame.barcodePrefix : ''), parsed?.ticketNumber, state.customGames, effectivePackSize)));
   pendingSetBoxSecurityCode = initialSec;
 
-  let displayBarcode = (parsed && parsed.displayBarcode) ? parsed.displayBarcode : formatLotteryBarcode(barcode, state.customGames, initialSec);
+  let displayBarcode = (parsed && parsed.displayBarcode)
+    ? parsed.displayBarcode
+    : formatLotteryBarcode(barcode, state.customGames, initialSec, state.lotteryJurisdiction);
   pendingSetBoxDisplayBarcode = displayBarcode;
 
   const eyebrowEl = document.getElementById('setTicketStepEyebrow');
@@ -8570,8 +9134,8 @@ function openSetTicketDetailsModal(barcode, standardCode = null) {
     if (btnAddStock) btnAddStock.style.display = 'none';
   }
 
-  // Populate metadata line (clean 6-digit pack number for display, check digit shown separately)
-  const displayPack = (parsed && (parsed.basePackNumber || parsed.packNumber)) ? (parsed.basePackNumber || parsed.packNumber) : ((parsed && parsed.packCombined) ? parsed.packCombined : '—');
+  // Populate metadata line with clean 6-digit pack number
+  const displayPack = formatDisplayPackNumber(parsed?.basePackNumber || parsed?.packNumber || parsed?.packCombined, '—');
   const displayTicketNum = (parsed && parsed.ticketString)
     ? parsed.ticketString
     : (parsed && parsed.ticketNumber !== null
@@ -8579,11 +9143,13 @@ function openSetTicketDetailsModal(barcode, standardCode = null) {
       : '000');
 
   const refreshPinDisplay = () => {
-    const currentSec = pendingSetBoxSecurityCode || '000';
+    const currentSec = pendingSetBoxSecurityCode || (isSC ? null : '000');
     if (metaFirstTicket) {
-      metaFirstTicket.textContent = `${displayTicketNum} (${currentSec})`;
+      metaFirstTicket.textContent = (isSC && !currentSec)
+        ? displayTicketNum
+        : `${displayTicketNum} (${currentSec})`;
     }
-    const updatedFormatted = formatLotteryBarcode(barcode, state.customGames, currentSec);
+    const updatedFormatted = formatLotteryBarcode(barcode, state.customGames, currentSec, state.lotteryJurisdiction);
     displayBarcode = updatedFormatted;
     pendingSetBoxDisplayBarcode = updatedFormatted;
     if (barcodeDisplay) barcodeDisplay.textContent = updatedFormatted;
@@ -8603,21 +9169,39 @@ function openSetTicketDetailsModal(barcode, standardCode = null) {
   };
 
   if (metaGameNum) metaGameNum.textContent = parsed?.gameNumber || (matchedGame ? matchedGame.barcodePrefix : '—');
-  if (metaPackNum) metaPackNum.textContent = displayPack;
+  if (metaPackNum) {
+    metaPackNum.textContent = (isSC && parsed?.checkCode)
+      ? `${displayPack} (Check: ${parsed.checkCode})`
+      : displayPack;
+  }
   if (metaFirstTicket) {
-    metaFirstTicket.textContent = `${displayTicketNum} (${initialSec})`;
-    metaFirstTicket.title = 'Click to edit or add series/bracket PIN code';
-    metaFirstTicket.onclick = editPinHandler;
+    metaFirstTicket.textContent = (isSC && !initialSec)
+      ? displayTicketNum
+      : `${displayTicketNum} (${initialSec || '000'})`;
+    metaFirstTicket.title = isSC ? 'First ticket number' : 'Click to edit or add series/bracket PIN code';
+    if (!isSC) {
+      metaFirstTicket.onclick = editPinHandler;
+    }
   }
   if (barcodeDisplay) {
     barcodeDisplay.textContent = displayBarcode;
-    barcodeDisplay.style.cursor = 'pointer';
-    barcodeDisplay.title = 'Click to edit series/bracket PIN code';
-    barcodeDisplay.onclick = editPinHandler;
+    if (!isSC) {
+      barcodeDisplay.style.cursor = 'pointer';
+      barcodeDisplay.title = 'Click to edit series/bracket PIN code';
+      barcodeDisplay.onclick = editPinHandler;
+    } else {
+      barcodeDisplay.style.cursor = 'default';
+      barcodeDisplay.title = '';
+      barcodeDisplay.onclick = null;
+    }
   }
   const btnEditPin = document.getElementById('btnEditTicketPin');
   if (btnEditPin) {
-    btnEditPin.onclick = editPinHandler;
+    if (isSC) {
+      btnEditPin.style.display = 'none';
+    } else {
+      btnEditPin.onclick = editPinHandler;
+    }
   }
 
   pendingChosenName = initialName;
@@ -8627,18 +9211,25 @@ function openSetTicketDetailsModal(barcode, standardCode = null) {
     nameInput.value = initialName;
   }
   updatePricePillsSelection(initialPrice);
-  if (effectivePackSize && effectivePackSize !== std.packSize) {
-    const tixInput = document.getElementById('setBoxPackTicketsInput');
-    const valInput = document.getElementById('setBoxPackValueInput');
+  const tixInput = document.getElementById('setBoxPackTicketsInput');
+  const valInput = document.getElementById('setBoxPackValueInput');
+  if (isSC && effectivePackSize === null) {
+    if (tixInput) tixInput.value = '';
+    if (valInput) valInput.value = '';
+    pendingChosenPackSize = null;
+    pendingChosenPackValue = null;
+  } else if (effectivePackSize && (effectivePackSize !== std.packSize || isSC)) {
     if (tixInput) tixInput.value = effectivePackSize;
     if (valInput) valInput.value = `$${(effectivePackSize * initialPrice).toFixed(2)}`;
     pendingChosenPackSize = effectivePackSize;
     pendingChosenPackValue = effectivePackSize * initialPrice;
   }
 
+  pendingSetBoxJurisdiction = parsed?.jurisdiction || (isSC ? 'SC' : 'GA');
+
   sfx.beep();
   if (setTicketDetailsModal) {
-    setTicketDetailsModal.dataset.barcode = standardBarcode;
+    setTicketDetailsModal.dataset.barcode = (parsed?.jurisdiction === 'SC') ? barcode : standardBarcode;
     if (!setTicketDetailsModal.open) {
       setTicketDetailsModal.showModal();
     }
@@ -8670,8 +9261,13 @@ export function saveTicketDetailsToInStock() {
   const customPrice = parseFloat(priceInput?.value);
   const chosenPrice = (!isNaN(customPrice) && customPrice > 0) ? customPrice : (pillPrice || 1);
 
+  const isSC = state.lotteryJurisdiction === 'SC';
   const std = getStandardPackDetails(chosenPrice);
-  const chosenPackSize = parseInt(tixInput?.value, 10) || std.packSize || 100;
+  const rawTixVal = tixInput?.value?.trim();
+  const hasExplicitPackSize = Boolean(rawTixVal && !isNaN(parseInt(rawTixVal, 10)) && parseInt(rawTixVal, 10) > 0);
+  const chosenPackSize = hasExplicitPackSize
+    ? parseInt(rawTixVal, 10)
+    : (isSC ? (pendingSetBoxGame?.packSize ?? null) : (std.packSize || 100));
 
   const barcode = pendingSetBoxBarcode || setTicketDetailsModal?.dataset.barcode || pendingNewTicketBarcode;
   if (!barcode) {
@@ -8679,7 +9275,7 @@ export function saveTicketDetailsToInStock() {
     return;
   }
 
-  const parsed = parseLotteryBarcode(barcode, state.customGames);
+  const parsed = parseLotteryBarcode(barcode, state.customGames, state.lotteryJurisdiction);
   const cleanPack = (parsed && (parsed.packNumber || parsed.packCombined))
     ? (parsed.packNumber || parsed.packCombined)
     : (String(barcode).replace(/[^0-9]/g, '').slice(-6) || '000000');
@@ -8695,9 +9291,10 @@ export function saveTicketDetailsToInStock() {
 
   // 1. Add to state.inStockInventory
   if (!Array.isArray(state.inStockInventory)) {
-    state.inStockInventory = (!state.dataCleared && (!state.storeId || state.storeId === 'store_amigo')) ? JSON.parse(JSON.stringify(REFERENCE_IN_STOCK_PACKS)) : [];
+    state.inStockInventory = [];
   }
   const existingIdx = state.inStockInventory.findIndex(p => isPackNumberMatch(p.packNumber, cleanPack));
+  const resolvedJurisdiction = pendingSetBoxJurisdiction || (parsed?.jurisdiction === 'SC' || isSC ? 'SC' : 'GA');
   const stockItem = {
     id: 'stock_' + Date.now(),
     barcode: (parsed && parsed.standardBarcode) ? parsed.standardBarcode : barcode,
@@ -8709,14 +9306,19 @@ export function saveTicketDetailsToInStock() {
     game: cleanName,
     packNumber: String(cleanPack),
     pack: String(cleanPack),
+    basePackNumber: parsed?.basePackNumber || cleanPack,
+    checkDigit: (parsed && (parsed.checkCode || parsed.checkDigit)) ? (parsed.checkCode || parsed.checkDigit) : (resolvedJurisdiction === 'SC' ? '6' : null),
+    packCombined: (resolvedJurisdiction === 'SC' && (parsed?.checkCode || parsed?.checkDigit)) ? `${parsed.basePackNumber || cleanPack}-${parsed.checkCode || parsed.checkDigit}` : String(cleanPack),
     price: Number(chosenPrice) || 1,
-    packSize: `${chosenPackSize} tickets`,
-    packSizeNum: Number(chosenPackSize) || 100,
+    packSize: (chosenPackSize !== null && chosenPackSize !== undefined) ? `${chosenPackSize} tickets` : 'Unverified',
+    packSizeNum: (chosenPackSize !== null && chosenPackSize !== undefined) ? Number(chosenPackSize) : null,
     status: 'IN_STOCK',
     statusLabel: 'In stock',
     statusBadgeClass: 'badge-in-stock',
     boxNumber: null,
     position: pos,
+    jurisdiction: resolvedJurisdiction,
+    displayBarcode: pendingSetBoxDisplayBarcode || parsed?.displayBarcode,
     receivedDate: 'Today'
   };
 
@@ -8737,6 +9339,8 @@ export function saveTicketDetailsToInStock() {
     packSize: Number(chosenPackSize) || 100,
     bookValue: (Number(chosenPackSize) || 100) * (Number(chosenPrice) || 1),
     status: 'STORED',
+    jurisdiction: resolvedJurisdiction,
+    checkDigit: (parsed && (parsed.checkCode || parsed.checkDigit)) ? (parsed.checkCode || parsed.checkDigit) : null,
     scannedAt: new Date().toISOString()
   };
   if (invIdx !== -1) {
@@ -8805,37 +9409,7 @@ export function saveTicketDetailsToInStock() {
 
 export function handleTicketDetailsNextClick() {
   if (window.__activatingEndShiftSlot && state.shiftStatus === 'SCANNING_END_SHIFT') {
-    const nameInput = document.getElementById('setBoxGameNameInput');
-    const priceInput = document.getElementById('setBoxPriceInput');
-    const valInput = document.getElementById('setBoxPackValueInput');
-    const tixInput = document.getElementById('setBoxPackTicketsInput');
-    const activePill = document.querySelector('.set-box-price-pill.active');
-    const pillPrice = activePill ? parseFloat(activePill.getAttribute('data-price')) : 1;
-    const customPrice = parseFloat(priceInput?.value);
-
-    pendingChosenName = nameInput?.value?.trim() || pendingChosenName || (pendingSetBoxGame ? cleanGameTitle(pendingSetBoxGame.name) : 'Scratch-Off Game');
-    pendingChosenPrice = (!isNaN(customPrice) && customPrice > 0) ? customPrice : (pillPrice || 1);
-    const std = getStandardPackDetails(pendingChosenPrice);
-    pendingChosenPackSize = parseInt(tixInput?.value, 10) || std.packSize || 100;
-    pendingChosenPackValue = (valInput && valInput.value) ? valInput.value : (pendingChosenPackSize * pendingChosenPrice);
-
-    const barcode = pendingSetBoxBarcode || setTicketDetailsModal?.dataset.barcode || pendingNewTicketBarcode;
-
-    isTransitioningSetBoxStep = true;
-    try {
-      if (setTicketDetailsModal && setTicketDetailsModal.open) {
-        setTicketDetailsModal.close();
-      }
-      openSetBoxModal(barcode);
-      const boxInput = document.getElementById('setBoxNumberInput');
-      if (boxInput && window.__activatingEndShiftSlot) {
-        boxInput.value = window.__activatingEndShiftSlot.boxNumber;
-      }
-    } finally {
-      setTimeout(() => {
-        isTransitioningSetBoxStep = false;
-      }, 400);
-    }
+    proceedToSetBoxStep();
     return;
   }
   saveTicketDetailsToInStock();
@@ -8846,20 +9420,7 @@ export function handleTicketDetailsAddStockClick() {
   if (window.__activatingEndShiftSlot) {
     const sl = (state.slots || []).find(s => Number(s.boxNumber) === Number(window.__activatingEndShiftSlot.boxNumber));
     if (sl) {
-      sl.status = 'EMPTY';
-      sl.needsActivation = false;
-      sl.gameId = null;
-      sl.gameName = null;
-      sl.price = null;
-      sl.packNumber = null;
-      sl.packSize = null;
-      sl.startTicket = 0;
-      sl.currentTicket = 0;
-      sl.ticketsSold = 0;
-      sl.scannedBarcodes = [];
-      delete sl.pendingEndShiftBarcode;
-      delete sl.pendingEndShiftEffectiveBarcode;
-      delete sl.pendingEndShiftParsed;
+      resetSlotToEmpty(sl);
     }
     window.__activatingEndShiftSlot = null;
     saveState(state);
@@ -8874,7 +9435,37 @@ export function handleTicketDetailsAddStockClick() {
 }
 
 function proceedToSetBoxStep() {
-  saveTicketDetailsToInStock();
+  const nameInput = document.getElementById('setBoxGameNameInput');
+  const priceInput = document.getElementById('setBoxPriceInput');
+  const valInput = document.getElementById('setBoxPackValueInput');
+  const tixInput = document.getElementById('setBoxPackTicketsInput');
+  const activePill = document.querySelector('.set-box-price-pill.active');
+  const pillPrice = activePill ? parseFloat(activePill.getAttribute('data-price')) : 1;
+  const customPrice = parseFloat(priceInput?.value);
+
+  pendingChosenName = nameInput?.value?.trim() || pendingChosenName || (pendingSetBoxGame ? cleanGameTitle(pendingSetBoxGame.name) : 'Scratch-Off Game');
+  pendingChosenPrice = (!isNaN(customPrice) && customPrice > 0) ? customPrice : (pillPrice || 1);
+  const std = getStandardPackDetails(pendingChosenPrice);
+  pendingChosenPackSize = parseInt(tixInput?.value, 10) || std.packSize || 100;
+  pendingChosenPackValue = (valInput && valInput.value) ? valInput.value : (pendingChosenPackSize * pendingChosenPrice);
+
+  const barcode = pendingSetBoxBarcode || setTicketDetailsModal?.dataset.barcode || pendingNewTicketBarcode;
+
+  isTransitioningSetBoxStep = true;
+  try {
+    if (setTicketDetailsModal && setTicketDetailsModal.open) {
+      setTicketDetailsModal.close();
+    }
+    openSetBoxModal(barcode);
+    const boxInput = document.getElementById('setBoxNumberInput');
+    if (boxInput && window.__activatingEndShiftSlot) {
+      boxInput.value = window.__activatingEndShiftSlot.boxNumber;
+    }
+  } finally {
+    setTimeout(() => {
+      isTransitioningSetBoxStep = false;
+    }, 400);
+  }
 }
 
 // -------------------------------------------------------------
@@ -8896,9 +9487,9 @@ export function updateReturnMetrics(slot) {
   let curVal = parseInt(ticketInput.value, 10);
   if (isNaN(curVal)) curVal = startT;
 
-  const sold = Math.max(0, curVal - startT);
+  const sold = calculateSlotSoldTickets({ ...targetSlot, startTicket: startT, currentTicket: curVal, packSize: pSize, price });
   const counted = (sold * price).toFixed(2);
-  const unsold = Math.max(0, pSize - curVal);
+  const unsold = Math.max(0, pSize - sold);
 
   const mSold = document.getElementById('returnMetricSold');
   const mCounted = document.getElementById('returnMetricCounted');
@@ -8944,6 +9535,7 @@ export function renderChangeBoxPills(currentBox) {
       const confirmBtn = document.getElementById('btnSetBoxConfirm');
       if (confirmBtn) confirmBtn.textContent = `+ Add to box ${bNum}`;
       sfx.keypad?.();
+      checkAndRenderSetBoxConflict(bNum);
     });
 
     container.appendChild(pill);
@@ -9080,7 +9672,7 @@ export function checkAndRenderSetBoxConflict(boxNum) {
 
   // Check if box is occupied by a different active pack
   const rawCandidate = pendingSetBoxBarcode || setBoxModal?.dataset.barcode || setTicketDetailsModal?.dataset.barcode || pendingNewTicketBarcode;
-  const parsedCandidate = parseLotteryBarcode(rawCandidate, state.customGames);
+  const parsedCandidate = parseLotteryBarcode(rawCandidate, state.customGames, state.lotteryJurisdiction);
   const candidatePack = parsedCandidate?.packCombined || parsedCandidate?.packNumber || (rawCandidate ? String(rawCandidate).replace(/[^0-9]/g, '').slice(-6) : null);
   const targetSlot = (state.slots || []).find(s => Number(s.boxNumber) === num);
   const isSamePack = targetSlot && isPackNumberMatch(targetSlot.packNumber, candidatePack) &&
@@ -9100,6 +9692,7 @@ export function checkAndRenderSetBoxConflict(boxNum) {
       if (successCard) successCard.style.display = 'none';
       if (footerNormal) footerNormal.style.display = 'flex';
       if (footerSuccess) footerSuccess.style.display = 'none';
+      if (confirmBtn) confirmBtn.textContent = `+ Return & add to box ${num}`;
     } else if (setBoxCurrentSubView === 'changebox') {
       if (changeBoxCard) changeBoxCard.style.display = 'block';
       if (conflictCard) conflictCard.style.display = 'none';
@@ -9107,6 +9700,7 @@ export function checkAndRenderSetBoxConflict(boxNum) {
       if (successCard) successCard.style.display = 'none';
       if (footerNormal) footerNormal.style.display = 'flex';
       if (footerSuccess) footerSuccess.style.display = 'none';
+      if (confirmBtn) confirmBtn.textContent = `+ Pick an empty box`;
     } else if (setBoxCurrentSubView === 'success') {
       if (successCard) successCard.style.display = 'block';
       if (conflictCard) conflictCard.style.display = 'none';
@@ -9129,7 +9723,15 @@ export function checkAndRenderSetBoxConflict(boxNum) {
       }
       if (label) label.style.color = '#ef4444';
       if (confirmBtn) {
-        confirmBtn.textContent = selectedSetBoxConflictAction === 'soldout' ? `+ Close & add to box ${num}` : `+ Choose an option above`;
+        if (selectedSetBoxConflictAction === 'soldout') {
+          confirmBtn.textContent = `+ Close & add to box ${num}`;
+        } else if (selectedSetBoxConflictAction === 'return') {
+          confirmBtn.textContent = `+ Return & add to box ${num}`;
+        } else if (selectedSetBoxConflictAction === 'changebox') {
+          confirmBtn.textContent = `+ Pick an empty box`;
+        } else {
+          confirmBtn.textContent = `+ Choose an option above`;
+        }
       }
     }
 
@@ -9153,7 +9755,7 @@ export function checkAndRenderSetBoxConflict(boxNum) {
     const curT = String(targetSlot.currentTicket !== undefined ? targetSlot.currentTicket : 0).padStart(3, '0');
 
     if (cGameTitle) cGameTitle.textContent = `$${targetSlot.price || 5} ${cleanGName}`;
-    if (cGameMeta) cGameMeta.textContent = `Pack ${targetSlot.packNumber || '---'} · ${pSize} tickets · opened this shift at ${startT}`;
+    if (cGameMeta) cGameMeta.textContent = `Pack ${formatDisplayPackNumber(targetSlot, '---')} · ${pSize} tickets · opened this shift at ${startT}`;
     if (cLastTicket) cLastTicket.textContent = curT;
     if (cKeepGame) cKeepGame.textContent = cleanGName;
 
@@ -9176,18 +9778,20 @@ export function checkAndRenderSetBoxConflict(boxNum) {
     if (cbOldGame) cbOldGame.textContent = cleanGName;
     if (cbNewGame) cbNewGame.textContent = cleanGameTitle(pendingChosenName || '50X Money');
 
+    const existingNewData = pendingConflictResolution?.newTicketData;
     pendingConflictResolution = {
       boxNum: num,
       barcode: rawCandidate,
       existingSlot: targetSlot,
       newTicketData: {
-        chosenName: pendingChosenName,
-        chosenPrice: pendingChosenPrice,
-        chosenPackSize: pendingChosenPackSize,
-        securityCode: pendingSetBoxSecurityCode,
-        detectedGame: pendingSetBoxGame,
-        restorePack: pendingRestorePack
-      }
+        chosenName: (existingNewData?.chosenName && existingNewData.chosenName !== 'Scratch-Off Game') ? existingNewData.chosenName : (pendingChosenName || setBoxModal?.dataset.gameName || 'Scratch-Off Game'),
+        chosenPrice: (existingNewData?.chosenPrice) ? existingNewData.chosenPrice : (pendingChosenPrice || parseFloat(setBoxModal?.dataset.gamePrice) || 1),
+        chosenPackSize: (existingNewData?.chosenPackSize) ? existingNewData.chosenPackSize : (pendingChosenPackSize || parseInt(setBoxModal?.dataset.packSize, 10) || 100),
+        securityCode: existingNewData?.securityCode || pendingSetBoxSecurityCode || setBoxModal?.dataset.securityCode || null,
+        detectedGame: existingNewData?.detectedGame || pendingSetBoxGame,
+        restorePack: existingNewData?.restorePack || pendingRestorePack
+      },
+      targetEmptyBox: pendingConflictResolution?.targetEmptyBox
     };
   } else {
     // Empty box
@@ -9221,6 +9825,7 @@ window.renderChangeBoxPills = renderChangeBoxPills;
 function openSetBoxModal(barcode) {
   if (!barcode) barcode = pendingSetBoxBarcode || setTicketDetailsModal?.dataset.barcode;
   if (!barcode) return;
+  const prevPendingBarcode = pendingSetBoxBarcode;
   pendingSetBoxBarcode = barcode;
   setBoxModalOpenedAt = Date.now();
 
@@ -9257,6 +9862,16 @@ function openSetBoxModal(barcode) {
   const enterBtn = document.getElementById('btnSetBoxKpEnter');
   if (enterBtn) enterBtn.classList.remove('enter-muted');
 
+  const parsed = parseLotteryBarcode(barcode, state.customGames, state.lotteryJurisdiction);
+  const parsedPrev = prevPendingBarcode ? parseLotteryBarcode(prevPendingBarcode, state.customGames, state.lotteryJurisdiction) : null;
+  if (parsed?.isValid && prevPendingBarcode !== barcode && pendingSoldOutRecovery?.barcode !== barcode && (!parsedPrev?.canonicalId || parsedPrev.canonicalId !== parsed.canonicalId)) {
+    if (parsed.gameName) pendingChosenName = parsed.gameName;
+    if (parsed.price) pendingChosenPrice = parsed.price;
+    if (parsed.packSize) pendingChosenPackSize = parsed.packSize;
+    pendingSetBoxSecurityCode = parsed.securityCode || null;
+    pendingSetBoxDisplayBarcode = parsed.displayBarcode || null;
+  }
+
   if (setBoxModal) {
     setBoxModal.dataset.barcode = barcode;
     setBoxModal.dataset.securityCode = pendingSetBoxSecurityCode || '';
@@ -9265,7 +9880,6 @@ function openSetBoxModal(barcode) {
     setBoxModal.dataset.packSize = String(pendingChosenPackSize || 100);
   }
 
-  const parsed = parseLotteryBarcode(barcode, state.customGames);
   const cleanPack = (parsed && (parsed.packNumber || parsed.packCombined)) ? (parsed.packNumber || parsed.packCombined) : (barcode ? String(barcode).replace(/[^0-9]/g, '').slice(-6) : '---');
 
   // Fill Step 2 Ticket Summary
@@ -9276,13 +9890,16 @@ function openSetBoxModal(barcode) {
 
   if (s2Name) s2Name.textContent = cleanGameTitle(pendingChosenName);
   if (s2Price) s2Price.textContent = '$' + String(pendingChosenPrice ?? '').replace(/^\$/, '');
-  const packDisplay = (parsed && parsed.packNumber) ? parsed.packNumber : ((parsed && parsed.packCombined) ? parsed.packCombined : cleanPack);
+  const packDisplay = formatDisplayPackNumber(parsed?.basePackNumber || parsed?.packNumber || parsed?.packCombined || cleanPack, '---');
   const gameNum = parsed?.gameNumber || pendingSetBoxGame?.gameNumber || pendingSetBoxGame?.id || '1422';
   if (s2Pack) s2Pack.textContent = `Game ${gameNum} · Pack ${packDisplay}`;
   const s2Count = document.getElementById('step2TicketsCountDisplay');
-  if (s2Count) s2Count.textContent = `${pendingChosenPackSize || 30} tickets · starts at ticket 000`;
+  const startTixStr = parsed?.ticketString || (parsed?.ticketNumber !== null && parsed?.ticketNumber !== undefined ? String(parsed.ticketNumber).padStart(3, '0') : '000');
+  if (s2Count) s2Count.textContent = `${pendingChosenPackSize || 30} tickets · starts at ticket ${startTixStr}`;
+  const isScTicket = parsed?.jurisdiction === 'SC' || state.lotteryJurisdiction === 'SC';
   const displayBarcodeText = pendingSetBoxDisplayBarcode
-    || formatLotteryBarcode(barcode, state.customGames, pendingSetBoxSecurityCode || '000');
+    || parsed?.displayBarcode
+    || formatLotteryBarcode(barcode, state.customGames, pendingSetBoxSecurityCode || (isScTicket ? null : '000'), parsed?.jurisdiction || state.lotteryJurisdiction);
   if (s2Barcode) s2Barcode.textContent = `Barcode #${displayBarcodeText}`;
 
   // Guard: If this pack is already active in a dispenser box, DO NOT open choose box!
@@ -9366,74 +9983,83 @@ function openSetBoxModal(barcode) {
 // Box Occupied Conflict Resolution (Empty Box vs Return Pack)
 // -------------------------------------------------------------
 let pendingConflictResolution = null;
+if (typeof window !== 'undefined') {
+  Object.defineProperty(window, 'pendingConflictResolution', {
+    get() { return pendingConflictResolution; },
+    set(v) { pendingConflictResolution = v; },
+    configurable: true
+  });
+}
 
 export function promptBoxConflictModal(boxNum, barcode, existingSlot, newTicketData) {
+  const emptySlots = (state.slots || []).filter(s => (s.status !== 'ACTIVE' && !s.needsActivation) || !s.packNumber);
+  const emptyBoxNum = emptySlots.length > 0 ? Number(emptySlots[0].boxNumber) : ((state.totalSlots || 65) + 1);
+
+  if (barcode) pendingSetBoxBarcode = barcode;
+  if (newTicketData?.chosenName) pendingChosenName = newTicketData.chosenName;
+  if (newTicketData?.chosenPrice) pendingChosenPrice = newTicketData.chosenPrice;
+  if (newTicketData?.chosenPackSize) pendingChosenPackSize = newTicketData.chosenPackSize;
+  if (newTicketData?.securityCode) pendingSetBoxSecurityCode = newTicketData.securityCode;
+
   pendingConflictResolution = {
     boxNum,
-    barcode,
-    existingSlot,
-    newTicketData
+    barcode: barcode || pendingSetBoxBarcode,
+    existingSlot: existingSlot || (state.slots || []).find(s => Number(s.boxNumber) === Number(boxNum)),
+    newTicketData: {
+      chosenName: newTicketData?.chosenName || pendingChosenName || 'Scratch-Off Game',
+      chosenPrice: newTicketData?.chosenPrice || pendingChosenPrice || 1,
+      chosenPackSize: newTicketData?.chosenPackSize || pendingChosenPackSize || 100,
+      securityCode: newTicketData?.securityCode || pendingSetBoxSecurityCode || null,
+      detectedGame: newTicketData?.detectedGame || pendingSetBoxGame,
+      restorePack: newTicketData?.restorePack || pendingRestorePack
+    },
+    targetEmptyBox: emptyBoxNum
   };
 
-  const emptyBoxNum = findFirstEmptyBox();
+  // Keep legacy elements synchronized for backwards-compatibility tests
   const conflictSuggestedEmptyBoxText = document.getElementById('conflictSuggestedEmptyBoxText');
   if (conflictSuggestedEmptyBoxText) {
     conflictSuggestedEmptyBoxText.textContent = `Box #${emptyBoxNum}`;
   }
-
-  const modal = document.getElementById('boxOccupiedConflictModal');
-  if (!modal) {
-    const choice = window.prompt(
-      `Box #${boxNum} is already occupied by "${cleanGameTitle(existingSlot.gameName)}" (Pack #${existingSlot.packNumber}).\n\nType 1 to Move to Box #${emptyBoxNum}, 2 to Mark Sold Out, 3 to Return to Safe Inventory:`,
-      '1'
-    );
-    if (choice === '1') resolveBoxConflict('move');
-    else if (choice === '2') resolveBoxConflict('soldout');
-    else resolveBoxConflict('return');
-    return;
-  }
-
   const conflictBoxNum = document.getElementById('conflictBoxNum');
-  const conflictCurrentBoxText = document.getElementById('conflictCurrentBoxText');
-  const conflictTargetBoxText = document.getElementById('conflictTargetBoxText');
-  const conflictCurrentGameTitle = document.getElementById('conflictCurrentGameTitle');
-  const conflictCurrentGameDetails = document.getElementById('conflictCurrentGameDetails');
-  const conflictNewGameTitle = document.getElementById('conflictNewGameTitle');
-  const conflictNewGameDetails = document.getElementById('conflictNewGameDetails');
-
   if (conflictBoxNum) conflictBoxNum.textContent = boxNum;
-  if (conflictCurrentBoxText) conflictCurrentBoxText.textContent = boxNum;
-  if (conflictTargetBoxText) conflictTargetBoxText.textContent = boxNum;
-  document.querySelectorAll('.conflictBoxInline').forEach(el => {
-    el.textContent = boxNum;
-  });
 
-  const curClean = cleanGameTitle(existingSlot.gameName);
-  const curPos = (existingSlot.currentTicket !== undefined && existingSlot.currentTicket !== null) ? existingSlot.currentTicket : 0;
-  if (conflictCurrentGameTitle) {
-    conflictCurrentGameTitle.textContent = `${curClean} · Pack #${existingSlot.packNumber || '---'}`;
-  }
-  if (conflictCurrentGameDetails) {
-    conflictCurrentGameDetails.textContent = `Current Ticket #${String(curPos).padStart(3, '0')} · $${existingSlot.price || 1} / ticket`;
+  // Never open the legacy boxOccupiedConflictModal dialog!
+  // Conflict resolution is seamlessly presented inside setBoxModal.
+  const modal = document.getElementById('boxOccupiedConflictModal');
+  if (modal && modal.open) {
+    modal.close();
   }
 
-  const newClean = cleanGameTitle(newTicketData.chosenName);
-  if (conflictNewGameTitle) {
-    conflictNewGameTitle.textContent = `${newClean} · Barcode ${barcode ? String(barcode).slice(-6) : ''}`;
-  }
-  if (conflictNewGameDetails) {
-    conflictNewGameDetails.textContent = `Price: $${newTicketData.chosenPrice} · Pack Size: ${newTicketData.chosenPackSize} tickets`;
+  const setBoxModal = document.getElementById('setBoxModal');
+  if (setBoxModal && !setBoxModal.open) {
+    if (typeof openSetBoxModal === 'function') {
+      openSetBoxModal(barcode);
+    }
+    setBoxModal.showModal();
   }
 
-  sfx.alert();
-  if (!modal.open) {
-    modal.showModal();
+  const boxInput = document.getElementById('setBoxNumberInput');
+  if (boxInput) {
+    boxInput.value = boxNum;
+    delete boxInput.dataset.fresh;
   }
+
+  const savedRes = pendingConflictResolution;
+  checkAndRenderSetBoxConflict(boxNum);
+  if (savedRes) {
+    pendingConflictResolution = savedRes;
+  }
+  sfx.alert?.();
 }
 
+let isResolvingBoxConflict = false;
 export function resolveBoxConflict(action) {
+  if (isResolvingBoxConflict) return;
   if (!pendingConflictResolution) return;
-  const { boxNum, barcode, existingSlot, newTicketData } = pendingConflictResolution;
+  isResolvingBoxConflict = true;
+  try {
+  const { boxNum, barcode, existingSlot, newTicketData, targetEmptyBox } = pendingConflictResolution;
   const modal = document.getElementById('boxOccupiedConflictModal');
   if (modal && modal.open) {
     modal.close();
@@ -9452,8 +10078,8 @@ export function resolveBoxConflict(action) {
   const oldPackNum = slot.packNumber || '---';
 
   if (action === 'move') {
-    // 1. "Move to Empty Box": Transfer the current pack to the first available empty box on the rack
-    const emptyBoxNum = findFirstEmptyBox();
+    // 1. "Move to Empty Box": Transfer the current pack to the explicitly chosen available empty box on the rack
+    const emptyBoxNum = targetEmptyBox || findFirstEmptyBox();
 
     // Expand state.slots if emptyBoxNum exceeds state.totalSlots
     if (emptyBoxNum > state.totalSlots) {
@@ -9481,23 +10107,9 @@ export function resolveBoxConflict(action) {
 
     const emptySlot = (state.slots || []).find(s => Number(s.boxNumber) === Number(emptyBoxNum));
     if (emptySlot) {
-      emptySlot.status = 'ACTIVE';
-      emptySlot.gameId = slot.gameId;
-      emptySlot.gameName = slot.gameName;
-      emptySlot.price = slot.price;
-      emptySlot.packNumber = slot.packNumber;
-      emptySlot.packSize = slot.packSize;
-      emptySlot.barcodePrefix = slot.barcodePrefix;
-      emptySlot.startTicket = (slot.startTicket !== undefined && slot.startTicket !== null) ? slot.startTicket : 0;
-      emptySlot.currentTicket = (slot.currentTicket !== undefined && slot.currentTicket !== null) ? slot.currentTicket : 0;
-      emptySlot.ticketsSold = slot.ticketsSold || 0;
-      emptySlot.previousShiftSold = slot.previousShiftSold || 0;
-      emptySlot.activatedThisShift = slot.activatedThisShift || false;
-      emptySlot.daysActive = slot.daysActive || 1;
+      moveSlotPackData(slot, emptySlot);
       emptySlot.scannedInEndShift = false;
-      emptySlot.scannedBarcodes = Array.isArray(slot.scannedBarcodes) ? [...slot.scannedBarcodes] : [];
-      emptySlot.soldBarcodes = Array.isArray(slot.soldBarcodes) ? [...slot.soldBarcodes] : [];
-      emptySlot.ticketsInBox = emptySlot.scannedBarcodes.length;
+      emptySlot.ticketsInBox = Array.isArray(emptySlot.scannedBarcodes) ? emptySlot.scannedBarcodes.length : 0;
 
       // Ensure empty box appears in visible rack
       if (!Array.isArray(state.visibleBoxNumbers)) state.visibleBoxNumbers = [];
@@ -9507,26 +10119,13 @@ export function resolveBoxConflict(action) {
       bringBoxToVisibleRack(emptyBoxNum);
     }
 
-    // Clear the original slot so the new ticket can be activated here
-    slot.status = 'EMPTY';
-    slot.packNumber = null;
-    slot.gameName = 'Empty Slot';
-    slot.gameId = null;
-    slot.price = null;
-    slot.currentTicket = 0;
-    slot.startTicket = 0;
-    slot.scannedBarcodes = [];
-    slot.soldBarcodes = [];
-    slot.ticketsInBox = 0;
-    slot.activatedThisShift = false;
-
   } else if (action === 'soldout' || action === 'empty') {
     // 2. "Mark as Sold Out": record old pack as finished/sold out in state.soldOutThisShift
     const std = getStandardPackDetails(slot.price || 2);
     const packSize = slot.packSize || std.packSize || 100;
     const curr = (slot.currentTicket !== undefined && slot.currentTicket !== null) ? slot.currentTicket : packSize;
     const start = (slot.startTicket !== undefined && slot.startTicket !== null) ? slot.startTicket : 0;
-    const sold = Math.max(0, curr - start);
+    const sold = calculateSlotSoldTickets({ ...slot, startTicket: start, currentTicket: curr, packSize, status: 'SOLD_OUT' });
     const price = slot.price || 0;
 
     if (!state.soldOutThisShift) state.soldOutThisShift = [];
@@ -9552,18 +10151,8 @@ export function resolveBoxConflict(action) {
       state.soldOutThisShift.unshift(soRecord);
     }
 
-    // Clear slot
-    slot.status = 'EMPTY';
-    slot.packNumber = null;
-    slot.gameName = 'Empty Slot';
-    slot.gameId = null;
-    slot.price = null;
-    slot.currentTicket = 0;
-    slot.startTicket = 0;
-    slot.scannedBarcodes = [];
-    slot.soldBarcodes = [];
-    slot.ticketsInBox = 0;
-    slot.activatedThisShift = false;
+    // Clear slot completely (all metadata)
+    resetSlotToEmpty(slot);
 
   } else if (action === 'return') {
     // 3. "Return the Pack": return remaining unsold tickets to safe inventory
@@ -9574,7 +10163,7 @@ export function resolveBoxConflict(action) {
     if (curr > packSize) curr = packSize;
     if (curr < 0) curr = 0;
 
-    const sold = Math.max(0, curr - start);
+    const sold = calculateSlotSoldTickets({ ...slot, startTicket: start, currentTicket: curr, packSize });
     const remaining = Math.max(0, packSize - sold);
     const price = slot.price || 0;
     const soldAmt = sold * price;
@@ -9605,11 +10194,21 @@ export function resolveBoxConflict(action) {
       existingStock.boxNumber = null;
       existingStock.currentTicket = curr;
       existingStock.status = 'IN_STOCK';
+      if (slot.jurisdiction) existingStock.jurisdiction = slot.jurisdiction;
+      if (slot.barcodePrefix) existingStock.barcodePrefix = slot.barcodePrefix;
+      if (slot.checkDigit) existingStock.checkDigit = slot.checkDigit;
+      if (slot.basePackNumber) existingStock.basePackNumber = slot.basePackNumber;
+      if (slot.packCombined) existingStock.packCombined = slot.packCombined;
     } else {
       state.inStockInventory.unshift({
         packNumber: String(slot.packNumber),
         gameName: slot.gameName,
         gameId: slot.gameId,
+        barcodePrefix: slot.barcodePrefix || '',
+        basePackNumber: slot.basePackNumber || String(slot.packNumber),
+        checkDigit: slot.checkDigit || null,
+        packCombined: slot.packCombined || String(slot.packNumber),
+        jurisdiction: slot.jurisdiction || null,
         price: price,
         packSize: packSize,
         currentTicket: curr,
@@ -9621,18 +10220,8 @@ export function resolveBoxConflict(action) {
 
     state.returnedCount = (state.returnedCount || 0) + 1;
 
-    // Clear slot
-    slot.status = 'EMPTY';
-    slot.packNumber = null;
-    slot.gameName = 'Empty Slot';
-    slot.gameId = null;
-    slot.price = null;
-    slot.currentTicket = 0;
-    slot.startTicket = 0;
-    slot.scannedBarcodes = [];
-    slot.soldBarcodes = [];
-    slot.ticketsInBox = 0;
-    slot.activatedThisShift = false;
+    // Clear slot completely (all metadata)
+    resetSlotToEmpty(slot);
   }
 
   // 4. Immediately activate the new ticket on this box!
@@ -9674,6 +10263,11 @@ export function resolveBoxConflict(action) {
   }
 
   pendingConflictResolution = null;
+  } finally {
+    setTimeout(() => {
+      isResolvingBoxConflict = false;
+    }, 500);
+  }
 }
 
 function setupBoxConflictModalListeners() {
@@ -9758,56 +10352,70 @@ function confirmSetBoxForTicket(isFromEnterKey = false) {
 
     // Check if target box is already occupied by a different active game/pack
     const targetSlot = (state.slots || []).find(s => Number(s.boxNumber) === Number(boxNum));
-    const parsedCandidate = parseLotteryBarcode(barcode, state.customGames);
+    const parsedCandidate = parseLotteryBarcode(barcode, state.customGames, state.lotteryJurisdiction);
     const candidatePack = parsedCandidate?.packCombined || parsedCandidate?.packNumber || (barcode ? String(barcode).replace(/[^0-9]/g, '').slice(-6) : null);
     const isSamePack = targetSlot && isPackNumberMatch(targetSlot.packNumber, candidatePack) &&
       (!parsedCandidate?.gameNumber || slotMatchesGameNumber(targetSlot, parsedCandidate.gameNumber));
-    const isOccupiedByDifferent = Boolean(targetSlot && targetSlot.status === 'ACTIVE' && targetSlot.packNumber && !isSamePack);
+    const isOccupiedByDifferent = Boolean(targetSlot && targetSlot.status === 'ACTIVE' && !targetSlot.needsActivation && targetSlot.packNumber && !isSamePack);
 
     if (isOccupiedByDifferent) {
-      const conflictCard = document.getElementById('setBoxConflictCard');
-      const isConflictVisible = conflictCard && conflictCard.style.display !== 'none';
-      if (isConflictVisible && selectedSetBoxConflictAction) {
-        if (selectedSetBoxConflictAction === 'changebox') {
-          showToast('Please enter an empty box number or select an option above.', 'info');
-          boxInput?.focus();
-          return;
-        }
-        if (selectedSetBoxConflictAction === 'soldout' || selectedSetBoxConflictAction === 'return') {
-          if (!pendingConflictResolution) {
-            pendingConflictResolution = {
-              boxNum,
-              barcode,
-              existingSlot: targetSlot,
-              newTicketData: {
-                chosenName,
-                chosenPrice,
-                chosenPackSize,
-                securityCode,
-                detectedGame: pendingSetBoxGame,
-                restorePack
-              }
-            };
+      if (!pendingConflictResolution) {
+        pendingConflictResolution = {
+          boxNum,
+          barcode,
+          existingSlot: targetSlot,
+          newTicketData: {
+            chosenName: chosenName || 'Scratch-Off Game',
+            chosenPrice: chosenPrice || 1,
+            chosenPackSize: chosenPackSize || 100,
+            securityCode,
+            detectedGame: pendingSetBoxGame,
+            restorePack
           }
-          resolveBoxConflict(selectedSetBoxConflictAction);
-          return;
-        }
+        };
       }
 
-      promptBoxConflictModal(boxNum, barcode, targetSlot, {
-        chosenName,
-        chosenPrice,
-        chosenPackSize,
-        securityCode,
-        detectedGame: pendingSetBoxGame,
-        restorePack
-      });
+      if (setBoxCurrentSubView === 'return' || selectedSetBoxConflictAction === 'return') {
+        const tSlot = pendingConflictResolution?.existingSlot || targetSlot;
+        const rInput = document.getElementById('setBoxReturnTicketInput');
+        if (tSlot && rInput) {
+          tSlot.currentTicket = parseInt(rInput.value, 10) || tSlot.currentTicket;
+        }
+        resolveBoxConflict('return');
+        return;
+      }
+
+      if (selectedSetBoxConflictAction === 'soldout') {
+        resolveBoxConflict('soldout');
+        return;
+      }
+
+      if (selectedSetBoxConflictAction === 'changebox' || setBoxCurrentSubView === 'changebox') {
+        showToast('Please pick an empty box above or enter another box number.', 'info');
+        boxInput?.focus();
+        return;
+      }
+
+      // No option chosen yet — NEVER open the old modal!
+      sfx.alert?.();
+      showToast(`Box #${boxNum} is already occupied. Please select an option above: Sold out, Returned, or Change box.`, 'warning');
+      const conflictCard = document.getElementById('setBoxConflictCard');
+      if (conflictCard) {
+        conflictCard.style.display = 'block';
+        conflictCard.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' });
+      }
+      const rCard = document.getElementById('setBoxReturnCard');
+      if (rCard) rCard.style.display = 'none';
+      const cbCard = document.getElementById('setBoxChangeBoxCard');
+      if (cbCard) cbCard.style.display = 'none';
       return;
     }
 
     const success = handleSetBoxForTicket(boxNum, barcode, pendingSetBoxGame, restorePack, chosenName, chosenPrice, chosenPackSize, securityCode);
     if (success) {
-      showToast(`✓ Box #${boxNum} activated with ${cleanGameTitle(chosenName)}!`, 'success');
+      if (state.shiftStatus !== 'SCANNING_END_SHIFT') {
+        showToast(`✓ Box #${boxNum} activated with ${cleanGameTitle(chosenName)}!`, 'success');
+      }
       if (setBoxModal && setBoxModal.open) {
         setBoxModal.close();
       }
@@ -9829,1110 +10437,1184 @@ function confirmSetBoxForTicket(isFromEnterKey = false) {
         delete setTicketDetailsModal.dataset.barcode;
       }
     }
-  } finally {
-    setTimeout(() => {
+    } finally {
       isConfirmingSetBox = false;
-    }, 400);
-  }
+    }
 
-  if (lastScanReadoutContainer) {
-    lastScanReadoutContainer.classList.remove('alert-yellow');
-  }
+    if (lastScanReadoutContainer) {
+      lastScanReadoutContainer.classList.remove('alert-yellow');
+    }
 
-  // If fixing a sold-out ticket and not already corrected in Phase 2, open Fix Ticket Position keypad
-  if (restorePack && !restorePack._fixedInPhase2) {
-    const slot = state.slots.find(s => s.boxNumber === boxNum);
-    if (slot) {
-      currentAdjustingSlot = slot;
-      openFixTicketPositionModal(slot);
-      return;
+    // If fixing a sold-out ticket and not already corrected in Phase 2, open Fix Ticket Position keypad
+    if (restorePack && !restorePack._fixedInPhase2) {
+      const slot = state.slots.find(s => s.boxNumber === boxNum);
+      if (slot) {
+        currentAdjustingSlot = slot;
+        openFixTicketPositionModal(slot);
+        return;
+      }
+    }
+
+    if (barcodeInput) {
+      barcodeInput.value = '';
+      barcodeInput.focus();
+    }
+    const fb = document.getElementById('invScanFeedback');
+    if (fb) {
+      fb.style.display = 'flex';
+      fb.className = 'inv-scan-feedback success';
+      fb.innerHTML = `✓ <strong>TICKET SAVED:</strong> Barcode <code>${barcode}</code> (${cleanGameTitle(chosenName)}, $${chosenPrice}) put into <strong>Box #${boxNum}</strong>!`;
     }
   }
-
-  if (barcodeInput) {
-    barcodeInput.value = '';
-    barcodeInput.focus();
-  }
-  const fb = document.getElementById('invScanFeedback');
-  if (fb) {
-    fb.style.display = 'flex';
-    fb.className = 'inv-scan-feedback success';
-    fb.innerHTML = `✓ <strong>TICKET SAVED:</strong> Barcode <code>${barcode}</code> (${cleanGameTitle(chosenName)}, $${chosenPrice}) put into <strong>Box #${boxNum}</strong>!`;
-  }
-}
 
 function handleSetBoxForTicket(boxNumber, barcode, detectedGame, restorePack = null, customName = null, customPrice = null, customPackSize = null, securityCode = null) {
-  if (!barcode || typeof barcode !== 'string' || barcode.includes('Box #') || barcode.includes('·')) {
-    showToast('Invalid barcode for box assignment.', 'error');
-    return false;
-  }
+    if (!barcode || typeof barcode !== 'string' || barcode.includes('Box #') || barcode.includes('·')) {
+      showToast('Invalid barcode for box assignment.', 'error');
+      return false;
+    }
 
-  const boxNum = parseInt(boxNumber, 10);
-  if (isNaN(boxNum) || boxNum < 1 || boxNum > 100) {
-    showToast('Please enter a valid Box # between 1 and 100.', 'error');
-    return false;
-  }
+    const boxNum = parseInt(boxNumber, 10);
+    if (isNaN(boxNum) || boxNum < 1 || boxNum > 100) {
+      showToast('Please enter a valid Box # between 1 and 100.', 'error');
+      return false;
+    }
 
-  const parsedEarly = parseLotteryBarcode(barcode, state.customGames);
-  const targetPack = parsedEarly?.packCombined || parsedEarly?.packNumber || (barcode ? String(barcode).replace(/[^0-9]/g, '').slice(-6) : null);
-  const existingActiveBox = (state.slots || []).find(s => {
-    if (s.status !== 'ACTIVE' || !s.packNumber || Number(s.boxNumber) === Number(boxNum)) return false;
-    // CRITICAL: Slot must match the ticket's game number if known!
-    if (parsedEarly?.gameNumber && !slotMatchesGameNumber(s, parsedEarly.gameNumber)) return false;
-    return isPackNumberMatch(s.packNumber, targetPack) ||
-      (parsedEarly?.packClean && isPackNumberMatch(s.packNumber, parsedEarly.packClean));
-  });
+    const parsedEarly = parseLotteryBarcode(barcode, state.customGames, state.lotteryJurisdiction);
+    const targetPack = parsedEarly?.packCombined || parsedEarly?.packNumber || (barcode ? String(barcode).replace(/[^0-9]/g, '').slice(-6) : null);
+    const existingActiveBox = (state.slots || []).find(s => {
+      if (s.status !== 'ACTIVE' || !s.packNumber || Number(s.boxNumber) === Number(boxNum)) return false;
+      if (s.needsActivation) return false;
+      if (s.isSoldOut || s.status === 'SOLD_OUT') return false;
+      // CRITICAL: Slot must match the ticket's game number if known!
+      if (parsedEarly?.gameNumber && !slotMatchesGameNumber(s, parsedEarly.gameNumber)) return false;
+      return isPackNumberMatch(s.packNumber, targetPack) ||
+        (parsedEarly?.packClean && isPackNumberMatch(s.packNumber, parsedEarly.packClean));
+    });
 
-  if (existingActiveBox) {
-    sfx.alert();
-    showToast(`⚠️ Pack #${targetPack} is already active in Box #${existingActiveBox.boxNumber}. Duplicate active assignment prevented.`, 'error');
-    bringBoxToVisibleRack(existingActiveBox.boxNumber);
-    return false;
-  }
+    if (existingActiveBox) {
+      sfx.alert();
+      showToast(`⚠️ Pack #${formatDisplayPackNumber(targetPack)} is already active in Box #${existingActiveBox.boxNumber}. Duplicate active assignment prevented.`, 'error');
+      bringBoxToVisibleRack(existingActiveBox.boxNumber);
+      return false;
+    }
 
-  // If this pack or ticket was previously in a different slot, seamlessly relocate it
-  if (isBarcodeAlreadyScanned(barcode)) {
-    const existing = findScannedBarcodeInfo(barcode);
-    if (existing && Number(existing.boxNumber) !== Number(boxNum)) {
-      const oldSlot = state.slots.find(s => Number(s.boxNumber) === Number(existing.boxNumber));
-      // CRITICAL: Only relocate if the game AND pack ACTUALLY match the existing box!
-      if (oldSlot && (!parsedEarly?.gameNumber || slotMatchesGameNumber(oldSlot, parsedEarly.gameNumber)) &&
-        (!targetPack || isPackNumberMatch(oldSlot.packNumber, targetPack))) {
-        const prevSold = Math.max(0, (oldSlot.currentTicket || 0) - (oldSlot.startTicket || 0));
-        if (prevSold > 0) {
-          recordSoldOutPack(oldSlot, oldSlot.currentTicket);
+    // If this pack or ticket was previously in a different slot, seamlessly relocate it
+    if (isBarcodeAlreadyScanned(barcode)) {
+      const existing = findScannedBarcodeInfo(barcode);
+      if (existing && Number(existing.boxNumber) !== Number(boxNum)) {
+        const oldSlot = state.slots.find(s => Number(s.boxNumber) === Number(existing.boxNumber));
+        // CRITICAL: Only relocate if the game AND pack ACTUALLY match the existing box!
+        if (oldSlot && (!parsedEarly?.gameNumber || slotMatchesGameNumber(oldSlot, parsedEarly.gameNumber)) &&
+          (!targetPack || isPackNumberMatch(oldSlot.packNumber, targetPack))) {
+          const prevSold = calculateSlotSoldTickets(oldSlot);
+          if (prevSold > 0) {
+            recordSoldOutPack(oldSlot, oldSlot.currentTicket);
+          }
+          resetSlotToEmpty(oldSlot);
+          showToast(`📦 Relocated game to Box #${boxNum}!`, 'info');
         }
-        oldSlot.status = 'EMPTY';
-        oldSlot.packNumber = null;
-        oldSlot.gameName = null;
-        oldSlot.gameId = null;
-        oldSlot.price = null;
-        oldSlot.scannedBarcodes = [];
-        showToast(`📦 Relocated game to Box #${boxNum}!`, 'info');
       }
     }
-  }
 
-  // Expand slots if box number exceeds totalSlots
-  if (boxNum > state.totalSlots) {
-    for (let i = state.totalSlots + 1; i <= boxNum; i++) {
-      state.slots.push({
-        boxNumber: i,
-        status: 'EMPTY',
-        gameId: null,
-        gameName: null,
-        price: null,
-        packNumber: null,
-        packSize: null,
-        startTicket: 0,
-        currentTicket: 0,
-        ticketsInBox: 0,
-        scannedBarcodes: [],
-        activatedThisShift: false,
-        daysActive: 0,
-        scannedInEndShift: false
-      });
+    // Expand slots if box number exceeds totalSlots
+    if (boxNum > state.totalSlots) {
+      for (let i = state.totalSlots + 1; i <= boxNum; i++) {
+        state.slots.push({
+          boxNumber: i,
+          status: 'EMPTY',
+          gameId: null,
+          gameName: null,
+          price: null,
+          packNumber: null,
+          packSize: null,
+          startTicket: 0,
+          currentTicket: 0,
+          ticketsInBox: 0,
+          scannedBarcodes: [],
+          activatedThisShift: false,
+          daysActive: 0,
+          scannedInEndShift: false
+        });
+      }
+      state.totalSlots = boxNum;
     }
-    state.totalSlots = boxNum;
-  }
 
-  let slot = state.slots.find(s => Number(s.boxNumber) === Number(boxNum));
-  if (!slot) {
-    showToast(`Box #${boxNum} not found.`, 'error');
-    return false;
-  }
+    let slot = state.slots.find(s => Number(s.boxNumber) === Number(boxNum));
+    if (!slot) {
+      showToast(`Box #${boxNum} not found.`, 'error');
+      return false;
+    }
 
-  if (!slot.scannedBarcodes) slot.scannedBarcodes = [];
+    if (!slot.scannedBarcodes) slot.scannedBarcodes = [];
 
-  // Determine game, name, price, and pack size
-  const game = detectedGame || findGameByBarcode(barcode, state.customGames) || SAMPLE_GAMES[0];
-  const finalPrice = (customPrice !== null && !isNaN(customPrice) && customPrice > 0) ? customPrice : (game.price || 1);
-  const finalName = customName ? cleanGameTitle(customName) : cleanGameTitle(game.name || 'Scratch-Off Game');
-  const std = getStandardPackDetails(finalPrice);
-  const packSize = (customPackSize && customPackSize > 0) ? customPackSize : std.packSize;
+    // Determine game, name, price, and pack size
+    const game = detectedGame || findGameByBarcode(barcode, state.customGames, state.lotteryJurisdiction) || SAMPLE_GAMES[0];
+    const finalPrice = (customPrice !== null && !isNaN(customPrice) && customPrice > 0) ? customPrice : (game.price || 1);
+    const finalName = customName ? cleanGameTitle(customName) : cleanGameTitle(game.name || 'Scratch-Off Game');
+    const std = getStandardPackDetails(finalPrice);
+    const packSize = (customPackSize && customPackSize > 0) ? customPackSize : std.packSize;
 
-  // Parse ticket number and pack number using robust lottery barcode parser
-  const parsed = parseLotteryBarcode(barcode, state.customGames);
+    // Parse ticket number and pack number using robust lottery barcode parser
+    const parsed = parseLotteryBarcode(barcode, state.customGames, state.lotteryJurisdiction);
 
-  // Register in state.customGames if this is a custom game
-  let matchedCustomGame = (state.customGames || []).find(cg => cg.name.toLowerCase() === finalName.toLowerCase());
-  if (customName && !matchedCustomGame) {
+    // Register in state.customGames if this is a custom game
+    let matchedCustomGame = (state.customGames || []).find(cg => cg.name.toLowerCase() === finalName.toLowerCase());
+    if (customName && !matchedCustomGame) {
+      const cleanDigits = barcode.replace(/[^0-9]/g, '');
+      const prefix = (parsed && parsed.gameNumber) ? parsed.gameNumber : (cleanDigits.length >= 4 ? cleanDigits.slice(0, 4) : '');
+      matchedCustomGame = {
+        id: 'cg_' + Date.now(),
+        name: finalName,
+        price: finalPrice,
+        packSize: packSize,
+        barcodePrefix: prefix
+      };
+      state.customGames.push(matchedCustomGame);
+    }
+
     const cleanDigits = barcode.replace(/[^0-9]/g, '');
-    const prefix = (parsed && parsed.gameNumber) ? parsed.gameNumber : (cleanDigits.length >= 4 ? cleanDigits.slice(0, 4) : '');
-    matchedCustomGame = {
-      id: 'cg_' + Date.now(),
-      name: finalName,
-      price: finalPrice,
-      packSize: packSize,
-      barcodePrefix: prefix
+    let ticketNum = null;
+
+    if (parsed && parsed.ticketNumber !== null && parsed.ticketNumber <= packSize) {
+      ticketNum = parsed.ticketNumber;
+    } else if (barcode.includes('-')) {
+      const parts = barcode.split('-');
+      const lastPart = parts[parts.length - 1].replace(/[^0-9]/g, '');
+      if (lastPart) {
+        const parsedPart = parseInt(lastPart, 10);
+        if (parsedPart <= packSize) ticketNum = parsedPart;
+      }
+    } else if (cleanDigits.length >= 13) {
+      const candidate = parseInt(cleanDigits.slice(10, 13), 10);
+      if (!isNaN(candidate) && candidate <= packSize) {
+        ticketNum = candidate;
+      }
+    } else if (cleanDigits.length >= 10) {
+      const candidate = parseInt(cleanDigits.slice(-3), 10);
+      if (!isNaN(candidate) && candidate <= packSize) {
+        ticketNum = candidate;
+      }
+    }
+
+    // If ticket barcode was scanned, use its ticket number; if pack barcode (no ticket number), start at packSize - 1
+    let validTicketNum = (ticketNum !== null && !isNaN(ticketNum) && ticketNum >= 0 && ticketNum <= packSize)
+      ? ticketNum
+      : Math.max(0, packSize - 1);
+
+    const realPackNumber = (parsed && (parsed.packNumber || parsed.packCombined))
+      ? (parsed.packNumber || parsed.packCombined)
+      : (cleanDigits.length >= 6 ? cleanDigits.slice(-6) : barcode);
+
+    const standardKey = (parsed && parsed.standardBarcode) ? parsed.standardBarcode : barcode;
+
+    const effectiveSecCode = securityCode || (parsed && parsed.securityCode) || null;
+    if (effectiveSecCode) {
+      slot.securityCode = effectiveSecCode;
+      slot.startSecurityCode = effectiveSecCode;
+      slot.currentSecurityCode = effectiveSecCode;
+    }
+
+    const formattedBarcodeDisp = (parsed?.jurisdiction === 'SC' && parsed?.displayBarcode)
+      ? parsed.displayBarcode
+      : formatLotteryBarcode(barcode, state.customGames, effectiveSecCode, parsed?.jurisdiction || state.lotteryJurisdiction);
+    const barcodeRecord = {
+      barcode: standardKey,
+      displayBarcode: formattedBarcodeDisp,
+      scannedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      date: new Date().toISOString().split('T')[0],
+      ticketNumber: validTicketNum,
+      ...(effectiveSecCode ? { securityCode: effectiveSecCode } : {})
     };
-    state.customGames.push(matchedCustomGame);
-  }
 
-  const cleanDigits = barcode.replace(/[^0-9]/g, '');
-  let ticketNum = null;
-
-  if (parsed && parsed.ticketNumber !== null && parsed.ticketNumber <= packSize) {
-    ticketNum = parsed.ticketNumber;
-  } else if (barcode.includes('-')) {
-    const parts = barcode.split('-');
-    const lastPart = parts[parts.length - 1].replace(/[^0-9]/g, '');
-    if (lastPart) {
-      const parsedPart = parseInt(lastPart, 10);
-      if (parsedPart <= packSize) ticketNum = parsedPart;
-    }
-  } else if (cleanDigits.length >= 13) {
-    const candidate = parseInt(cleanDigits.slice(10, 13), 10);
-    if (!isNaN(candidate) && candidate <= packSize) {
-      ticketNum = candidate;
-    }
-  } else if (cleanDigits.length >= 10) {
-    const candidate = parseInt(cleanDigits.slice(-3), 10);
-    if (!isNaN(candidate) && candidate <= packSize) {
-      ticketNum = candidate;
-    }
-  }
-
-  // If ticket barcode was scanned, use its ticket number; if pack barcode (no ticket number), start at packSize - 1
-  let validTicketNum = (ticketNum !== null && !isNaN(ticketNum) && ticketNum >= 0 && ticketNum <= packSize)
-    ? ticketNum
-    : Math.max(0, packSize - 1);
-
-  const realPackNumber = (parsed && (parsed.packNumber || parsed.packCombined))
-    ? (parsed.packNumber || parsed.packCombined)
-    : (cleanDigits.length >= 6 ? cleanDigits.slice(-6) : barcode);
-
-  const standardKey = (parsed && parsed.standardBarcode) ? parsed.standardBarcode : barcode;
-
-  const effectiveSecCode = securityCode || (parsed && parsed.securityCode) || null;
-  if (effectiveSecCode) {
-    slot.securityCode = effectiveSecCode;
-    slot.startSecurityCode = effectiveSecCode;
-    slot.currentSecurityCode = effectiveSecCode;
-  }
-
-  const barcodeRecord = {
-    barcode: standardKey,
-    scannedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-    date: new Date().toISOString().split('T')[0],
-    ticketNumber: validTicketNum,
-    ...(effectiveSecCode ? { securityCode: effectiveSecCode } : {})
-  };
-
-  if (restorePack || !slot.packNumber || !isPackNumberMatch(slot.packNumber, realPackNumber)) {
-    slot.scannedBarcodes = [barcodeRecord];
-  } else {
-    slot.scannedBarcodes.push(barcodeRecord);
-  }
-  slot.ticketsInBox = slot.scannedBarcodes.length;
-
-  // Duplicate active assignment prevention (Section 7 & 9.13)
-  const duplicateActive = (state.slots || []).find(s =>
-    Number(s.boxNumber) !== Number(boxNum) &&
-    s.status === 'ACTIVE' &&
-    s.packNumber &&
-    isPackNumberMatch(s.packNumber, realPackNumber)
-  );
-  if (duplicateActive) {
-    sfx.alert();
-    showToast(`⚠️ Pack #${realPackNumber} is already active in Box #${duplicateActive.boxNumber}. Duplicate active assignment prevented.`, 'error');
-    return false;
-  }
-
-  // Restore sold-out pack vs brand new activation
-  if (restorePack) {
-    slot.status = 'ACTIVE';
-    slot.gameId = restorePack.gameId || (detectedGame ? detectedGame.id : (matchedCustomGame ? matchedCustomGame.id : 'g101'));
-    slot.gameName = finalName;
-    slot.price = finalPrice;
-    slot.packNumber = restorePack.packNumber || realPackNumber;
-    slot.packSize = packSize;
-    // Store barcodePrefix for cross-game verification
-    slot.barcodePrefix = restorePack.barcodePrefix || (parsed && parsed.gameNumber) || (matchedCustomGame && matchedCustomGame.barcodePrefix ? matchedCustomGame.barcodePrefix : (game && game.barcodePrefix ? game.barcodePrefix : ''));
-
-    // Use corrected position from recovery if available, else ticket number, else closing position
-    const restoredPos = (pendingSoldOutRecovery && pendingSoldOutRecovery.correctedPosition !== undefined)
-      ? pendingSoldOutRecovery.correctedPosition
-      : ((validTicketNum > 0)
-        ? validTicketNum
-        : ((restorePack.closeTicket !== undefined && restorePack.closeTicket !== null && restorePack.closeTicket < packSize) ? restorePack.closeTicket : 0));
-
-    slot.startTicket = restoredPos;
-    slot.currentTicket = restoredPos;
-    slot.packStartTicket = restorePack.packStartTicket !== undefined ? restorePack.packStartTicket : 0;
-
-    // Preserve historical pack cumulative sold progress across shifts without duplicating or resetting
-    const priorCumulative = (restorePack.packCumulativeSold !== undefined && restorePack.packCumulativeSold !== null)
-      ? Number(restorePack.packCumulativeSold)
-      : (restorePack.ticketsSold ? Number(restorePack.ticketsSold) : 0);
-    slot.packCumulativeSoldBase = priorCumulative;
-    slot.packCumulativeSold = priorCumulative;
-
-    slot.activatedThisShift = false; // Restored pack, NOT a brand new #00 pack
-    slot.daysActive = restorePack.daysActive || 1;
-    slot.scannedInEndShift = false;
-    slot.ticketsSold = 0; // Current shift sales strictly start at zero
-
-    // Remove from state.soldOutThisShift so it's no longer marked sold out (ONLY match this exact pack number!)
-    if (state.soldOutThisShift) {
-      state.soldOutThisShift = state.soldOutThisShift.filter(
-        so => !isPackNumberMatch(so.packNumber, slot.packNumber)
-      );
-    }
-    // Remove from warehouse inventory and in-stock inventory since it's now in dispenser rack
-    state.inventory = (state.inventory || []).filter(p => !isPackNumberMatch(p.packNumber, slot.packNumber));
-    if (Array.isArray(state.inStockInventory)) {
-      state.inStockInventory = state.inStockInventory.filter(p => !isPackNumberMatch(p.packNumber, slot.packNumber));
-    }
-
-    pendingSoldOutRecovery = null;
-    pendingRestorePack = null;
-    restorePack._fixedInPhase2 = true;
-
-    showToast(`✓ Restored Pack #${slot.packNumber} into Box #${boxNum} (${finalName}, $${finalPrice}) at Ticket #${String(restoredPos).padStart(2, '0')}!`, 'success');
-  } else {
-    // If the slot had an existing pack that was different from realPackNumber, record its sales before overwriting!
-    if (slot.packNumber && !isPackNumberMatch(slot.packNumber, realPackNumber)) {
-      const prevSold = Math.max(0, (slot.currentTicket || 0) - (slot.startTicket || 0));
-      if (prevSold > 0 || slot.status === 'SOLD_OUT') {
-        const closePos = slot.status === 'SOLD_OUT' ? (slot.packSize || slot.currentTicket) : slot.currentTicket;
-        recordSoldOutPack(slot, closePos);
-      }
-    }
-
-    // Brand new activation or putting new ticket into empty/sold-out box!
-    slot.status = 'ACTIVE';
-    slot.gameId = (game && game.name === finalName) ? game.id : (matchedCustomGame ? matchedCustomGame.id : 'custom');
-    slot.gameName = finalName;
-    slot.price = finalPrice;
-    slot.packNumber = realPackNumber;
-    slot.packSize = packSize;
-    // Store barcodePrefix for cross-game verification during scanning
-    slot.barcodePrefix = (parsed && parsed.gameNumber) ? parsed.gameNumber : (matchedCustomGame && matchedCustomGame.barcodePrefix ? matchedCustomGame.barcodePrefix : (game && game.barcodePrefix ? game.barcodePrefix : ''));
-    // Fresh roll activation starts at scanned ticket number (e.g. 300) so initial sales is 0
-    const chosenStart = validTicketNum !== null && !isNaN(validTicketNum) ? validTicketNum : 0;
-    slot.startTicket = chosenStart;
-    slot.currentTicket = chosenStart;
-    slot.packStartTicket = chosenStart;
-    slot.packCumulativeSold = 0;
-    slot.packCumulativeSoldBase = 0;
-    slot.ticketsSold = 0;
-    slot.previousShiftSold = 0;
-    slot.activatedThisShift = true;
-    slot.daysActive = 1;
-    slot.needsActivation = false;
-    slot.scannedInEndShift = (state.shiftStatus === 'SCANNING_END_SHIFT');
-    slot.ticketsSold = (state.shiftStatus === 'SCANNING_END_SHIFT') ? calculateSlotSoldTickets(slot) : 0;
-    slot.soldBarcodes = [];
-    delete slot.pendingEndShiftBarcode;
-    delete slot.pendingEndShiftEffectiveBarcode;
-    delete slot.pendingEndShiftParsed;
-
-    if (window.__activatingEndShiftSlot && Number(window.__activatingEndShiftSlot.boxNumber) !== Number(boxNum)) {
-      const oldSlot = (state.slots || []).find(s => Number(s.boxNumber) === Number(window.__activatingEndShiftSlot.boxNumber));
-      if (oldSlot && oldSlot.needsActivation) {
-        oldSlot.status = 'EMPTY';
-        oldSlot.needsActivation = false;
-        oldSlot.gameId = null;
-        oldSlot.gameName = null;
-        oldSlot.price = null;
-        oldSlot.packNumber = null;
-        oldSlot.packSize = null;
-        oldSlot.scannedBarcodes = [];
-        delete oldSlot.pendingEndShiftBarcode;
-        delete oldSlot.pendingEndShiftEffectiveBarcode;
-        delete oldSlot.pendingEndShiftParsed;
-      }
-    }
-    window.__activatingEndShiftSlot = null;
-
-    // Remove pack from warehouse inventory and in-stock inventory since it's now in a dispenser box!
-    state.inventory = (state.inventory || []).filter(p => !isPackNumberMatch(p.packNumber, realPackNumber));
-    if (Array.isArray(state.inStockInventory)) {
-      state.inStockInventory = state.inStockInventory.filter(p => !isPackNumberMatch(p.packNumber, realPackNumber));
-    }
-    if (Array.isArray(state.pendingTickets)) {
-      state.pendingTickets = state.pendingTickets.filter(pt =>
-        pt.barcode !== barcode &&
-        pt.barcode !== standardKey &&
-        !isPackNumberMatch(pt.packNumber, realPackNumber)
-      );
-    }
-    fetch('/api/inventory/configure-ticket', {
-      method: 'POST',
-      headers: getAuthHeaders({
-        'x-store-id': getCurrentStoreId()
-      }),
-      body: JSON.stringify({
-        storeId: getCurrentStoreId(),
-        barcode: standardKey || barcode,
-        ticketName: finalName,
-        ticketPrice: finalPrice,
-        boxNumber: boxNum,
-        cashier: state.cashierName || 'Cashier'
-      })
-    }).catch(() => { });
-
-
-    // NOTE: NEVER delete previous sold-out packs for this box from state.soldOutThisShift!
-    // They are legitimate sales completed during this shift and are required for shift & day audit reports!
-  }
-
-  // Record in global inventoryBarcodes
-  if (!state.inventoryBarcodes) state.inventoryBarcodes = {};
-  state.inventoryBarcodes[standardKey] = {
-    boxNumber: boxNum,
-    barcode: standardKey,
-    gameName: slot.gameName,
-    price: slot.price,
-    scannedAt: barcodeRecord.scannedAt
-  };
-  if (barcode !== standardKey) {
-    state.inventoryBarcodes[barcode] = state.inventoryBarcodes[standardKey];
-  }
-
-  // Clear the dataCleared flag since user is now actively using the system
-  if (state.dataCleared) delete state.dataCleared;
-
-  // Scan-to-Appear: Reset any active filter chip so the new box is immediately displayed on the rack!
-  window.__currentRackFilter = 'all';
-  document.querySelectorAll('#rackFilterChips .filter-chip').forEach(c => {
-    c.classList.toggle('active', (c.dataset.filter || 'all') === 'all');
-  });
-
-  state.lastScannedSlot = boxNum;
-  bringBoxToVisibleRack(boxNum);
-
-  const cleanName = cleanGameTitle(slot.gameName);
-  const formattedDisplay = formatLotteryBarcode(barcode, state.customGames, effectiveSecCode);
-  state.lastScanData = {
-    barcode: formattedDisplay,
-    boxNumber: boxNum,
-    gameName: cleanName,
-    price: slot.price,
-    packNumber: (parsed && (parsed.packNumber || parsed.packCombined)) ? (parsed.packNumber || parsed.packCombined) : (slot.packNumber || '---'),
-    ticketNumber: slot.currentTicket || 0,
-    securityCode: effectiveSecCode,
-    action: 'ASSIGNED'
-  };
-  state.lastScannedBarcode = `[${formattedDisplay}] Box #${boxNum}: $${Number(slot.price).toFixed(2)} · ${cleanName} (#${String(slot.currentTicket || 0).padStart(2, '0')}${effectiveSecCode ? '(' + effectiveSecCode + ')' : ''})`;
-
-  saveState(state);
-  sfx.success();
-  showToast(`✓ Ticket [${formattedDisplay}] saved to Box #${boxNum} ($${slot.price} · ${cleanName})!`, 'success');
-
-  renderInventoryTable();
-  renderDispenserRack();
-  renderHeaderAndMetrics();
-  renderSlotsRibbon();
-
-  return true;
-}
-
-function openBoxBarcodesModal(slot) {
-  if (!boxBarcodesModal) return;
-  const title = document.getElementById('boxBarcodesTitle');
-  const countBadge = document.getElementById('boxBarcodesCountBadge');
-  const gameInfo = document.getElementById('boxBarcodesGameInfo');
-  const tbody = document.getElementById('boxBarcodesTableBody');
-
-  if (title) title.textContent = `📦 Box #${slot.boxNumber} Saved Barcodes`;
-  const barcodes = slot.scannedBarcodes || [];
-  const count = barcodes.length;
-  if (countBadge) countBadge.textContent = `${count} Barcodes (${slot.ticketsInBox || count} Tickets)`;
-  if (gameInfo) {
-    gameInfo.innerHTML = `<strong>${cleanGameTitle(slot.gameName)}</strong> · Price: <strong>$${slot.price}.00</strong> · Pack #: <code>${slot.packNumber || '---'}</code>`;
-  }
-
-  if (tbody) {
-    tbody.innerHTML = '';
-    if (barcodes.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--text-muted); padding:24px;">No barcodes saved in Box #${slot.boxNumber} yet. Scan tickets to put them into this box.</td></tr>`;
+    if (restorePack || !slot.packNumber || !isPackNumberMatch(slot.packNumber, realPackNumber)) {
+      slot.scannedBarcodes = [barcodeRecord];
     } else {
-      barcodes.forEach((b, idx) => {
-        const bCode = typeof b === 'string' ? b : b.barcode;
-        const bTime = typeof b === 'object' && b.scannedAt ? b.scannedAt : '---';
-        const bTix = typeof b === 'object' && b.ticketNumber !== undefined ? `#${String(b.ticketNumber).padStart(2, '0')}` : `#${String(idx + 1).padStart(2, '0')}`;
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
+      slot.scannedBarcodes.push(barcodeRecord);
+    }
+    slot.ticketsInBox = slot.scannedBarcodes.length;
+
+    // Duplicate active assignment prevention (Section 7 & 9.13)
+    const duplicateActive = (state.slots || []).find(s =>
+      Number(s.boxNumber) !== Number(boxNum) &&
+      s.status === 'ACTIVE' &&
+      !s.needsActivation &&
+      !s.isSoldOut && s.status !== 'SOLD_OUT' &&
+      s.packNumber &&
+      (!parsed?.gameNumber || slotMatchesGameNumber(s, parsed.gameNumber)) &&
+      isPackNumberMatch(s.packNumber, realPackNumber)
+    );
+    if (duplicateActive) {
+      sfx.alert();
+      showToast(`⚠️ Pack #${formatDisplayPackNumber(realPackNumber)} is already active in Box #${duplicateActive.boxNumber}. Duplicate active assignment prevented.`, 'error');
+      return false;
+    }
+
+    // Restore sold-out pack vs brand new activation
+    if (restorePack) {
+      slot.status = 'ACTIVE';
+      slot.gameId = restorePack.gameId || (detectedGame ? detectedGame.id : (matchedCustomGame ? matchedCustomGame.id : 'g101'));
+      slot.gameName = finalName;
+      slot.price = finalPrice;
+      slot.packNumber = restorePack.packNumber || realPackNumber;
+      slot.jurisdiction = normalizeLotteryJurisdiction(restorePack.jurisdiction || state.lotteryJurisdiction);
+      slot.checkDigit = restorePack.checkDigit || null;
+      slot.basePackNumber = restorePack.basePackNumber || slot.packNumber;
+      slot.packCombined = restorePack.packCombined || (slot.checkDigit ? `${slot.packNumber}-${slot.checkDigit}` : slot.packNumber);
+      slot.packSize = packSize;
+      // Store barcodePrefix for cross-game verification
+      slot.barcodePrefix = restorePack.barcodePrefix || (parsed && parsed.gameNumber) || (matchedCustomGame && matchedCustomGame.barcodePrefix ? matchedCustomGame.barcodePrefix : (game && game.barcodePrefix ? game.barcodePrefix : ''));
+
+      // Use corrected position from recovery if available, else ticket number, else closing position
+      const restoredPos = (pendingSoldOutRecovery && pendingSoldOutRecovery.correctedPosition !== undefined)
+        ? pendingSoldOutRecovery.correctedPosition
+        : ((validTicketNum > 0)
+          ? validTicketNum
+          : ((restorePack.closeTicket !== undefined && restorePack.closeTicket !== null && restorePack.closeTicket < packSize) ? restorePack.closeTicket : 0));
+
+      slot.startTicket = restoredPos;
+      slot.currentTicket = restoredPos;
+      slot.packStartTicket = restorePack.packStartTicket !== undefined ? restorePack.packStartTicket : 0;
+
+      // Preserve historical pack cumulative sold progress across shifts without duplicating or resetting
+      const priorCumulative = (restorePack.packCumulativeSold !== undefined && restorePack.packCumulativeSold !== null)
+        ? Number(restorePack.packCumulativeSold)
+        : (restorePack.ticketsSold ? Number(restorePack.ticketsSold) : 0);
+      slot.packCumulativeSoldBase = priorCumulative;
+      slot.packCumulativeSold = priorCumulative;
+
+      slot.activatedThisShift = false; // Restored pack, NOT a brand new #00 pack
+      slot.daysActive = restorePack.daysActive || 1;
+      slot.scannedInEndShift = false;
+      slot.ticketsSold = 0; // Current shift sales strictly start at zero
+
+      // Remove from state.soldOutThisShift so it's no longer marked sold out (ONLY match this exact pack number!)
+      if (state.soldOutThisShift) {
+        state.soldOutThisShift = state.soldOutThisShift.filter(
+          so => !isPackNumberMatch(so.packNumber, slot.packNumber)
+        );
+      }
+      // Remove from warehouse inventory and in-stock inventory since it's now in dispenser rack
+      state.inventory = (state.inventory || []).filter(p => !isPackNumberMatch(p.packNumber, slot.packNumber));
+      if (Array.isArray(state.inStockInventory)) {
+        state.inStockInventory = state.inStockInventory.filter(p => !isPackNumberMatch(p.packNumber, slot.packNumber));
+      }
+
+      pendingSoldOutRecovery = null;
+      pendingRestorePack = null;
+      restorePack._fixedInPhase2 = true;
+
+      showToast(`✓ Restored Pack #${formatDisplayPackNumber(slot.packNumber)} into Box #${boxNum} (${finalName}, $${finalPrice}) at Ticket #${String(restoredPos).padStart(2, '0')}!`, 'success');
+    } else {
+      // If the slot had an existing pack that was different from realPackNumber, record its sales before overwriting!
+      if (slot.packNumber && !isPackNumberMatch(slot.packNumber, realPackNumber)) {
+        const prevSold = calculateSlotSoldTickets(slot);
+        if (prevSold > 0 || slot.status === 'SOLD_OUT') {
+          const closePos = slot.status === 'SOLD_OUT' ? (slot.packSize || slot.currentTicket) : slot.currentTicket;
+          recordSoldOutPack(slot, closePos);
+        }
+      }
+
+      // Brand new activation or putting new ticket into empty/sold-out box!
+      slot.status = 'ACTIVE';
+      slot.gameId = (game && game.name === finalName) ? game.id : (matchedCustomGame ? matchedCustomGame.id : 'custom');
+      slot.gameName = finalName;
+      slot.price = finalPrice;
+      slot.packNumber = realPackNumber;
+      slot.packSize = packSize;
+      const resJur = pendingSetBoxJurisdiction || (parsed?.jurisdiction === 'SC' || (state.lotteryJurisdiction === 'SC') ? 'SC' : 'GA');
+      slot.jurisdiction = resJur;
+      if (resJur === 'SC' && parsed) {
+        slot.checkDigit = parsed.checkCode || parsed.checkDigit || '6';
+        slot.basePackNumber = parsed.basePackNumber || realPackNumber;
+        slot.packCombined = `${slot.basePackNumber}-${slot.checkDigit}`;
+      }
+      // Store barcodePrefix for cross-game verification during scanning
+      slot.barcodePrefix = (parsed && parsed.gameNumber) ? parsed.gameNumber : (matchedCustomGame && matchedCustomGame.barcodePrefix ? matchedCustomGame.barcodePrefix : (game && game.barcodePrefix ? game.barcodePrefix : ''));
+      // Fresh roll activation starts at scanned ticket number (e.g. 300) so initial sales is 0
+      const chosenStart = validTicketNum !== null && !isNaN(validTicketNum) ? validTicketNum : 0;
+      slot.startTicket = chosenStart;
+      slot.currentTicket = chosenStart;
+      slot.ticketsSold = 0;
+      slot.previousShiftSold = 0;
+      slot.activatedThisShift = true;
+      slot.daysActive = 1;
+      if (state.shiftStatus === 'SCANNING_END_SHIFT' && !window.__activatingEndShiftSlot) {
+        slot.needsActivation = true;
+        slot.scannedInEndShift = false;
+        slot.pendingEndShiftBarcode = barcode;
+        slot.pendingEndShiftEffectiveBarcode = standardKey;
+        slot.pendingEndShiftParsed = parsed;
+      } else {
+        slot.needsActivation = false;
+        slot.scannedInEndShift = (state.shiftStatus === 'SCANNING_END_SHIFT');
+        slot.ticketsSold = (state.shiftStatus === 'SCANNING_END_SHIFT') ? calculateSlotSoldTickets(slot) : 0;
+        slot.soldBarcodes = [];
+        delete slot.pendingEndShiftBarcode;
+        delete slot.pendingEndShiftEffectiveBarcode;
+        delete slot.pendingEndShiftParsed;
+      }
+
+      // Clean up any old staging slot if this pack was staged in a different box waiting for activation
+      const oldStagedSlots = (state.slots || []).filter(s =>
+        Number(s.boxNumber) !== Number(boxNum) &&
+        s.needsActivation &&
+        (isPackNumberMatch(s.packNumber, realPackNumber) || (window.__activatingEndShiftSlot && Number(s.boxNumber) === Number(window.__activatingEndShiftSlot.boxNumber))) &&
+        (!parsed?.gameNumber || slotMatchesGameNumber(s, parsed.gameNumber))
+      );
+      oldStagedSlots.forEach(oldSlot => {
+        resetSlotToEmpty(oldSlot);
+      });
+      window.__activatingEndShiftSlot = null;
+
+      // Remove pack from warehouse inventory and in-stock inventory since it's now in a dispenser box!
+      state.inventory = (state.inventory || []).filter(p => !isPackNumberMatch(p.packNumber, realPackNumber));
+      if (Array.isArray(state.inStockInventory)) {
+        state.inStockInventory = state.inStockInventory.filter(p => !isPackNumberMatch(p.packNumber, realPackNumber));
+      }
+      if (Array.isArray(state.pendingTickets)) {
+        state.pendingTickets = state.pendingTickets.filter(pt =>
+          pt.barcode !== barcode &&
+          pt.barcode !== standardKey &&
+          !isPackNumberMatch(pt.packNumber, realPackNumber)
+        );
+      }
+      fetch('/api/inventory/configure-ticket', {
+        method: 'POST',
+        headers: getAuthHeaders({
+          'x-store-id': getCurrentStoreId()
+        }),
+        body: JSON.stringify({
+          storeId: getCurrentStoreId(),
+          barcode: standardKey || barcode,
+          ticketName: finalName,
+          ticketPrice: finalPrice,
+          boxNumber: boxNum,
+          cashier: state.cashierName || 'Cashier'
+        })
+      }).catch(() => { });
+
+
+      // NOTE: NEVER delete previous sold-out packs for this box from state.soldOutThisShift!
+      // They are legitimate sales completed during this shift and are required for shift & day audit reports!
+    }
+
+    // Record in global inventoryBarcodes
+    if (!state.inventoryBarcodes) state.inventoryBarcodes = {};
+    state.inventoryBarcodes[standardKey] = {
+      boxNumber: boxNum,
+      barcode: standardKey,
+      gameName: slot.gameName,
+      price: slot.price,
+      scannedAt: barcodeRecord.scannedAt
+    };
+    if (barcode !== standardKey) {
+      state.inventoryBarcodes[barcode] = state.inventoryBarcodes[standardKey];
+    }
+
+    // Clear the dataCleared flag since user is now actively using the system
+    if (state.dataCleared) delete state.dataCleared;
+
+    // Scan-to-Appear: Reset any active filter chip so the new box is immediately displayed on the rack!
+    window.__currentRackFilter = 'all';
+    document.querySelectorAll('#rackFilterChips .filter-chip').forEach(c => {
+      c.classList.toggle('active', (c.dataset.filter || 'all') === 'all');
+    });
+
+    state.lastScannedSlot = boxNum;
+    bringBoxToVisibleRack(boxNum);
+
+    const cleanName = cleanGameTitle(slot.gameName);
+    const formattedDisplay = (parsed?.jurisdiction === 'SC' && parsed?.displayBarcode)
+      ? parsed.displayBarcode
+      : formatLotteryBarcode(barcode, state.customGames, effectiveSecCode, parsed?.jurisdiction || state.lotteryJurisdiction);
+
+    if (state.shiftStatus === 'SCANNING_END_SHIFT' && slot.needsActivation) {
+      state.lastScanData = {
+        barcode: formattedDisplay,
+        boxNumber: boxNum,
+        gameName: cleanName,
+        price: slot.price,
+        packNumber: (parsed && (parsed.packNumber || parsed.packCombined)) ? (parsed.packNumber || parsed.packCombined) : (slot.packNumber || '---'),
+        ticketNumber: slot.currentTicket || 0,
+        securityCode: effectiveSecCode,
+        action: 'NEEDS_ACTIVATION'
+      };
+      state.lastScannedBarcode = `Box #${boxNum} Added: ${cleanName} ($${slot.price}) · Tap Activate on Box #${boxNum}`;
+      if (lastScanReadoutContainer) lastScanReadoutContainer.classList.remove('alert-yellow');
+      if (scanActionTitle) scanActionTitle.textContent = `Box #${boxNum} Added`;
+      if (lastScanDisplay) lastScanDisplay.textContent = `${cleanName} ($${slot.price}) · Tap Activate on Box #${boxNum}`;
+      if (largeStatReadout) {
+        largeStatReadout.textContent = String(boxNum);
+        largeStatReadout.style.color = '';
+      }
+      showToast(`📦 Box #${boxNum} added! Tap "Activate" on Box #${boxNum} to activate it.`, 'info');
+    } else {
+      state.lastScanData = {
+        barcode: formattedDisplay,
+        boxNumber: boxNum,
+        gameName: cleanName,
+        price: slot.price,
+        packNumber: (parsed && (parsed.packNumber || parsed.packCombined)) ? (parsed.packNumber || parsed.packCombined) : (slot.packNumber || '---'),
+        ticketNumber: slot.currentTicket || 0,
+        securityCode: effectiveSecCode,
+        action: 'ASSIGNED'
+      };
+      state.lastScannedBarcode = `[${formattedDisplay}] Box #${boxNum}: $${Number(slot.price).toFixed(2)} · ${cleanName} (#${String(slot.currentTicket || 0).padStart(3, '0')}${effectiveSecCode ? ' (' + effectiveSecCode + ')' : ''})`;
+      showToast(`✓ Ticket [${formattedDisplay}] saved to Box #${boxNum} ($${slot.price} · ${cleanName})!`, 'success');
+    }
+
+    saveState(state);
+    sfx.success();
+
+    renderInventoryTable();
+    renderDispenserRack();
+    renderHeaderAndMetrics();
+    renderSlotsRibbon();
+
+    return true;
+  }
+
+  function openBoxBarcodesModal(slot) {
+    if (!boxBarcodesModal) return;
+    const title = document.getElementById('boxBarcodesTitle');
+    const countBadge = document.getElementById('boxBarcodesCountBadge');
+    const gameInfo = document.getElementById('boxBarcodesGameInfo');
+    const tbody = document.getElementById('boxBarcodesTableBody');
+
+    if (title) title.textContent = `📦 Box #${slot.boxNumber} Saved Barcodes`;
+    const barcodes = slot.scannedBarcodes || [];
+    const count = barcodes.length;
+    if (countBadge) countBadge.textContent = `${count} Barcodes (${slot.ticketsInBox || count} Tickets)`;
+    if (gameInfo) {
+      gameInfo.innerHTML = `<strong>${cleanGameTitle(slot.gameName)}</strong> · Price: <strong>$${slot.price}.00</strong> · Pack #: <code>${formatDisplayPackNumber(slot, '---')}</code>`;
+    }
+
+    if (tbody) {
+      tbody.innerHTML = '';
+      if (barcodes.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--text-muted); padding:24px;">No barcodes saved in Box #${slot.boxNumber} yet. Scan tickets to put them into this box.</td></tr>`;
+      } else {
+        barcodes.forEach((b, idx) => {
+          const bRaw = typeof b === 'string' ? b : b.barcode;
+          const bCode = (typeof b === 'object' && b.displayBarcode)
+            ? b.displayBarcode
+            : formatLotteryBarcode(bRaw, state.customGames, (typeof b === 'object' && b.securityCode) ? b.securityCode : slot.currentSecurityCode, slot.jurisdiction || state.lotteryJurisdiction);
+          const bTime = typeof b === 'object' && b.scannedAt ? b.scannedAt : '---';
+          const bTix = typeof b === 'object' && b.ticketNumber !== undefined ? `#${String(b.ticketNumber).padStart(3, '0')}` : `#${String(idx + 1).padStart(3, '0')}`;
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
           <td style="color:var(--text-muted); font-weight:700;">${idx + 1}</td>
           <td style="font-family:var(--font-mono); font-weight:700; color:#38bdf8;">${bCode}</td>
           <td style="font-weight:700; color:var(--color-primary);">${bTix}</td>
           <td style="color:var(--text-secondary); font-size:0.8rem;">${bTime}</td>
         `;
-        tbody.appendChild(tr);
-      });
-    }
-  }
-
-  boxBarcodesModal.showModal();
-}
-
-function setupSetBoxModalLogic() {
-  function cleanupSetBoxModalState() {
-    if (isTransitioningSetBoxStep) return;
-    if (setBoxModal && setBoxModal.open) return;
-    if (setTicketDetailsModal && setTicketDetailsModal.open) return;
-    const conflictModal = document.getElementById('boxOccupiedConflictModal');
-    if (conflictModal && conflictModal.open) return;
-
-    setBoxCurrentSubView = 'initial';
-    setBoxActiveKeypadTarget = 'box';
-    selectedSetBoxConflictAction = null;
-    pendingConflictResolution = null;
-
-    const conflictCard = document.getElementById('setBoxConflictCard');
-    if (conflictCard) conflictCard.style.display = 'none';
-    const returnCard = document.getElementById('setBoxReturnCard');
-    if (returnCard) returnCard.style.display = 'none';
-    const changeBoxCard = document.getElementById('setBoxChangeBoxCard');
-    if (changeBoxCard) changeBoxCard.style.display = 'none';
-    const successCard = document.getElementById('setBoxSuccessCard');
-    if (successCard) successCard.style.display = 'none';
-
-    const footerNormal = document.getElementById('setBoxFooterNormal');
-    if (footerNormal) footerNormal.style.display = 'flex';
-    const footerSuccess = document.getElementById('setBoxFooterSuccess');
-    if (footerSuccess) footerSuccess.style.display = 'none';
-
-    const fieldWrap = document.getElementById('setBoxFieldWrap');
-    if (fieldWrap) {
-      fieldWrap.classList.remove('wrap-success', 'wrap-conflict');
-      fieldWrap.style.borderColor = '#2563eb';
-      fieldWrap.style.backgroundColor = '#ffffff';
-    }
-    const label = document.getElementById('setBoxLabel');
-    if (label) { label.classList.remove('label-conflict'); label.style.color = '#2563eb'; }
-    const typingTarget = document.getElementById('setBoxTypingTarget');
-    if (typingTarget) typingTarget.textContent = 'Box #';
-    const enterBtn = document.getElementById('btnSetBoxKpEnter');
-    if (enterBtn) enterBtn.classList.remove('enter-muted');
-
-    pendingSetBoxBarcode = null;
-    pendingSetBoxGame = null;
-    pendingSetBoxSecurityCode = null;
-    pendingSetBoxDisplayBarcode = null;
-    pendingNewTicketBarcode = null;
-    pendingRestorePack = null;
-    if (setBoxModal) {
-      delete setBoxModal.dataset.barcode;
-      delete setBoxModal.dataset.securityCode;
-      delete setBoxModal.dataset.gameName;
-      delete setBoxModal.dataset.gamePrice;
-      delete setBoxModal.dataset.packSize;
-    }
-    if (setTicketDetailsModal) {
-      delete setTicketDetailsModal.dataset.barcode;
-    }
-    if (barcodeInput) {
-      barcodeInput.value = '';
-      barcodeInput.focus();
-    }
-  }
-
-  function cancelTicketDetailsOnly() {
-    isTransitioningSetBoxStep = false;
-    pendingSetBoxBarcode = null;
-    pendingSetBoxGame = null;
-    pendingSetBoxSecurityCode = null;
-    pendingSetBoxDisplayBarcode = null;
-    pendingNewTicketBarcode = null;
-    pendingRestorePack = null;
-    if (setTicketDetailsModal) {
-      delete setTicketDetailsModal.dataset.barcode;
-      if (setTicketDetailsModal.open) {
-        setTicketDetailsModal.close();
-      }
-    }
-    if (barcodeInput) {
-      barcodeInput.value = '';
-      barcodeInput.focus();
-    }
-    sfx.keypad();
-  }
-
-  function cancelSetBoxAndSaveToInventory() {
-    const barcode = pendingSetBoxBarcode || setBoxModal?.dataset.barcode || setTicketDetailsModal?.dataset.barcode || pendingNewTicketBarcode || state.tempPendingScan?.barcode;
-    const chosenName = pendingChosenName || setBoxModal?.dataset.gameName || state.tempPendingScan?.gameName || 'Scratch-Off Game';
-    const chosenPrice = pendingChosenPrice || parseFloat(setBoxModal?.dataset.gamePrice) || state.tempPendingScan?.price || 1;
-    const chosenPackSize = pendingChosenPackSize || parseInt(setBoxModal?.dataset.packSize, 10) || state.tempPendingScan?.totalTickets || (getStandardPackDetails(chosenPrice).packSize);
-
-    let cleanPack = null;
-    let gameNumber = null;
-    let ticketNum = 0;
-
-    if (barcode) {
-      const parsed = parseLotteryBarcode(barcode, state.customGames);
-      cleanPack = (parsed && (parsed.packNumber || parsed.packCombined)) ? (parsed.packNumber || parsed.packCombined) : String(barcode).replace(/[^0-9]/g, '').slice(-6);
-      gameNumber = (parsed && parsed.gameNumber) ? parsed.gameNumber : (pendingSetBoxGame ? pendingSetBoxGame.barcodePrefix : null);
-      if (parsed && parsed.ticketNumber !== null && parsed.ticketNumber !== undefined) {
-        ticketNum = parsed.ticketNumber;
-      }
-    }
-    if (!cleanPack && state.tempPendingScan?.packNumber) {
-      cleanPack = state.tempPendingScan.packNumber;
-    }
-    if (!gameNumber && state.tempPendingScan?.gameId) {
-      gameNumber = state.tempPendingScan.gameId;
-    }
-
-    if (cleanPack && cleanPack.length >= 4) {
-      const cleanName = cleanGameTitle(chosenName);
-      const pos = String(ticketNum).padStart(3, '0');
-
-      // 1. Add to state.inStockInventory
-      if (!Array.isArray(state.inStockInventory)) {
-        state.inStockInventory = (!state.dataCleared && (!state.storeId || state.storeId === 'store_amigo')) ? JSON.parse(JSON.stringify(REFERENCE_IN_STOCK_PACKS)) : [];
-      }
-      const alreadyInStock = state.inStockInventory.some(p => isPackNumberMatch(p.packNumber, cleanPack));
-      if (!alreadyInStock) {
-        const newInStock = {
-          id: 'stock_' + Date.now(),
-          gameName: cleanName,
-          gameNumber: gameNumber ? `Game ${gameNumber}` : `Game ${1400 + Math.floor(Math.random() * 100)}`,
-          packNumber: String(cleanPack),
-          price: Number(chosenPrice) || 1,
-          packSize: `${chosenPackSize} tickets`,
-          packSizeNum: Number(chosenPackSize) || 100,
-          status: 'IN_STOCK',
-          statusLabel: 'In stock',
-          statusBadgeClass: 'badge-in-stock',
-          boxNumber: null,
-          position: pos,
-          receivedDate: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-        };
-        state.inStockInventory.unshift(newInStock);
-      }
-
-      // 2. Add to state.inventory (warehouse store)
-      if (!Array.isArray(state.inventory)) {
-        state.inventory = [];
-      }
-      const alreadyInInventory = state.inventory.some(p => isPackNumberMatch(p.packNumber, cleanPack));
-      if (!alreadyInInventory) {
-        state.inventory.push({
-          packNumber: String(cleanPack),
-          gameId: gameNumber ? `g${gameNumber}` : `g_${Date.now()}`,
-          gameName: cleanName,
-          price: Number(chosenPrice) || 1,
-          packSize: Number(chosenPackSize) || 100,
-          bookValue: (Number(chosenPackSize) || 100) * (Number(chosenPrice) || 1),
-          status: 'STORED',
-          scannedAt: new Date().toISOString()
+          tbody.appendChild(tr);
         });
       }
-
-      // 3. Register game prefix if recognized
-      if (gameNumber) {
-        if (!state.customGames) state.customGames = [];
-        const hasDef = (state.customGames || []).some(cg => cg.barcodePrefix === gameNumber || cg.name.toLowerCase() === cleanName.toLowerCase());
-        if (!hasDef) {
-          state.customGames.push({
-            id: 'cg_' + Date.now(),
-            name: cleanName,
-            price: chosenPrice,
-            packSize: chosenPackSize,
-            barcodePrefix: gameNumber
-          });
-        }
-      }
-
-      saveState(state);
-      renderHeaderAndMetrics();
-      try {
-        if (typeof renderInventoryView === 'function') renderInventoryView();
-        if (typeof renderInventoryTable === 'function') renderInventoryTable();
-      } catch (_) { }
-
-      sfx.beep();
-      showToast(`📦 Pack #${cleanPack} (${cleanName}, $${chosenPrice}) saved to Inventory store.`, 'success');
     }
 
-    if (window.__activatingEndShiftSlot) {
-      const sl = (state.slots || []).find(s => Number(s.boxNumber) === Number(window.__activatingEndShiftSlot.boxNumber));
-      if (sl && sl.needsActivation) {
-        sl.status = 'EMPTY';
-        sl.needsActivation = false;
-        sl.gameId = null;
-        sl.gameName = null;
-        sl.price = null;
-        sl.packNumber = null;
-        sl.packSize = null;
-        sl.scannedBarcodes = [];
-        delete sl.pendingEndShiftBarcode;
-        delete sl.pendingEndShiftEffectiveBarcode;
-        delete sl.pendingEndShiftParsed;
-      }
-      window.__activatingEndShiftSlot = null;
-      renderDispenserRack();
-      renderHeaderAndMetrics();
-      renderSlotsRibbon();
-    }
-    if (setBoxModal && setBoxModal.open) {
-      setBoxModal.close();
-    }
-    if (setTicketDetailsModal && setTicketDetailsModal.open) {
-      setTicketDetailsModal.close();
-    }
+    boxBarcodesModal.showModal();
   }
 
-  // Native dialog close events (handles Esc key, backdrop clicks, etc.)
-  setTicketDetailsModal?.addEventListener('close', cleanupSetBoxModalState);
-  setBoxModal?.addEventListener('close', cleanupSetBoxModalState);
+  function setupSetBoxModalLogic() {
+    function cleanupSetBoxModalState() {
+      if (isTransitioningSetBoxStep) return;
+      if (setBoxModal && setBoxModal.open) return;
+      if (setTicketDetailsModal && setTicketDetailsModal.open) return;
+      const conflictModal = document.getElementById('boxOccupiedConflictModal');
+      if (conflictModal && conflictModal.open) return;
 
-  // Step 1: Ticket Details - Cancel does NOT save to stock/inventory!
-  closeSetTicketDetailsModalBtn?.addEventListener('click', cancelTicketDetailsOnly);
-  btnCancelTicketDetails?.addEventListener('click', cancelTicketDetailsOnly);
-  btnTicketDetailsNext?.addEventListener('click', handleTicketDetailsNextClick);
-  document.getElementById('btnTicketDetailsAddStock')?.addEventListener('click', handleTicketDetailsAddStockClick);
+      setBoxCurrentSubView = 'initial';
+      setBoxActiveKeypadTarget = 'box';
+      selectedSetBoxConflictAction = null;
+      pendingConflictResolution = null;
 
-  // Step 2: Set Box - Not In Box saves pack directly to in-stock inventory (Safe)
-  document.getElementById('btnSetBoxNotInBox')?.addEventListener('click', (e) => {
-    e.preventDefault();
-    cancelSetBoxAndSaveToInventory();
-  });
+      const conflictCard = document.getElementById('setBoxConflictCard');
+      if (conflictCard) conflictCard.style.display = 'none';
+      const returnCard = document.getElementById('setBoxReturnCard');
+      if (returnCard) returnCard.style.display = 'none';
+      const changeBoxCard = document.getElementById('setBoxChangeBoxCard');
+      if (changeBoxCard) changeBoxCard.style.display = 'none';
+      const successCard = document.getElementById('setBoxSuccessCard');
+      if (successCard) successCard.style.display = 'none';
 
-  closeSetBoxModalBtn?.addEventListener('click', () => {
-    if (setBoxModal && setBoxModal.open) setBoxModal.close();
-  });
-  btnCancelSetBox?.addEventListener('click', () => {
-    if (setBoxModal && setBoxModal.open) setBoxModal.close();
-  });
-  btnBackToTicketDetails?.addEventListener('click', () => {
-    isTransitioningSetBoxStep = true;
-    try {
+      const footerNormal = document.getElementById('setBoxFooterNormal');
+      if (footerNormal) footerNormal.style.display = 'flex';
+      const footerSuccess = document.getElementById('setBoxFooterSuccess');
+      if (footerSuccess) footerSuccess.style.display = 'none';
+
+      const fieldWrap = document.getElementById('setBoxFieldWrap');
+      if (fieldWrap) {
+        fieldWrap.classList.remove('wrap-success', 'wrap-conflict');
+        fieldWrap.style.borderColor = '#2563eb';
+        fieldWrap.style.backgroundColor = '#ffffff';
+      }
+      const label = document.getElementById('setBoxLabel');
+      if (label) { label.classList.remove('label-conflict'); label.style.color = '#2563eb'; }
+      const typingTarget = document.getElementById('setBoxTypingTarget');
+      if (typingTarget) typingTarget.textContent = 'Box #';
+      const enterBtn = document.getElementById('btnSetBoxKpEnter');
+      if (enterBtn) enterBtn.classList.remove('enter-muted');
+
+      pendingSetBoxBarcode = null;
+      pendingSetBoxGame = null;
+      pendingSetBoxSecurityCode = null;
+      pendingSetBoxDisplayBarcode = null;
+      pendingNewTicketBarcode = null;
+      pendingRestorePack = null;
+      if (setBoxModal) {
+        delete setBoxModal.dataset.barcode;
+        delete setBoxModal.dataset.securityCode;
+        delete setBoxModal.dataset.gameName;
+        delete setBoxModal.dataset.gamePrice;
+        delete setBoxModal.dataset.packSize;
+      }
+      if (setTicketDetailsModal) {
+        delete setTicketDetailsModal.dataset.barcode;
+      }
+      if (barcodeInput) {
+        barcodeInput.value = '';
+        barcodeInput.focus();
+      }
+    }
+
+    function cancelTicketDetailsOnly() {
+      isTransitioningSetBoxStep = false;
+      pendingSetBoxBarcode = null;
+      pendingSetBoxGame = null;
+      pendingSetBoxSecurityCode = null;
+      pendingSetBoxDisplayBarcode = null;
+      pendingNewTicketBarcode = null;
+      pendingRestorePack = null;
+      if (setTicketDetailsModal) {
+        delete setTicketDetailsModal.dataset.barcode;
+        if (setTicketDetailsModal.open) {
+          setTicketDetailsModal.close();
+        }
+      }
+      if (barcodeInput) {
+        barcodeInput.value = '';
+        barcodeInput.focus();
+      }
+      sfx.keypad();
+    }
+
+    function cancelSetBoxAndSaveToInventory() {
+      const barcode = pendingSetBoxBarcode || setBoxModal?.dataset.barcode || setTicketDetailsModal?.dataset.barcode || pendingNewTicketBarcode || state.tempPendingScan?.barcode;
+      const chosenName = pendingChosenName || setBoxModal?.dataset.gameName || state.tempPendingScan?.gameName || 'Scratch-Off Game';
+      const chosenPrice = pendingChosenPrice || parseFloat(setBoxModal?.dataset.gamePrice) || state.tempPendingScan?.price || 1;
+      const chosenPackSize = pendingChosenPackSize || parseInt(setBoxModal?.dataset.packSize, 10) || state.tempPendingScan?.totalTickets || (getStandardPackDetails(chosenPrice).packSize);
+
+      let cleanPack = null;
+      let gameNumber = null;
+      let ticketNum = 0;
+
+      if (barcode) {
+        const parsed = parseLotteryBarcode(barcode, state.customGames, state.lotteryJurisdiction);
+        cleanPack = (parsed && (parsed.packNumber || parsed.packCombined)) ? (parsed.packNumber || parsed.packCombined) : String(barcode).replace(/[^0-9]/g, '').slice(-6);
+        gameNumber = (parsed && parsed.gameNumber) ? parsed.gameNumber : (pendingSetBoxGame ? pendingSetBoxGame.barcodePrefix : null);
+        if (parsed && parsed.ticketNumber !== null && parsed.ticketNumber !== undefined) {
+          ticketNum = parsed.ticketNumber;
+        }
+      }
+      if (!cleanPack && state.tempPendingScan?.packNumber) {
+        cleanPack = state.tempPendingScan.packNumber;
+      }
+      if (!gameNumber && state.tempPendingScan?.gameId) {
+        gameNumber = state.tempPendingScan.gameId;
+      }
+
+      if (cleanPack && cleanPack.length >= 4) {
+        const cleanName = cleanGameTitle(chosenName);
+        const pos = String(ticketNum).padStart(3, '0');
+
+        // 1. Add to state.inStockInventory
+        if (!Array.isArray(state.inStockInventory)) {
+          state.inStockInventory = [];
+        }
+        const alreadyInStock = state.inStockInventory.some(p => isPackNumberMatch(p.packNumber, cleanPack));
+        if (!alreadyInStock) {
+          const newInStock = {
+            id: 'stock_' + Date.now(),
+            gameName: cleanName,
+            gameNumber: gameNumber ? `Game ${gameNumber}` : `Game ${1400 + Math.floor(Math.random() * 100)}`,
+            packNumber: String(cleanPack),
+            price: Number(chosenPrice) || 1,
+            packSize: `${chosenPackSize} tickets`,
+            packSizeNum: Number(chosenPackSize) || 100,
+            status: 'IN_STOCK',
+            statusLabel: 'In stock',
+            statusBadgeClass: 'badge-in-stock',
+            boxNumber: null,
+            position: pos,
+            receivedDate: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+          };
+          state.inStockInventory.unshift(newInStock);
+        }
+
+        // 2. Add to state.inventory (warehouse store)
+        if (!Array.isArray(state.inventory)) {
+          state.inventory = [];
+        }
+        const alreadyInInventory = state.inventory.some(p => isPackNumberMatch(p.packNumber, cleanPack));
+        if (!alreadyInInventory) {
+          state.inventory.push({
+            packNumber: String(cleanPack),
+            gameId: gameNumber ? `g${gameNumber}` : `g_${Date.now()}`,
+            gameName: cleanName,
+            price: Number(chosenPrice) || 1,
+            packSize: Number(chosenPackSize) || 100,
+            bookValue: (Number(chosenPackSize) || 100) * (Number(chosenPrice) || 1),
+            status: 'STORED',
+            scannedAt: new Date().toISOString()
+          });
+        }
+
+        // 3. Register game prefix if recognized
+        if (gameNumber) {
+          if (!state.customGames) state.customGames = [];
+          const hasDef = (state.customGames || []).some(cg => cg.barcodePrefix === gameNumber || cg.name.toLowerCase() === cleanName.toLowerCase());
+          if (!hasDef) {
+            state.customGames.push({
+              id: 'cg_' + Date.now(),
+              name: cleanName,
+              price: chosenPrice,
+              packSize: chosenPackSize,
+              barcodePrefix: gameNumber
+            });
+          }
+        }
+
+        saveState(state);
+        renderHeaderAndMetrics();
+        try {
+          if (typeof renderInventoryView === 'function') renderInventoryView();
+          if (typeof renderInventoryTable === 'function') renderInventoryTable();
+        } catch (_) { }
+
+        sfx.beep();
+        showToast(`📦 Pack #${formatDisplayPackNumber(cleanPack)} (${cleanName}, $${chosenPrice}) saved to Inventory store.`, 'success');
+      }
+
+      if (window.__activatingEndShiftSlot) {
+        const sl = (state.slots || []).find(s => Number(s.boxNumber) === Number(window.__activatingEndShiftSlot.boxNumber));
+        if (sl && sl.needsActivation) {
+          sl.status = 'EMPTY';
+          sl.needsActivation = false;
+          sl.gameId = null;
+          sl.gameName = null;
+          sl.price = null;
+          sl.packNumber = null;
+          sl.packSize = null;
+          sl.scannedBarcodes = [];
+          delete sl.pendingEndShiftBarcode;
+          delete sl.pendingEndShiftEffectiveBarcode;
+          delete sl.pendingEndShiftParsed;
+        }
+        window.__activatingEndShiftSlot = null;
+        renderDispenserRack();
+        renderHeaderAndMetrics();
+        renderSlotsRibbon();
+      }
       if (setBoxModal && setBoxModal.open) {
         setBoxModal.close();
       }
-      if (setTicketDetailsModal && !setTicketDetailsModal.open) {
-        setTicketDetailsModal.showModal();
+      if (setTicketDetailsModal && setTicketDetailsModal.open) {
+        setTicketDetailsModal.close();
       }
-    } finally {
-      setTimeout(() => {
-        isTransitioningSetBoxStep = false;
-      }, 400);
     }
-  });
 
-  const confirmBtn = btnSetBoxConfirm || document.getElementById('btnSetBoxConfirm');
-  confirmBtn?.addEventListener('click', (e) => {
-    e.preventDefault();
-    confirmSetBoxForTicket(false);
-  });
+    // Native dialog close events (handles Esc key, backdrop clicks, etc.)
+    setTicketDetailsModal?.addEventListener('close', cleanupSetBoxModalState);
+    setBoxModal?.addEventListener('close', cleanupSetBoxModalState);
 
-  setBoxNumberInput?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
+    // Step 1: Ticket Details - Cancel does NOT save to stock/inventory!
+    closeSetTicketDetailsModalBtn?.addEventListener('click', cancelTicketDetailsOnly);
+    btnCancelTicketDetails?.addEventListener('click', cancelTicketDetailsOnly);
+    btnTicketDetailsNext?.addEventListener('click', handleTicketDetailsNextClick);
+    document.getElementById('btnTicketDetailsAddStock')?.addEventListener('click', handleTicketDetailsAddStockClick);
+
+    // Step 2: Set Box - Not In Box saves pack directly to in-stock inventory (Safe)
+    document.getElementById('btnSetBoxNotInBox')?.addEventListener('click', (e) => {
       e.preventDefault();
-      e.stopPropagation();
-      confirmSetBoxForTicket(true);
-    }
-  });
+      cancelSetBoxAndSaveToInventory();
+    });
 
-  // Step Up / Down arrows for Box input
-  document.getElementById('setBoxStepUp')?.addEventListener('click', () => {
-    const input = document.getElementById('setBoxNumberInput');
-    if (input) {
-      delete input.dataset.fresh;
-      input.value = Math.min(100, (parseInt(input.value, 10) || 0) + 1);
+    closeSetBoxModalBtn?.addEventListener('click', () => {
+      if (setBoxModal && setBoxModal.open) setBoxModal.close();
+    });
+    btnCancelSetBox?.addEventListener('click', () => {
+      if (setBoxModal && setBoxModal.open) setBoxModal.close();
+    });
+    btnBackToTicketDetails?.addEventListener('click', () => {
+      isTransitioningSetBoxStep = true;
+      try {
+        if (setBoxModal && setBoxModal.open) {
+          setBoxModal.close();
+        }
+        if (setTicketDetailsModal && !setTicketDetailsModal.open) {
+          setTicketDetailsModal.showModal();
+        }
+      } finally {
+        setTimeout(() => {
+          isTransitioningSetBoxStep = false;
+        }, 400);
+      }
+    });
+
+    const confirmBtn = btnSetBoxConfirm || document.getElementById('btnSetBoxConfirm');
+    confirmBtn?.addEventListener('click', (e) => {
+      e.preventDefault();
+      confirmSetBoxForTicket(false);
+    });
+
+    setBoxNumberInput?.addEventListener('keydown', (e) => {
+      delete setBoxNumberInput.dataset.fresh;
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        e.stopPropagation();
+        confirmSetBoxForTicket(true);
+      }
+    });
+
+    // Step Up / Down arrows for Box input
+    document.getElementById('setBoxStepUp')?.addEventListener('click', () => {
+      const input = document.getElementById('setBoxNumberInput');
+      if (input) {
+        delete input.dataset.fresh;
+        input.value = Math.min(100, (parseInt(input.value, 10) || 0) + 1);
+        sfx.keypad?.();
+        checkAndRenderSetBoxConflict(input.value);
+      }
+    });
+    document.getElementById('setBoxStepDown')?.addEventListener('click', () => {
+      const input = document.getElementById('setBoxNumberInput');
+      if (input) {
+        delete input.dataset.fresh;
+        input.value = Math.max(1, (parseInt(input.value, 10) || 1) - 1);
+        sfx.keypad?.();
+        checkAndRenderSetBoxConflict(input.value);
+      }
+    });
+
+    setBoxNumberInput?.addEventListener('input', () => {
+      delete setBoxNumberInput.dataset.fresh;
+      checkAndRenderSetBoxConflict(setBoxNumberInput.value);
+    });
+
+    // Keypad in Put Ticket into Box Modal (Images 1-4)
+    const handleSetBoxKeypad = (key) => {
       sfx.keypad?.();
-      checkAndRenderSetBoxConflict(input.value);
-    }
-  });
-  document.getElementById('setBoxStepDown')?.addEventListener('click', () => {
-    const input = document.getElementById('setBoxNumberInput');
-    if (input) {
-      delete input.dataset.fresh;
-      input.value = Math.max(1, (parseInt(input.value, 10) || 1) - 1);
-      sfx.keypad?.();
-      checkAndRenderSetBoxConflict(input.value);
-    }
-  });
+      const boxInput = document.getElementById('setBoxNumberInput');
+      const tixInput = document.getElementById('setBoxReturnTicketInput');
 
-  setBoxNumberInput?.addEventListener('input', () => {
-    checkAndRenderSetBoxConflict(setBoxNumberInput.value);
-  });
+      if (setBoxActiveKeypadTarget === 'ticket' && tixInput) {
+        if (key === 'clear') {
+          tixInput.value = '';
+        } else if (key === 'backspace') {
+          tixInput.value = tixInput.value.slice(0, -1);
+        } else if (key === 'enter') {
+          document.getElementById('btnReturnConflictConfirm')?.click();
+          return;
+        } else if (key !== '.') {
+          if (tixInput.value.length < 4) {
+            tixInput.value += key;
+          }
+        }
+        tixInput.dataset.touched = 'true';
+        updateReturnMetrics();
+        return;
+      }
 
-  // Keypad in Put Ticket into Box Modal (Images 1-4)
-  const handleSetBoxKeypad = (key) => {
-    sfx.keypad?.();
-    const boxInput = document.getElementById('setBoxNumberInput');
-    const tixInput = document.getElementById('setBoxReturnTicketInput');
-
-    if (setBoxActiveKeypadTarget === 'ticket' && tixInput) {
+      if (!boxInput) return;
       if (key === 'clear') {
-        tixInput.value = '';
+        boxInput.value = '';
+        delete boxInput.dataset.fresh;
       } else if (key === 'backspace') {
-        tixInput.value = tixInput.value.slice(0, -1);
+        delete boxInput.dataset.fresh;
+        boxInput.value = boxInput.value.slice(0, -1);
       } else if (key === 'enter') {
-        document.getElementById('btnReturnConflictConfirm')?.click();
+        confirmSetBoxForTicket(false);
         return;
       } else if (key !== '.') {
-        if (tixInput.value.length < 4) {
-          tixInput.value += key;
+        if (boxInput.dataset.fresh === 'true' || boxInput.value === '0') {
+          boxInput.value = key;
+          delete boxInput.dataset.fresh;
+        } else if (boxInput.value.length < 3) {
+          boxInput.value += key;
         }
       }
-      tixInput.dataset.touched = 'true';
+      checkAndRenderSetBoxConflict(boxInput.value);
+    };
+
+    document.querySelectorAll('.setbox-kp-btn, .setbox-key').forEach(keyBtn => {
+      keyBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        const key = keyBtn.dataset.key;
+        handleSetBoxKeypad(key);
+      });
+    });
+
+    // Focus switches keypad target between Box # and Ticket number
+    const boxInp = document.getElementById('setBoxNumberInput');
+    const tixInp = document.getElementById('setBoxReturnTicketInput');
+    const typingTarget = document.getElementById('setBoxTypingTarget');
+
+    boxInp?.addEventListener('focus', () => {
+      setBoxActiveKeypadTarget = 'box';
+      if (typingTarget) typingTarget.textContent = 'Box #';
+    });
+    tixInp?.addEventListener('focus', () => {
+      setBoxActiveKeypadTarget = 'ticket';
+      if (typingTarget) typingTarget.textContent = 'Ticket number';
+    });
+    tixInp?.addEventListener('input', () => {
+      tixInp.dataset.touched = 'true';
       updateReturnMetrics();
-      return;
-    }
+    });
 
-    if (!boxInput) return;
-    if (key === 'clear') {
-      boxInput.value = '';
-      delete boxInput.dataset.fresh;
-    } else if (key === 'backspace') {
-      delete boxInput.dataset.fresh;
-      boxInput.value = boxInput.value.slice(0, -1);
-    } else if (key === 'enter') {
-      confirmSetBoxForTicket(false);
-      return;
-    } else if (key !== '.') {
-      if (boxInput.dataset.fresh === 'true' || boxInput.value === '0') {
-        boxInput.value = key;
-        delete boxInput.dataset.fresh;
-      } else if (boxInput.value.length < 3) {
-        boxInput.value += key;
+    // Conflict Card 3-choice Option Cards (Images 1-4)
+    document.getElementById('optConflictSoldOut')?.addEventListener('click', () => {
+      document.querySelectorAll('.setbox-opt-card').forEach(c => c.classList.remove('on'));
+      document.getElementById('optConflictSoldOut')?.classList.add('on');
+      selectedSetBoxConflictAction = 'soldout';
+      setBoxCurrentSubView = 'initial';
+      setBoxActiveKeypadTarget = 'box';
+      if (typingTarget) typingTarget.textContent = 'Box #';
+
+      const rCard = document.getElementById('setBoxReturnCard');
+      const cbCard = document.getElementById('setBoxChangeBoxCard');
+      const confCard = document.getElementById('setBoxConflictCard');
+      if (rCard) rCard.style.display = 'none';
+      if (cbCard) cbCard.style.display = 'none';
+      if (confCard) confCard.style.display = 'block';
+
+      const num = document.getElementById('setBoxNumberInput')?.value || '';
+      const confirmBtn = document.getElementById('btnSetBoxConfirm');
+      if (confirmBtn) confirmBtn.textContent = `+ Close & add to box ${num}`;
+    });
+
+    document.getElementById('optConflictReturned')?.addEventListener('click', () => {
+      document.querySelectorAll('.setbox-opt-card').forEach(c => c.classList.remove('on'));
+      document.getElementById('optConflictReturned')?.classList.add('on');
+      selectedSetBoxConflictAction = 'return';
+      setBoxCurrentSubView = 'return';
+      setBoxActiveKeypadTarget = 'ticket';
+      if (typingTarget) typingTarget.textContent = 'Ticket number';
+
+      const rCard = document.getElementById('setBoxReturnCard');
+      const cbCard = document.getElementById('setBoxChangeBoxCard');
+      const confCard = document.getElementById('setBoxConflictCard');
+      if (confCard) confCard.style.display = 'none';
+      if (cbCard) cbCard.style.display = 'none';
+      if (rCard) rCard.style.display = 'block';
+
+      const num = document.getElementById('setBoxNumberInput')?.value || '';
+      const confirmBtn = document.getElementById('btnSetBoxConfirm');
+      if (confirmBtn) confirmBtn.textContent = `+ Return & add to box ${num}`;
+
+      const tSlot = pendingConflictResolution?.existingSlot;
+      if (tSlot) {
+        const curT = String(tSlot.currentTicket !== undefined ? tSlot.currentTicket : 0).padStart(3, '0');
+        const rInput = document.getElementById('setBoxReturnTicketInput');
+        if (rInput) rInput.value = curT;
+        updateReturnMetrics(tSlot);
       }
-    }
-    checkAndRenderSetBoxConflict(boxInput.value);
-  };
-
-  document.querySelectorAll('.setbox-kp-btn, .setbox-key').forEach(keyBtn => {
-    keyBtn.addEventListener('click', (e) => {
-      e.preventDefault();
-      const key = keyBtn.dataset.key;
-      handleSetBoxKeypad(key);
     });
-  });
 
-  // Focus switches keypad target between Box # and Ticket number
-  const boxInp = document.getElementById('setBoxNumberInput');
-  const tixInp = document.getElementById('setBoxReturnTicketInput');
-  const typingTarget = document.getElementById('setBoxTypingTarget');
+    document.getElementById('optConflictChangeBox')?.addEventListener('click', () => {
+      document.querySelectorAll('.setbox-opt-card').forEach(c => c.classList.remove('on'));
+      document.getElementById('optConflictChangeBox')?.classList.add('on');
+      selectedSetBoxConflictAction = 'changebox';
+      setBoxCurrentSubView = 'changebox';
+      setBoxActiveKeypadTarget = 'box';
+      if (typingTarget) typingTarget.textContent = 'Box #';
 
-  boxInp?.addEventListener('focus', () => {
-    setBoxActiveKeypadTarget = 'box';
-    if (typingTarget) typingTarget.textContent = 'Box #';
-  });
-  tixInp?.addEventListener('focus', () => {
-    setBoxActiveKeypadTarget = 'ticket';
-    if (typingTarget) typingTarget.textContent = 'Ticket number';
-  });
-  tixInp?.addEventListener('input', () => {
-    tixInp.dataset.touched = 'true';
-    updateReturnMetrics();
-  });
+      const rCard = document.getElementById('setBoxReturnCard');
+      const cbCard = document.getElementById('setBoxChangeBoxCard');
+      const confCard = document.getElementById('setBoxConflictCard');
+      if (confCard) confCard.style.display = 'none';
+      if (rCard) rCard.style.display = 'none';
+      if (cbCard) cbCard.style.display = 'block';
 
-  // Conflict Card 3-choice Option Cards (Images 1-4)
-  document.getElementById('optConflictSoldOut')?.addEventListener('click', () => {
-    document.querySelectorAll('.setbox-opt-card').forEach(c => c.classList.remove('on'));
-    document.getElementById('optConflictSoldOut')?.classList.add('on');
-    selectedSetBoxConflictAction = 'soldout';
-    setBoxCurrentSubView = 'initial';
-    setBoxActiveKeypadTarget = 'box';
-    if (typingTarget) typingTarget.textContent = 'Box #';
+      const num = document.getElementById('setBoxNumberInput')?.value || 14;
+      const confirmBtn = document.getElementById('btnSetBoxConfirm');
+      if (confirmBtn) confirmBtn.textContent = `+ Pick an empty box`;
+      renderChangeBoxPills(num);
+    });
 
-    const rCard = document.getElementById('setBoxReturnCard');
-    const cbCard = document.getElementById('setBoxChangeBoxCard');
-    const confCard = document.getElementById('setBoxConflictCard');
-    if (rCard) rCard.style.display = 'none';
-    if (cbCard) cbCard.style.display = 'none';
-    if (confCard) confCard.style.display = 'block';
+    // State 2: Return Card actions
+    document.getElementById('btnReturnConflictBack')?.addEventListener('click', () => {
+      setBoxCurrentSubView = 'initial';
+      setBoxActiveKeypadTarget = 'box';
+      if (typingTarget) typingTarget.textContent = 'Box #';
+      const rCard = document.getElementById('setBoxReturnCard');
+      const confCard = document.getElementById('setBoxConflictCard');
+      if (rCard) rCard.style.display = 'none';
+      if (confCard) confCard.style.display = 'block';
+      const num = document.getElementById('setBoxNumberInput')?.value || '';
+      const confirmBtn = document.getElementById('btnSetBoxConfirm');
+      if (confirmBtn) {
+        if (selectedSetBoxConflictAction === 'soldout') {
+          confirmBtn.textContent = `+ Close & add to box ${num}`;
+        } else if (selectedSetBoxConflictAction === 'return') {
+          confirmBtn.textContent = `+ Return & add to box ${num}`;
+        } else if (selectedSetBoxConflictAction === 'changebox') {
+          confirmBtn.textContent = `+ Pick an empty box`;
+        } else {
+          confirmBtn.textContent = `+ Choose an option above`;
+        }
+      }
+    });
 
-    const num = document.getElementById('setBoxNumberInput')?.value || '';
-    const confirmBtn = document.getElementById('btnSetBoxConfirm');
-    if (confirmBtn) confirmBtn.textContent = `+ Add to box ${num}`;
-    if (confirmBtn) confirmBtn.textContent = `+ Close & add to box ${num}`;
-  });
-
-  document.getElementById('optConflictReturned')?.addEventListener('click', () => {
-    document.querySelectorAll('.setbox-opt-card').forEach(c => c.classList.remove('on'));
-    document.getElementById('optConflictReturned')?.classList.add('on');
-    selectedSetBoxConflictAction = 'return';
-    setBoxCurrentSubView = 'return';
-    setBoxActiveKeypadTarget = 'ticket';
-    if (typingTarget) typingTarget.textContent = 'Ticket number';
-
-    const rCard = document.getElementById('setBoxReturnCard');
-    const cbCard = document.getElementById('setBoxChangeBoxCard');
-    const confCard = document.getElementById('setBoxConflictCard');
-    if (confCard) confCard.style.display = 'none';
-    if (cbCard) cbCard.style.display = 'none';
-    if (rCard) rCard.style.display = 'block';
-
-    const tSlot = pendingConflictResolution?.existingSlot;
-    if (tSlot) {
-      const curT = String(tSlot.currentTicket !== undefined ? tSlot.currentTicket : 0).padStart(3, '0');
+    document.getElementById('btnReturnConflictConfirm')?.addEventListener('click', () => {
+      const tSlot = pendingConflictResolution?.existingSlot;
       const rInput = document.getElementById('setBoxReturnTicketInput');
-      if (rInput) rInput.value = curT;
-      updateReturnMetrics(tSlot);
-    }
-  });
-
-  document.getElementById('optConflictChangeBox')?.addEventListener('click', () => {
-    document.querySelectorAll('.setbox-opt-card').forEach(c => c.classList.remove('on'));
-    document.getElementById('optConflictChangeBox')?.classList.add('on');
-    selectedSetBoxConflictAction = 'changebox';
-    setBoxCurrentSubView = 'changebox';
-    setBoxActiveKeypadTarget = 'box';
-    if (typingTarget) typingTarget.textContent = 'Box #';
-
-    const rCard = document.getElementById('setBoxReturnCard');
-    const cbCard = document.getElementById('setBoxChangeBoxCard');
-    const confCard = document.getElementById('setBoxConflictCard');
-    if (confCard) confCard.style.display = 'none';
-    if (rCard) rCard.style.display = 'none';
-    if (cbCard) cbCard.style.display = 'block';
-
-    const num = document.getElementById('setBoxNumberInput')?.value || 14;
-    renderChangeBoxPills(num);
-  });
-
-  // State 2: Return Card actions
-  document.getElementById('btnReturnConflictBack')?.addEventListener('click', () => {
-    setBoxCurrentSubView = 'initial';
-    setBoxActiveKeypadTarget = 'box';
-    if (typingTarget) typingTarget.textContent = 'Box #';
-    const rCard = document.getElementById('setBoxReturnCard');
-    const confCard = document.getElementById('setBoxConflictCard');
-    if (rCard) rCard.style.display = 'none';
-    if (confCard) confCard.style.display = 'block';
-  });
-
-  document.getElementById('btnReturnConflictConfirm')?.addEventListener('click', () => {
-    const tSlot = pendingConflictResolution?.existingSlot;
-    const rInput = document.getElementById('setBoxReturnTicketInput');
-    if (tSlot && rInput) {
-      tSlot.currentTicket = parseInt(rInput.value, 10) || tSlot.currentTicket;
-    }
-    resolveBoxConflict('return');
-  });
-
-  // State 4: Success Card actions
-  document.getElementById('btnSetBoxSuccessDone')?.addEventListener('click', () => {
-    if (setBoxModal && setBoxModal.open) {
-      setBoxModal.close();
-    }
-    setBoxCurrentSubView = 'initial';
-    setBoxActiveKeypadTarget = 'box';
-    pendingSetBoxBarcode = null;
-    pendingSetBoxGame = null;
-    pendingSetBoxSecurityCode = null;
-    pendingSetBoxDisplayBarcode = null;
-    pendingRestorePack = null;
-    pendingNewTicketBarcode = null;
-    if (setBoxModal) {
-      delete setBoxModal.dataset.barcode;
-      delete setBoxModal.dataset.securityCode;
-      delete setBoxModal.dataset.gameName;
-      delete setBoxModal.dataset.gamePrice;
-      delete setBoxModal.dataset.packSize;
-    }
-    if (setTicketDetailsModal) {
-      delete setTicketDetailsModal.dataset.barcode;
-    }
-    renderDispenserRack();
-    renderSlotsRibbon();
-    renderHeaderAndMetrics();
-  });
-
-  document.getElementById('btnSetBoxSuccessUndo')?.addEventListener('click', () => {
-    if (typeof undoAction === 'function') {
-      undoAction();
-    }
-    if (setBoxModal && setBoxModal.open) {
-      setBoxModal.close();
-    }
-  });
-
-  // Price pill clicks
-  document.querySelectorAll('.set-box-price-pill').forEach(pill => {
-    pill.addEventListener('click', () => {
-      sfx.keypad();
-      const p = Number(pill.getAttribute('data-price'));
-      const priceInput = document.getElementById('setBoxPriceInput');
-      if (priceInput) priceInput.value = p;
-      updatePricePillsSelection(p);
+      if (tSlot && rInput) {
+        tSlot.currentTicket = parseInt(rInput.value, 10) || tSlot.currentTicket;
+      }
+      resolveBoxConflict('return');
     });
-  });
 
-  const priceInput = document.getElementById('setBoxPriceInput');
-  priceInput?.addEventListener('input', (e) => {
-    updatePricePillsSelection(e.target.value);
-  });
+    // State 4: Success Card actions
+    document.getElementById('btnSetBoxSuccessDone')?.addEventListener('click', () => {
+      if (setBoxModal && setBoxModal.open) {
+        setBoxModal.close();
+      }
+      setBoxCurrentSubView = 'initial';
+      setBoxActiveKeypadTarget = 'box';
+      pendingSetBoxBarcode = null;
+      pendingSetBoxGame = null;
+      pendingSetBoxSecurityCode = null;
+      pendingSetBoxDisplayBarcode = null;
+      pendingRestorePack = null;
+      pendingNewTicketBarcode = null;
+      if (setBoxModal) {
+        delete setBoxModal.dataset.barcode;
+        delete setBoxModal.dataset.securityCode;
+        delete setBoxModal.dataset.gameName;
+        delete setBoxModal.dataset.gamePrice;
+        delete setBoxModal.dataset.packSize;
+      }
+      if (setTicketDetailsModal) {
+        delete setTicketDetailsModal.dataset.barcode;
+      }
+      renderDispenserRack();
+      renderSlotsRibbon();
+      renderHeaderAndMetrics();
+    });
 
-  const packValInput = document.getElementById('setBoxPackValueInput');
-  const packTixInput = document.getElementById('setBoxPackTicketsInput');
+    document.getElementById('btnSetBoxSuccessUndo')?.addEventListener('click', () => {
+      if (typeof undoAction === 'function') {
+        undoAction();
+      }
+      if (setBoxModal && setBoxModal.open) {
+        setBoxModal.close();
+      }
+    });
 
-  packValInput?.addEventListener('input', (e) => {
-    const val = parseFloat(e.target.value) || 0;
-    const currentPrice = Math.max(1, parseFloat(document.getElementById('setBoxPriceInput')?.value) || 1);
-    if (packTixInput && val > 0) {
-      const calculatedTix = Math.max(1, Math.round(val / currentPrice));
-      packTixInput.value = calculatedTix;
-      pendingChosenPackSize = calculatedTix;
-      pendingChosenPackValue = val;
-    }
-  });
+    // Price pill clicks
+    document.querySelectorAll('.set-box-price-pill').forEach(pill => {
+      pill.addEventListener('click', () => {
+        sfx.keypad();
+        const p = Number(pill.getAttribute('data-price'));
+        const priceInput = document.getElementById('setBoxPriceInput');
+        if (priceInput) priceInput.value = p;
+        updatePricePillsSelection(p);
+      });
+    });
 
-  packTixInput?.addEventListener('input', (e) => {
-    const tix = parseInt(e.target.value, 10) || 0;
-    const currentPrice = Math.max(1, parseFloat(document.getElementById('setBoxPriceInput')?.value) || 1);
-    if (packValInput && tix > 0) {
-      const calculatedVal = Math.round(tix * currentPrice);
-      packValInput.value = `$${calculatedVal.toFixed(2)}`;
-      pendingChosenPackSize = tix;
-      pendingChosenPackValue = calculatedVal;
-    }
-  });
+    const priceInput = document.getElementById('setBoxPriceInput');
+    priceInput?.addEventListener('input', (e) => {
+      updatePricePillsSelection(e.target.value);
+    });
 
-  packValInput?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      e.stopPropagation();
-      packTixInput?.focus();
-      packTixInput?.select();
-    }
-  });
+    const packValInput = document.getElementById('setBoxPackValueInput');
+    const packTixInput = document.getElementById('setBoxPackTicketsInput');
 
-  packTixInput?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      e.stopPropagation();
-      saveTicketDetailsToInStock();
-    }
-  });
+    packValInput?.addEventListener('input', (e) => {
+      const val = parseFloat(e.target.value) || 0;
+      const currentPrice = Math.max(1, parseFloat(document.getElementById('setBoxPriceInput')?.value) || 1);
+      if (packTixInput && val > 0) {
+        const calculatedTix = Math.max(1, Math.round(val / currentPrice));
+        packTixInput.value = calculatedTix;
+        pendingChosenPackSize = calculatedTix;
+        pendingChosenPackValue = val;
+      }
+    });
 
-  // Enter keys in name and price inputs for smooth keyboard navigation, with barcode scanner protection
-  const boxGameNameInput = document.getElementById('setBoxGameNameInput');
-  boxGameNameInput?.addEventListener('input', () => {
-    const val = boxGameNameInput.value.trim();
-    // Guard: If hardware barcode scanner typed into the Game Name field
-    const parsed = parseLotteryBarcode(val, state.customGames);
-    if (parsed && parsed.isValid && !parsed.isRetailProduct) {
-      boxGameNameInput.value = pendingChosenName || (pendingSetBoxGame ? cleanGameTitle(pendingSetBoxGame.name) : 'Scratch-Off Game');
-      openSetTicketDetailsModal(val);
-      document.getElementById('btnTicketDetailsNext')?.focus();
-    }
-  });
+    packTixInput?.addEventListener('input', (e) => {
+      const tix = parseInt(e.target.value, 10) || 0;
+      const currentPrice = Math.max(1, parseFloat(document.getElementById('setBoxPriceInput')?.value) || 1);
+      if (packValInput && tix > 0) {
+        const calculatedVal = Math.round(tix * currentPrice);
+        packValInput.value = `$${calculatedVal.toFixed(2)}`;
+        pendingChosenPackSize = tix;
+        pendingChosenPackValue = calculatedVal;
+      }
+    });
 
-  boxGameNameInput?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      e.stopPropagation();
+    packValInput?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        e.stopPropagation();
+        packTixInput?.focus();
+        packTixInput?.select();
+      }
+    });
+
+    packTixInput?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        e.stopPropagation();
+        saveTicketDetailsToInStock();
+      }
+    });
+
+    // Enter keys in name and price inputs for smooth keyboard navigation, with barcode scanner protection
+    const boxGameNameInput = document.getElementById('setBoxGameNameInput');
+    boxGameNameInput?.addEventListener('input', () => {
       const val = boxGameNameInput.value.trim();
-      const parsed = parseLotteryBarcode(val, state.customGames);
+      // Guard: If hardware barcode scanner typed into the Game Name field
+      const parsed = parseLotteryBarcode(val, state.customGames, state.lotteryJurisdiction);
       if (parsed && parsed.isValid && !parsed.isRetailProduct) {
         boxGameNameInput.value = pendingChosenName || (pendingSetBoxGame ? cleanGameTitle(pendingSetBoxGame.name) : 'Scratch-Off Game');
         openSetTicketDetailsModal(val);
         document.getElementById('btnTicketDetailsNext')?.focus();
-        return;
       }
-      document.getElementById('setBoxPriceInput')?.focus();
-      document.getElementById('setBoxPriceInput')?.select();
-    }
-  });
+    });
 
-  priceInput?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      e.stopPropagation();
-      document.getElementById('setBoxPackTicketsInput')?.focus();
-      document.getElementById('setBoxPackTicketsInput')?.select();
-    }
-  });
+    boxGameNameInput?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        e.stopPropagation();
+        const val = boxGameNameInput.value.trim();
+        const parsed = parseLotteryBarcode(val, state.customGames, state.lotteryJurisdiction);
+        if (parsed && parsed.isValid && !parsed.isRetailProduct) {
+          boxGameNameInput.value = pendingChosenName || (pendingSetBoxGame ? cleanGameTitle(pendingSetBoxGame.name) : 'Scratch-Off Game');
+          openSetTicketDetailsModal(val);
+          document.getElementById('btnTicketDetailsNext')?.focus();
+          return;
+        }
+        document.getElementById('setBoxPriceInput')?.focus();
+        document.getElementById('setBoxPriceInput')?.select();
+      }
+    });
 
-  setupBoxConflictModalListeners();
-  closeBoxBarcodesBtn?.addEventListener('click', () => boxBarcodesModal?.close());
-  closeBoxBarcodesBtn2?.addEventListener('click', () => boxBarcodesModal?.close());
-}
+    priceInput?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        e.stopPropagation();
+        document.getElementById('setBoxPackTicketsInput')?.focus();
+        document.getElementById('setBoxPackTicketsInput')?.select();
+      }
+    });
 
-function setupInventoryModalLogic() {
-  const invSearchInput = document.getElementById('invSearchInput');
-  invSearchInput?.addEventListener('input', () => {
-    renderInventoryTable();
-  });
+    setupBoxConflictModalListeners();
+    closeBoxBarcodesBtn?.addEventListener('click', () => boxBarcodesModal?.close());
+    closeBoxBarcodesBtn2?.addEventListener('click', () => boxBarcodesModal?.close());
+  }
 
-  const invStatusSearchInput = document.getElementById('invStatusSearchInput');
-  invStatusSearchInput?.addEventListener('input', () => {
-    renderInventoryStatusModal();
-  });
-
-  // Modal Close buttons & change synchronization
-  const onInventoryModalClose = () => {
-    saveState(state);
-    renderHeaderAndMetrics();
-    renderDispenserRack();
-    renderSlotsRibbon();
-  };
-
-  document.getElementById('inventoryStatusModal')?.addEventListener('close', onInventoryModalClose);
-  document.getElementById('inventoryModal')?.addEventListener('close', onInventoryModalClose);
-
-  document.getElementById('closeInvStatusBtn')?.addEventListener('click', () => {
-    document.getElementById('inventoryStatusModal')?.close();
-  });
-  document.getElementById('invStatusDoneBtn')?.addEventListener('click', () => {
-    document.getElementById('inventoryStatusModal')?.close();
-  });
-
-  document.getElementById('closeInventoryBtn')?.addEventListener('click', () => {
-    document.getElementById('inventoryModal')?.close();
-  });
-  document.getElementById('inventoryDoneBtn')?.addEventListener('click', () => {
-    document.getElementById('inventoryModal')?.close();
-  });
-
-  // Print Inventory Status Report
-  const btnInvStatusPrint = document.getElementById('btnInvStatusPrint');
-  btnInvStatusPrint?.addEventListener('click', () => {
-    sfx.keypad();
-    printInventoryStatusReport();
-  });
-
-  // Filter Tabs in Dispenser Manager (Update Inventory)
-  document.querySelectorAll('#inventoryModal .inv-filter-pill').forEach(btn => {
-    btn.addEventListener('click', () => {
-      sfx.keypad();
-      document.querySelectorAll('#inventoryModal .inv-filter-pill').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      currentInvFilter = btn.getAttribute('data-filter') || 'all';
+  function setupInventoryModalLogic() {
+    const invSearchInput = document.getElementById('invSearchInput');
+    invSearchInput?.addEventListener('input', () => {
       renderInventoryTable();
-      const tableContainer = document.querySelector('#inventoryModal .inv-table-container');
-      if (tableContainer) tableContainer.scrollTop = 0;
     });
-  });
 
-  // Filter Pills in Inventory Status Modal
-  document.querySelectorAll('[data-invstatus-filter]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      sfx.keypad();
-      document.querySelectorAll('[data-invstatus-filter]').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      currentInvStatusFilter = btn.getAttribute('data-invstatus-filter') || 'active';
+    const invStatusSearchInput = document.getElementById('invStatusSearchInput');
+    invStatusSearchInput?.addEventListener('input', () => {
       renderInventoryStatusModal();
-      const tableContainer = document.querySelector('#inventoryStatusModal .inv-table-container');
-      if (tableContainer) tableContainer.scrollTop = 0;
     });
-  });
 
+    // Modal Close buttons & change synchronization
+    const onInventoryModalClose = () => {
+      saveState(state);
+      renderHeaderAndMetrics();
+      renderDispenserRack();
+      renderSlotsRibbon();
+    };
 
-  // Modal close buttons for Change Ticket Value Modal
-  document.getElementById('closeChangeTicketValueBtn')?.addEventListener('click', () => {
-    document.getElementById('changeTicketValueModal')?.close();
-  });
-  document.getElementById('cancelChangeTicketValueBtn')?.addEventListener('click', () => {
-    document.getElementById('changeTicketValueModal')?.close();
-  });
-  document.getElementById('saveChangeTicketValueBtn')?.addEventListener('click', saveTicketValueChange);
+    document.getElementById('inventoryStatusModal')?.addEventListener('close', onInventoryModalClose);
+    document.getElementById('inventoryModal')?.addEventListener('close', onInventoryModalClose);
 
-  // Price pills in Change Value modal
-  document.querySelectorAll('.change-val-pill').forEach(pill => {
-    pill.addEventListener('click', () => {
+    document.getElementById('closeInvStatusBtn')?.addEventListener('click', () => {
+      document.getElementById('inventoryStatusModal')?.close();
+    });
+    document.getElementById('invStatusDoneBtn')?.addEventListener('click', () => {
+      document.getElementById('inventoryStatusModal')?.close();
+    });
+
+    document.getElementById('closeInventoryBtn')?.addEventListener('click', () => {
+      document.getElementById('inventoryModal')?.close();
+    });
+    document.getElementById('inventoryDoneBtn')?.addEventListener('click', () => {
+      document.getElementById('inventoryModal')?.close();
+    });
+
+    // Print Inventory Status Report
+    const btnInvStatusPrint = document.getElementById('btnInvStatusPrint');
+    btnInvStatusPrint?.addEventListener('click', () => {
       sfx.keypad();
-      const p = Number(pill.getAttribute('data-price'));
-      const priceInput = document.getElementById('changeValCustomPriceInput');
-      if (priceInput) priceInput.value = p;
+      printInventoryStatusReport();
+    });
+
+    // Filter Tabs in Dispenser Manager (Update Inventory)
+    document.querySelectorAll('#inventoryModal .inv-filter-pill').forEach(btn => {
+      btn.addEventListener('click', () => {
+        sfx.keypad();
+        document.querySelectorAll('#inventoryModal .inv-filter-pill').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentInvFilter = btn.getAttribute('data-filter') || 'all';
+        renderInventoryTable();
+        const tableContainer = document.querySelector('#inventoryModal .inv-table-container');
+        if (tableContainer) tableContainer.scrollTop = 0;
+      });
+    });
+
+    // Filter Pills in Inventory Status Modal
+    document.querySelectorAll('[data-invstatus-filter]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        sfx.keypad();
+        document.querySelectorAll('[data-invstatus-filter]').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentInvStatusFilter = btn.getAttribute('data-invstatus-filter') || 'active';
+        renderInventoryStatusModal();
+        const tableContainer = document.querySelector('#inventoryStatusModal .inv-table-container');
+        if (tableContainer) tableContainer.scrollTop = 0;
+      });
+    });
+
+
+    // Modal close buttons for Change Ticket Value Modal
+    document.getElementById('closeChangeTicketValueBtn')?.addEventListener('click', () => {
+      document.getElementById('changeTicketValueModal')?.close();
+    });
+    document.getElementById('cancelChangeTicketValueBtn')?.addEventListener('click', () => {
+      document.getElementById('changeTicketValueModal')?.close();
+    });
+    document.getElementById('saveChangeTicketValueBtn')?.addEventListener('click', saveTicketValueChange);
+
+    // Price pills in Change Value modal
+    document.querySelectorAll('.change-val-pill').forEach(pill => {
+      pill.addEventListener('click', () => {
+        sfx.keypad();
+        const p = Number(pill.getAttribute('data-price'));
+        const priceInput = document.getElementById('changeValCustomPriceInput');
+        if (priceInput) priceInput.value = p;
+        document.querySelectorAll('.change-val-pill').forEach(pl => {
+          pl.classList.toggle('active', Number(pl.getAttribute('data-price')) === p);
+        });
+        const packHint = document.getElementById('changeValPackHint');
+        if (packHint) {
+          const std = getStandardPackDetails(p);
+          packHint.innerHTML = `📖 <strong>$${std.bookValue} Pack</strong> (${std.packSize} tickets)`;
+        }
+      });
+    });
+
+    const changeValCustomPrice = document.getElementById('changeValCustomPriceInput');
+    changeValCustomPrice?.addEventListener('input', (e) => {
+      const p = parseFloat(e.target.value) || 1;
       document.querySelectorAll('.change-val-pill').forEach(pl => {
         pl.classList.toggle('active', Number(pl.getAttribute('data-price')) === p);
       });
@@ -10942,66 +11624,52 @@ function setupInventoryModalLogic() {
         packHint.innerHTML = `📖 <strong>$${std.bookValue} Pack</strong> (${std.packSize} tickets)`;
       }
     });
-  });
 
-  const changeValCustomPrice = document.getElementById('changeValCustomPriceInput');
-  changeValCustomPrice?.addEventListener('input', (e) => {
-    const p = parseFloat(e.target.value) || 1;
-    document.querySelectorAll('.change-val-pill').forEach(pl => {
-      pl.classList.toggle('active', Number(pl.getAttribute('data-price')) === p);
+    // Click price tag in Box Adjust Modal to change ticket value
+    document.getElementById('adjustPriceTag')?.addEventListener('click', () => {
+      if (currentAdjustingSlot) openChangeTicketValueModal(currentAdjustingSlot);
     });
-    const packHint = document.getElementById('changeValPackHint');
-    if (packHint) {
-      const std = getStandardPackDetails(p);
-      packHint.innerHTML = `📖 <strong>$${std.bookValue} Pack</strong> (${std.packSize} tickets)`;
-    }
-  });
+  }
 
-  // Click price tag in Box Adjust Modal to change ticket value
-  document.getElementById('adjustPriceTag')?.addEventListener('click', () => {
-    if (currentAdjustingSlot) openChangeTicketValueModal(currentAdjustingSlot);
-  });
-}
+  function printInventoryStatusReport() {
+    const activeSlots = (state.slots || []).filter(isBoxActive);
+    let totalTickets = 0;
+    let totalValue = 0;
 
-function printInventoryStatusReport() {
-  const activeSlots = (state.slots || []).filter(isBoxActive);
-  let totalTickets = 0;
-  let totalValue = 0;
+    let rowsHtml = '';
+    activeSlots.forEach(slot => {
+      const totalPackSize = slot.packSize || (slot.price === 1 ? 300 : slot.price === 2 ? 150 : 30);
+      const current = slot.currentTicket !== undefined ? slot.currentTicket : 0;
+      const remaining = Math.max(0, totalPackSize - current);
+      const val = remaining * (slot.price || 1);
+      totalTickets += remaining;
+      totalValue += val;
 
-  let rowsHtml = '';
-  activeSlots.forEach(slot => {
-    const totalPackSize = slot.packSize || (slot.price === 1 ? 300 : slot.price === 2 ? 150 : 30);
-    const current = slot.currentTicket !== undefined ? slot.currentTicket : 0;
-    const remaining = Math.max(0, totalPackSize - current);
-    const val = remaining * (slot.price || 1);
-    totalTickets += remaining;
-    totalValue += val;
-
-    rowsHtml += `
+      rowsHtml += `
       <tr>
         <td style="text-align: center; font-weight: bold;">Box #${slot.boxNumber}</td>
         <td><strong>${cleanGameTitle(slot.gameName)}</strong></td>
-        <td style="text-align: center; font-family: monospace;">#${String(slot.packNumber || '---').replace(/[^0-9]/g, '')}</td>
+        <td style="text-align: center; font-family: monospace;">#${formatDisplayPackNumber(slot, '---')}</td>
         <td style="text-align: center; font-weight: bold;">$${Number(slot.price).toFixed(2)}</td>
         <td style="text-align: center;">#${String(current).padStart(2, '0')} / ${totalPackSize}</td>
         <td style="text-align: center; font-weight: bold;">${remaining}</td>
         <td style="text-align: right; font-weight: bold;">$${val.toFixed(2)}</td>
       </tr>
     `;
-  });
+    });
 
-  const ptos = state.partialTakeOuts || [];
-  let ptoTableHtml = '';
-  if (ptos.length > 0) {
-    let ptoRows = '';
-    let ptoTotalTix = 0;
-    let ptoTotalVal = 0;
-    ptos.forEach(p => {
-      ptoTotalTix += p.ticketsCount || 0;
-      ptoTotalVal += p.totalValue || 0;
-      ptoRows += `
+    const ptos = state.partialTakeOuts || [];
+    let ptoTableHtml = '';
+    if (ptos.length > 0) {
+      let ptoRows = '';
+      let ptoTotalTix = 0;
+      let ptoTotalVal = 0;
+      ptos.forEach(p => {
+        ptoTotalTix += p.ticketsCount || 0;
+        ptoTotalVal += p.totalValue || 0;
+        ptoRows += `
         <tr>
-          <td style="text-align: center; font-family: monospace;">#${p.packNumber}</td>
+          <td style="text-align: center; font-family: monospace;">#${formatDisplayPackNumber(p, '---')}</td>
           <td><strong>${cleanGameTitle(p.gameName)}</strong></td>
           <td style="text-align: center;">Box #${p.fromBoxNumber}</td>
           <td style="text-align: center;">$${Number(p.price).toFixed(2)}</td>
@@ -11010,8 +11678,8 @@ function printInventoryStatusReport() {
           <td style="text-align: center; font-size: 11px;">${p.takenOutAtDisplay || 'Stored'}</td>
         </tr>
       `;
-    });
-    ptoTableHtml = `
+      });
+      ptoTableHtml = `
       <div style="margin-top: 24px; font-weight: bold; font-size: 14px; border-bottom: 2px solid #000; padding-bottom: 4px;">
         📦 PARTIAL TAKE OUT IN INVENTORY (NOT FOR SALE AT REGISTER)
       </div>
@@ -11038,9 +11706,9 @@ function printInventoryStatusReport() {
         </tbody>
       </table>
     `;
-  }
+    }
 
-  const printHtml = `
+    const printHtml = `
     <!DOCTYPE html>
     <html>
       <head>
@@ -11088,840 +11756,995 @@ function printInventoryStatusReport() {
     </html>
   `;
 
-  const printWin = window.open('', '_blank', 'width=850,height=700');
-  if (printWin) {
-    printWin.document.write(printHtml);
-    printWin.document.close();
-    printWin.focus();
-    setTimeout(() => {
-      printWin.print();
-    }, 250);
-  } else {
-    window.print();
-  }
-}
-
-// -------------------------------------------------------------
-// Barcode Scanner Integration (Hardware & Virtual POS Scanners)
-// -------------------------------------------------------------
-
-function setupHardwareScannerListener() {
-  if (_setupHardwareScannerListenerDone) return;
-  _setupHardwareScannerListenerDone = true;
-
-  let scanBuffer = '';
-  let lastKeystrokeTime = 0;
-  let lastScanDispatchTime = 0;
-  let keystrokeIntervals = [];
-  let scannerActivePreValue = undefined;
-  let barcodeInputPreValue = undefined;
-  let isScanningBarcode = false;
-  let scanIdleTimer = null;
-
-  const NON_TEXT_INPUT_TYPES = new Set(['checkbox', 'radio', 'button', 'submit', 'reset', 'file', 'range', 'color', 'image']);
-  const DEDICATED_SCAN_INPUT_IDS = new Set(['barcodeInput', 'csBarcodeInput', 'rpPackBarcodeInput', 'invScanBarcodeInput', 'rbCodeInput']);
-  // Honeywell USB/BT HID inter-packet jitter can exceed 180ms on long or shifted barcodes; 450ms preserves full scans cleanly.
-  const SCAN_GAP_RESET_MS = 450;
-  const SCAN_IDLE_DISPATCH_MS = 500;
-
-  function isPosShellActive() {
-    const viewSignIn = document.getElementById('viewSignIn');
-    if (viewSignIn && viewSignIn.style.display !== 'none') return false;
-    const adminDash = document.getElementById('viewAdminDashboard');
-    if (adminDash && adminDash.style.display !== 'none' && !adminDash.classList.contains('hidden-layout')) return false;
-    return true;
-  }
-
-  function isEditableTextElement(el) {
-    if (!el) return false;
-    if (el.tagName === 'TEXTAREA') return true;
-    if (el.tagName !== 'INPUT') return false;
-    return !NON_TEXT_INPUT_TYPES.has((el.type || 'text').toLowerCase());
-  }
-
-  function resetScanBuffer() {
-    scanBuffer = '';
-    keystrokeIntervals = [];
-    isScanningBarcode = false;
-    scannerActivePreValue = undefined;
-    barcodeInputPreValue = undefined;
-    if (scanIdleTimer) {
-      clearTimeout(scanIdleTimer);
-      scanIdleTimer = null;
+    const printWin = window.open('', '_blank', 'width=850,height=700');
+    if (printWin) {
+      printWin.document.write(printHtml);
+      printWin.document.close();
+      printWin.focus();
+      setTimeout(() => {
+        printWin.print();
+      }, 250);
+    } else {
+      window.print();
     }
   }
 
-  function handleScanDispatch(barcode, activeEl) {
-    const rawToProcess = String(barcode || '').trim();
-    resetScanBuffer();
-    if (barcodeInput) barcodeInput.value = '';
-    lastScanDispatchTime = Date.now();
-    if (!rawToProcess) return;
-    if (activeEl?.id === 'rbCodeInput' || document.getElementById('receiveBookModernModal')?.open) {
-      if (typeof rbFillFromBarcode === 'function') {
-        rbFillFromBarcode(rawToProcess);
-        return;
-      }
-    }
-    processScannedBarcode(rawToProcess);
-  }
+  // -------------------------------------------------------------
+  // Barcode Scanner Integration (Hardware & Virtual POS Scanners)
+  // -------------------------------------------------------------
 
-  function pickBarcodeInputValue(domVal) {
-    const rawDom = String(domVal || '').trim();
-    const buf = scanBuffer.trim();
-    if (!buf) return rawDom;
-    if (!rawDom) return buf;
-    // Preserve AIM prefixes (]C1), Code39 (*), or URLs intact from keydown before #barcodeInput's input filter strips letters.
-    if (/^(\]|\*|https?:|www\.)/i.test(buf) && buf.length >= rawDom.length && !/^box/i.test(rawDom)) {
-      return buf;
-    }
-    if (isScanningBarcode && buf.length >= 8 && barcodeInputPreValue && rawDom.startsWith(barcodeInputPreValue.trim()) && rawDom.length > buf.length) {
-      return buf;
-    }
-    if (rawDom.length > buf.length) {
-      return rawDom;
-    }
-    return buf.length >= 2 ? buf : rawDom;
-  }
+  function setupHardwareScannerListener() {
+    if (_setupHardwareScannerListenerDone) return;
+    _setupHardwareScannerListenerDone = true;
 
-  window.addEventListener('keydown', e => {
-    if (!isPosShellActive()) {
-      if (scanBuffer) resetScanBuffer();
-      return;
+    let scanBuffer = '';
+    let lastKeystrokeTime = 0;
+    let lastScanDispatchTime = 0;
+    let keystrokeIntervals = [];
+    let scannerActivePreValue = undefined;
+    let barcodeInputPreValue = undefined;
+    let isScanningBarcode = false;
+    let scanIdleTimer = null;
+
+    const NON_TEXT_INPUT_TYPES = new Set(['checkbox', 'radio', 'button', 'submit', 'reset', 'file', 'range', 'color', 'image']);
+    const DEDICATED_SCAN_INPUT_IDS = new Set(['barcodeInput', 'csBarcodeInput', 'rpPackBarcodeInput', 'invScanBarcodeInput', 'rbCodeInput']);
+    // Honeywell USB/BT HID inter-packet jitter can exceed 180ms on long or shifted barcodes; 450ms preserves full scans cleanly.
+    const SCAN_GAP_RESET_MS = 450;
+    const SCAN_IDLE_DISPATCH_MS = 500;
+
+    function isPosShellActive() {
+      const viewSignIn = document.getElementById('viewSignIn');
+      if (viewSignIn && window.getComputedStyle(viewSignIn).display !== 'none' && viewSignIn.style.display !== 'none') return false;
+      const adminDash = document.getElementById('viewAdminDashboard');
+      if (adminDash && window.getComputedStyle(adminDash).display !== 'none' && adminDash.style.display !== 'none' && !adminDash.classList.contains('hidden-layout')) return false;
+      return true;
     }
 
-    const activeEl = document.activeElement;
-    const isTextInputFocused = isEditableTextElement(activeEl);
-    const isDedicatedScanInput = Boolean(activeEl && DEDICATED_SCAN_INPUT_IDS.has(activeEl.id));
-    const keyStr = typeof e.key === 'string' ? e.key : '';
-    const keyLower = keyStr.toLowerCase();
-    const isCtrlOnly = e.ctrlKey && !e.altKey && !e.metaKey;
-    const isCtrlJ = isCtrlOnly && !e.shiftKey && keyLower === 'j';
-    const isCtrlM = isCtrlOnly && !e.shiftKey && keyLower === 'm';
-
-    // Swallow trailing LF (Ctrl+J) sent by CR+LF scanners right after Enter so Chrome never opens Downloads.
-    if (isCtrlJ && scanBuffer.length === 0 && (Date.now() - lastScanDispatchTime) < 600) {
-      e.preventDefault();
-      e.stopPropagation();
-      e.stopImmediatePropagation();
-      return;
+    function isEditableTextElement(el) {
+      if (!el) return false;
+      if (el.tagName === 'TEXTAREA') return true;
+      if (el.tagName !== 'INPUT') return false;
+      return !NON_TEXT_INPUT_TYPES.has((el.type || 'text').toLowerCase());
     }
 
-    const isEnterKey = keyStr === 'Enter' || keyStr === 'NumpadEnter' || keyStr === 'Return' || keyStr === 'LineFeed' ||
-      e.keyCode === 13 || e.which === 13 || e.keyCode === 10 || e.which === 10 || isCtrlM ||
-      (isCtrlJ && scanBuffer.length >= 2);
-    const isTabKey = keyStr === 'Tab' || e.keyCode === 9 || e.which === 9;
-    const hasModifier = (e.ctrlKey || e.metaKey || e.altKey) && !(typeof e.getModifierState === 'function' && e.getModifierState('AltGraph'));
-
-    // Do not append modifier chords (Ctrl+B/C/V/], Alt+Numpad) into scanBuffer; consume STX/ETX/GS control chars mid-scan.
-    if (hasModifier && !isEnterKey) {
-      if ((isScanningBarcode || scanBuffer.length >= 2) && isCtrlOnly && /^[bcdfg\[\]\\^_]$/.test(keyLower)) {
-        e.preventDefault();
-        e.stopPropagation();
-        e.stopImmediatePropagation();
+    function resetScanBuffer() {
+      scanBuffer = '';
+      keystrokeIntervals = [];
+      isScanningBarcode = false;
+      scannerActivePreValue = undefined;
+      barcodeInputPreValue = undefined;
+      if (scanIdleTimer) {
+        clearTimeout(scanIdleTimer);
+        scanIdleTimer = null;
       }
-      return;
     }
 
-    // Hardware scanners typically send Enter, NumpadEnter, Return, LF (Ctrl+J), or Tab upon decoding
-    if (isEnterKey || (isTabKey && (scanBuffer.length >= 8 || (isScanningBarcode && scanBuffer.length >= 4)))) {
-      const avgInterval = keystrokeIntervals.length > 0
-        ? (keystrokeIntervals.reduce((a, b) => a + b, 0) / keystrokeIntervals.length)
-        : 999;
-
-      const isScanner = (!isTextInputFocused && scanBuffer.length >= 2) ||
-        isScanningBarcode ||
-        (isDedicatedScanInput && scanBuffer.length >= 6 && avgInterval < 250) ||
-        (!isDedicatedScanInput && scanBuffer.length >= 8 && avgInterval < 200);
-
-      if (isScanner && scanBuffer.length >= 2) {
-        e.preventDefault();
-        e.stopPropagation();
-        e.stopImmediatePropagation();
-
-        if (isTextInputFocused && activeEl && !isDedicatedScanInput) {
-          if (scannerActivePreValue !== undefined) {
-            activeEl.value = scannerActivePreValue;
-          }
-        } else if (isDedicatedScanInput && activeEl !== barcodeInput && activeEl) {
-          activeEl.value = '';
-        }
-
-        const payload = activeEl === barcodeInput ? pickBarcodeInputValue(barcodeInput.value) : scanBuffer;
-        handleScanDispatch(payload, activeEl);
-        return;
-      }
-
-      // Main barcodeInput manual typing, paste, Alt+Numpad, or Enter button submission
-      if (activeEl === barcodeInput || (barcodeInput && barcodeInput.value.trim() && (activeEl === document.getElementById('barcodeEnterBtn') || !isTextInputFocused))) {
-        e.preventDefault();
-        e.stopPropagation();
-        e.stopImmediatePropagation();
-        const val = activeEl === barcodeInput
-          ? pickBarcodeInputValue(barcodeInput.value)
-          : ((scanBuffer.length >= 2 && isScanningBarcode ? scanBuffer.trim() : '') || barcodeInput.value.trim());
-        handleScanDispatch(val, activeEl);
-        return;
-      }
-
-      // Manual Enter / LF keypresses on modal inputs
-      if (activeEl === keypadBoxInput) {
-        resetScanBuffer();
-        commitBoxActivation();
-        e.preventDefault();
-        return;
-      }
-
-      if (setTicketDetailsModal && setTicketDetailsModal.open) {
-        resetScanBuffer();
-        saveTicketDetailsToInStock();
-        e.preventDefault();
-        return;
-      }
-
-      if (setBoxModal && setBoxModal.open) {
-        resetScanBuffer();
-        confirmSetBoxForTicket(true);
-        e.preventDefault();
-        return;
-      }
-
+    function handleScanDispatch(barcode, activeEl) {
+      const rawToProcess = String(barcode || '').trim();
       resetScanBuffer();
-    } else if (keyStr.length === 1) {
-      const now = Date.now();
-      const interval = lastKeystrokeTime ? (now - lastKeystrokeTime) : 9999;
-      lastKeystrokeTime = now;
-
-      if (scanIdleTimer) clearTimeout(scanIdleTimer);
-
-      if (interval > SCAN_GAP_RESET_MS) {
-        scanBuffer = keyStr;
-        keystrokeIntervals = [];
-        isScanningBarcode = false;
-        scannerActivePreValue = (isTextInputFocused && !isDedicatedScanInput) ? activeEl.value : undefined;
-        barcodeInputPreValue = (activeEl === barcodeInput) ? activeEl.value : undefined;
-      } else {
-        scanBuffer += keyStr;
-        keystrokeIntervals.push(interval);
-        const avg = keystrokeIntervals.reduce((a, b) => a + b, 0) / keystrokeIntervals.length;
-        const minBurstLen = (isDedicatedScanInput || !isTextInputFocused) ? 2 : 5;
-        const maxAvgInterval = (isDedicatedScanInput || !isTextInputFocused) ? 120 : 90;
-        if (keystrokeIntervals.length >= minBurstLen && avg < maxAvgInterval) {
-          isScanningBarcode = true;
+      if (barcodeInput) barcodeInput.value = '';
+      lastScanDispatchTime = Date.now();
+      if (!rawToProcess) return;
+      if (activeEl?.id === 'rbCodeInput' || document.getElementById('receiveBookModernModal')?.open) {
+        if (typeof rbFillFromBarcode === 'function') {
+          rbFillFromBarcode(rawToProcess);
+          return;
         }
       }
+      processScannedBarcode(rawToProcess);
+    }
 
-      if (isScanningBarcode && isTextInputFocused && !isDedicatedScanInput) {
+    function pickBarcodeInputValue(domVal) {
+      const rawDom = String(domVal || '').trim();
+      const buf = scanBuffer.trim();
+      if (!buf) return rawDom;
+      if (!rawDom) return buf;
+      // Preserve AIM prefixes (]C1), Code39 (*), or URLs intact from keydown before #barcodeInput's input filter strips letters.
+      if (/^(\]|\*|https?:|www\.)/i.test(buf) && buf.length >= rawDom.length && !/^box/i.test(rawDom)) {
+        return buf;
+      }
+      if (isScanningBarcode && buf.length >= 8 && barcodeInputPreValue && rawDom.startsWith(barcodeInputPreValue.trim()) && rawDom.length > buf.length) {
+        return buf;
+      }
+      if (rawDom.length > buf.length) {
+        return rawDom;
+      }
+      return buf.length >= 2 ? buf : rawDom;
+    }
+
+    window.addEventListener('keydown', e => {
+      if (!isPosShellActive()) {
+        if (scanBuffer) resetScanBuffer();
+        return;
+      }
+
+      const activeEl = document.activeElement;
+      const isTextInputFocused = isEditableTextElement(activeEl);
+      const isDedicatedScanInput = Boolean(activeEl && DEDICATED_SCAN_INPUT_IDS.has(activeEl.id));
+      const keyStr = typeof e.key === 'string' ? e.key : '';
+      const keyLower = keyStr.toLowerCase();
+      const isCtrlOnly = e.ctrlKey && !e.altKey && !e.metaKey;
+      const isCtrlJ = isCtrlOnly && !e.shiftKey && keyLower === 'j';
+      const isCtrlM = isCtrlOnly && !e.shiftKey && keyLower === 'm';
+
+      // Swallow trailing LF (Ctrl+J) sent by CR+LF scanners right after Enter so Chrome never opens Downloads.
+      if (isCtrlJ && scanBuffer.length === 0 && (Date.now() - lastScanDispatchTime) < 600) {
         e.preventDefault();
         e.stopPropagation();
         e.stopImmediatePropagation();
-        if (scannerActivePreValue !== undefined && activeEl.value !== scannerActivePreValue) {
-          activeEl.value = scannerActivePreValue;
-        }
-      } else if (isScanningBarcode && !isTextInputFocused && keyStr === ' ') {
-        e.preventDefault();
+        return;
       }
 
-      // Idle fallback only after 500ms total silence on fast terminator-less scanner bursts (<70ms avg)
-      scanIdleTimer = setTimeout(() => {
-        const idleAvg = keystrokeIntervals.length > 0
+      const isEnterKey = keyStr === 'Enter' || keyStr === 'NumpadEnter' || keyStr === 'Return' || keyStr === 'LineFeed' ||
+        e.keyCode === 13 || e.which === 13 || e.keyCode === 10 || e.which === 10 || isCtrlM ||
+        (isCtrlJ && scanBuffer.length >= 2);
+      const isTabKey = keyStr === 'Tab' || e.keyCode === 9 || e.which === 9;
+      const hasModifier = (e.ctrlKey || e.metaKey || e.altKey) && !(typeof e.getModifierState === 'function' && e.getModifierState('AltGraph'));
+
+      // Do not append modifier chords (Ctrl+B/C/V/], Alt+Numpad) into scanBuffer; consume STX/ETX/GS control chars mid-scan.
+      if (hasModifier && !isEnterKey) {
+        if ((isScanningBarcode || scanBuffer.length >= 2) && isCtrlOnly && /^[bcdfg\[\]\\^_]$/.test(keyLower)) {
+          e.preventDefault();
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+        }
+        return;
+      }
+
+      // Hardware scanners typically send Enter, NumpadEnter, Return, LF (Ctrl+J), or Tab upon decoding
+      if (isEnterKey || (isTabKey && (scanBuffer.length >= 8 || (isScanningBarcode && scanBuffer.length >= 4)))) {
+        const avgInterval = keystrokeIntervals.length > 0
           ? (keystrokeIntervals.reduce((a, b) => a + b, 0) / keystrokeIntervals.length)
           : 999;
-        if (scanBuffer.length >= 10 && isScanningBarcode && idleAvg < 70) {
-          if (isTextInputFocused && activeEl && !isDedicatedScanInput && scannerActivePreValue !== undefined) {
-            activeEl.value = scannerActivePreValue;
+
+        const isScanner = (!isTextInputFocused && scanBuffer.length >= 2) ||
+          isScanningBarcode ||
+          (isDedicatedScanInput && scanBuffer.length >= 6 && avgInterval < 250) ||
+          (!isDedicatedScanInput && scanBuffer.length >= 8 && avgInterval < 200);
+
+        if (isScanner && scanBuffer.length >= 2) {
+          e.preventDefault();
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+
+          if (isTextInputFocused && activeEl && !isDedicatedScanInput) {
+            if (scannerActivePreValue !== undefined) {
+              activeEl.value = scannerActivePreValue;
+            }
           } else if (isDedicatedScanInput && activeEl !== barcodeInput && activeEl) {
             activeEl.value = '';
           }
+
           const payload = activeEl === barcodeInput ? pickBarcodeInputValue(barcodeInput.value) : scanBuffer;
           handleScanDispatch(payload, activeEl);
-        } else if (Date.now() - lastKeystrokeTime >= SCAN_IDLE_DISPATCH_MS) {
-          resetScanBuffer();
+          return;
         }
-      }, SCAN_IDLE_DISPATCH_MS);
+
+        // Main barcodeInput manual typing, paste, Alt+Numpad, or Enter button submission
+        if (activeEl === barcodeInput || (barcodeInput && barcodeInput.value.trim() && (activeEl === document.getElementById('barcodeEnterBtn') || !isTextInputFocused))) {
+          e.preventDefault();
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+          const val = activeEl === barcodeInput
+            ? pickBarcodeInputValue(barcodeInput.value)
+            : ((scanBuffer.length >= 2 && isScanningBarcode ? scanBuffer.trim() : '') || barcodeInput.value.trim());
+          handleScanDispatch(val, activeEl);
+          return;
+        }
+
+        // Manual Enter / LF keypresses on modal inputs
+        if (activeEl === keypadBoxInput) {
+          resetScanBuffer();
+          commitBoxActivation();
+          e.preventDefault();
+          return;
+        }
+
+        if (setTicketDetailsModal && setTicketDetailsModal.open) {
+          resetScanBuffer();
+          saveTicketDetailsToInStock();
+          e.preventDefault();
+          return;
+        }
+
+        if (setBoxModal && setBoxModal.open) {
+          resetScanBuffer();
+          confirmSetBoxForTicket(true);
+          e.preventDefault();
+          return;
+        }
+
+        resetScanBuffer();
+      } else if (keyStr.length === 1) {
+        const now = Date.now();
+        const interval = lastKeystrokeTime ? (now - lastKeystrokeTime) : 9999;
+        lastKeystrokeTime = now;
+
+        if (scanIdleTimer) clearTimeout(scanIdleTimer);
+
+        if (interval > SCAN_GAP_RESET_MS) {
+          scanBuffer = keyStr;
+          keystrokeIntervals = [];
+          isScanningBarcode = false;
+          scannerActivePreValue = (isTextInputFocused && !isDedicatedScanInput) ? activeEl.value : undefined;
+          barcodeInputPreValue = (activeEl === barcodeInput) ? activeEl.value : undefined;
+        } else {
+          scanBuffer += keyStr;
+          keystrokeIntervals.push(interval);
+          const avg = keystrokeIntervals.reduce((a, b) => a + b, 0) / keystrokeIntervals.length;
+          const minBurstLen = (isDedicatedScanInput || !isTextInputFocused) ? 2 : 5;
+          const maxAvgInterval = (isDedicatedScanInput || !isTextInputFocused) ? 120 : 90;
+          if (keystrokeIntervals.length >= minBurstLen && avg < maxAvgInterval) {
+            isScanningBarcode = true;
+          }
+        }
+
+        if (isScanningBarcode && isTextInputFocused && !isDedicatedScanInput) {
+          e.preventDefault();
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+          if (scannerActivePreValue !== undefined && activeEl.value !== scannerActivePreValue) {
+            activeEl.value = scannerActivePreValue;
+          }
+        } else if (isScanningBarcode && !isTextInputFocused && keyStr === ' ') {
+          e.preventDefault();
+        }
+
+        // Idle fallback only after 500ms total silence on fast terminator-less scanner bursts (<95ms avg)
+        scanIdleTimer = setTimeout(() => {
+          const idleAvg = keystrokeIntervals.length > 0
+            ? (keystrokeIntervals.reduce((a, b) => a + b, 0) / keystrokeIntervals.length)
+            : 999;
+          if (scanBuffer.length >= 10 && isScanningBarcode && idleAvg < 95) {
+            if (isTextInputFocused && activeEl && !isDedicatedScanInput && scannerActivePreValue !== undefined) {
+              activeEl.value = scannerActivePreValue;
+            } else if (isDedicatedScanInput && activeEl !== barcodeInput && activeEl) {
+              activeEl.value = '';
+            }
+            const payload = activeEl === barcodeInput ? pickBarcodeInputValue(barcodeInput.value) : scanBuffer;
+            handleScanDispatch(payload, activeEl);
+          } else if (Date.now() - lastKeystrokeTime >= SCAN_IDLE_DISPATCH_MS) {
+            resetScanBuffer();
+          }
+        }, SCAN_IDLE_DISPATCH_MS);
+      }
+    }, { capture: true });
+  }
+
+  function parseBoxBarcode(barcode) {
+    if (!barcode) return null;
+    let s = String(barcode).replace(/[\x00-\x1F\x7F]/g, '').trim();
+    // Strip AIM scanner symbology prefixes (]C1, ]I0, etc.)
+    if (s.startsWith(']')) {
+      s = s.replace(/^\][a-zA-Z][0-9]{1,2}/, '').trim();
     }
-  }, { capture: true });
-}
-
-function parseBoxBarcode(barcode) {
-  if (!barcode) return null;
-  let s = String(barcode).replace(/[\x00-\x1F\x7F]/g, '').trim();
-  // Strip AIM scanner symbology prefixes (]C1, ]I0, etc.)
-  if (s.startsWith(']')) {
-    s = s.replace(/^\][a-zA-Z][0-9]{1,2}/, '').trim();
+    // Strip Code 39 asterisks
+    s = s.replace(/^\*+|\*+$/g, '').trim();
+    // Format 1: Prefix like BOX-05, BOX05, BOX 5, BOX#5, B-05, B05, B5, SLOT-05, SLOT 5, BIN-5, DISPENSER-5, etc.
+    const prefixMatch = s.match(/^(?:box|slot|b|bin|dispenser)[-_#\s/.:]*(\d{1,3})$/i);
+    if (prefixMatch) {
+      const num = parseInt(prefixMatch[1], 10);
+      if (num >= 1 && num <= 100) return num;
+    }
+    // Format 2: Hash prefix like #05, #5
+    const hashMatch = s.match(/^#(\d{1,3})$/);
+    if (hashMatch) {
+      const num = parseInt(hashMatch[1], 10);
+      if (num >= 1 && num <= 100) return num;
+    }
+    // Format 3: Short 1 or 2 digit slot number (1 to 99) if string is only 1-2 digits
+    if (/^\d{1,2}$/.test(s)) {
+      const num = parseInt(s, 10);
+      if (num >= 1 && num <= 100) return num;
+    }
+    return null;
   }
-  // Strip Code 39 asterisks
-  s = s.replace(/^\*+|\*+$/g, '').trim();
-  // Format 1: Prefix like BOX-05, BOX05, BOX 5, BOX#5, B-05, B05, B5, SLOT-05, SLOT 5, BIN-5, DISPENSER-5, etc.
-  const prefixMatch = s.match(/^(?:box|slot|b|bin|dispenser)[-_#\s/.:]*(\d{1,3})$/i);
-  if (prefixMatch) {
-    const num = parseInt(prefixMatch[1], 10);
-    if (num >= 1 && num <= 100) return num;
-  }
-  // Format 2: Hash prefix like #05, #5
-  const hashMatch = s.match(/^#(\d{1,3})$/);
-  if (hashMatch) {
-    const num = parseInt(hashMatch[1], 10);
-    if (num >= 1 && num <= 100) return num;
-  }
-  // Format 3: Short 1 or 2 digit slot number (1 to 99) if string is only 1-2 digits
-  if (/^\d{1,2}$/.test(s)) {
-    const num = parseInt(s, 10);
-    if (num >= 1 && num <= 100) return num;
-  }
-  return null;
-}
 
-export function findPreviouslySoldOutPack(parsedTicket, rawBarcode) {
-  if (!state) return null;
-  const cleanDigits = String(rawBarcode || '').replace(/[^0-9]/g, '');
-  const candidatePack = parsedTicket?.packCombined || parsedTicket?.packNumber || (cleanDigits.length >= 6 ? cleanDigits.slice(-6) : null);
-  const candidateGame = parsedTicket?.gameNumber || null;
+  export function findPreviouslySoldOutPack(parsedTicket, rawBarcode) {
+    if (!state) return null;
+    const cleanDigits = String(rawBarcode || '').replace(/[^0-9]/g, '');
+    const candidatePack = parsedTicket?.packCombined || parsedTicket?.packNumber || (cleanDigits.length >= 6 ? cleanDigits.slice(-6) : null);
+    const candidateGame = parsedTicket?.gameNumber || null;
 
-  if (!candidatePack) return null;
+    if (!candidatePack) return null;
 
-  // 1. If pack is ALREADY active in any dispenser box, prevent duplicate active assignment!
-  const isAlreadyActive = (state.slots || []).some(s => {
-    if (s.status !== 'ACTIVE' || !s.packNumber) return false;
-    if (candidateGame && !slotMatchesGameNumber(s, candidateGame)) return false;
-    return isPackNumberMatch(s.packNumber, candidatePack) ||
-      (parsedTicket?.packClean && isPackNumberMatch(s.packNumber, parsedTicket.packClean));
-  });
-  if (isAlreadyActive) return null;
+    // 1. If pack is ALREADY active in any dispenser box, prevent duplicate active assignment!
+    const isAlreadyActive = (state.slots || []).some(s => {
+      if (s.status !== 'ACTIVE' || !s.packNumber) return false;
+      if (candidateGame && !slotMatchesGameNumber(s, candidateGame)) return false;
+      return isPackNumberMatch(s.packNumber, candidatePack) ||
+        (parsedTicket?.packClean && isPackNumberMatch(s.packNumber, parsedTicket.packClean));
+    });
+    if (isAlreadyActive) return null;
 
-  // 2. Search soldOutThisShift first
-  const matchThisShift = (state.soldOutThisShift || []).find(so => {
-    if (!isPackNumberMatch(so.packNumber, candidatePack)) return false;
-    if (candidateGame && so.gameNumber && so.gameNumber !== candidateGame) return false;
-    if (candidateGame && so.barcodePrefix && so.barcodePrefix !== candidateGame) return false;
-    return true;
-  });
-  if (matchThisShift) return { ...matchThisShift, source: 'soldOutThisShift' };
-
-  // 3. Search shiftHistory (from newest to oldest shift)
-  const history = state.shiftHistory || [];
-  for (let i = history.length - 1; i >= 0; i--) {
-    const h = history[i];
-    const foundSo = (h.soldOutSnapshot || []).find(so => {
+    // 2. Search soldOutThisShift first
+    const matchThisShift = (state.soldOutThisShift || []).find(so => {
       if (!isPackNumberMatch(so.packNumber, candidatePack)) return false;
       if (candidateGame && so.gameNumber && so.gameNumber !== candidateGame) return false;
       if (candidateGame && so.barcodePrefix && so.barcodePrefix !== candidateGame) return false;
       return true;
     });
-    if (foundSo) return { ...foundSo, shiftNumber: h.shiftNumber, source: 'shiftHistory' };
+    if (matchThisShift) return { ...matchThisShift, source: 'soldOutThisShift' };
 
-    const foundSlot = (h.slotsSnapshot || []).find(s => {
-      if (!s.packNumber || !isPackNumberMatch(s.packNumber, candidatePack)) return false;
-      if (candidateGame && !slotMatchesGameNumber(s, candidateGame)) return false;
-      const std = getStandardPackDetails(s.price || 1);
-      const packSize = s.packSize || std.packSize || 100;
-      return s.status === 'SOLD_OUT' || (s.currentTicket !== undefined && s.currentTicket >= packSize);
-    });
-    if (foundSlot) {
-      const std = getStandardPackDetails(foundSlot.price || 1);
-      const packSize = foundSlot.packSize || std.packSize || 100;
-      return {
-        boxNumber: foundSlot.boxNumber,
-        gameName: foundSlot.gameName,
-        price: foundSlot.price,
-        packNumber: foundSlot.packNumber,
-        packSize: packSize,
-        startTicket: foundSlot.startTicket || 0,
-        closeTicket: foundSlot.currentTicket || packSize,
-        packStartTicket: foundSlot.packStartTicket || 0,
-        packCumulativeSold: foundSlot.packCumulativeSold || foundSlot.ticketsSold || 0,
-        ticketsSold: foundSlot.ticketsSold || 0,
-        salesAmount: (foundSlot.ticketsSold || 0) * (foundSlot.price || 1),
-        shiftNumber: h.shiftNumber,
-        source: 'shiftHistory'
-      };
-    }
-  }
-
-  // 4. Search current slots marked SOLD_OUT
-  const currentSoldOut = (state.slots || []).find(s => {
-    if (s.status !== 'SOLD_OUT' || !s.packNumber) return false;
-    if (candidateGame && !slotMatchesGameNumber(s, candidateGame)) return false;
-    return isPackNumberMatch(s.packNumber, candidatePack);
-  });
-  if (currentSoldOut) {
-    const std = getStandardPackDetails(currentSoldOut.price || 1);
-    const packSize = currentSoldOut.packSize || std.packSize || 100;
-    return {
-      boxNumber: currentSoldOut.boxNumber,
-      gameName: currentSoldOut.gameName,
-      price: currentSoldOut.price,
-      packNumber: currentSoldOut.packNumber,
-      packSize: packSize,
-      startTicket: currentSoldOut.startTicket || 0,
-      closeTicket: currentSoldOut.currentTicket || packSize,
-      packStartTicket: currentSoldOut.packStartTicket || 0,
-      packCumulativeSold: currentSoldOut.packCumulativeSold || currentSoldOut.ticketsSold || 0,
-      ticketsSold: currentSoldOut.ticketsSold || 0,
-      source: 'currentSlots'
-    };
-  }
-
-  // 5. Search inventory packs marked SOLD_OUT or DEPLETED
-  const invSoldOut = (state.inventory || []).find(p =>
-    (p.status === 'SOLD_OUT' || p.status === 'DEPLETED') && isPackNumberMatch(p.packNumber, candidatePack)
-  );
-  if (invSoldOut) return { ...invSoldOut, source: 'inventory' };
-
-  return null;
-}
-if (typeof window !== 'undefined') {
-  window.findPreviouslySoldOutPack = findPreviouslySoldOutPack;
-}
-
-let lastScannedRawBarcode = '';
-let lastScannedBarcodeTime = 0;
-
-function processScannedBarcode(rawBarcode) {
-  sfx.beep();
-  const parsedPreview = parseLotteryBarcode(rawBarcode, state.customGames);
-  const effectivePreviewBarcode = (parsedPreview && parsedPreview.standardBarcode) ? parsedPreview.standardBarcode : rawBarcode;
-  state.lastScannedBarcode = effectivePreviewBarcode;
-
-  // Reset any alert banner styles from previous gatekeeper warnings
-  if (scanAlertTimeout) {
-    clearTimeout(scanAlertTimeout);
-    scanAlertTimeout = null;
-  }
-  if (lastScanReadoutContainer) {
-    lastScanReadoutContainer.classList.remove('alert-yellow');
-  }
-  if (scanActionTitle) {
-    scanActionTitle.style.background = '';
-    scanActionTitle.style.color = '';
-    scanActionTitle.style.padding = '';
-    scanActionTitle.style.borderRadius = '';
-  }
-
-  // Validate that input does not exceed ticket barcode range
-  const trimmedBarcode = String(rawBarcode || '').trim();
-  const isUrl = trimmedBarcode.includes('http://') || trimmedBarcode.includes('https://') || trimmedBarcode.includes('www.');
-  if (!isUrl && trimmedBarcode.length > 36) {
-    sfx.alert();
-    if (lastScanReadoutContainer) lastScanReadoutContainer.classList.add('alert-yellow');
-    if (scanActionTitle) scanActionTitle.textContent = 'BARCODE EXCEEDS LIMIT';
-    if (lastScanDisplay) lastScanDisplay.textContent = `Input exceeds maximum 36 characters (${trimmedBarcode.length} chars).`;
-    if (largeStatReadout) {
-      largeStatReadout.textContent = '!';
-      largeStatReadout.style.color = '#dc2626';
-    }
-    clearTimeout(scanAlertTimeout);
-    scanAlertTimeout = setTimeout(() => {
-      clearScanAlertBanner();
-    }, 6000);
-    return;
-  }
-
-  // If numeric input is outside valid ticket barcode range (8-30 digits) or Box # (1-100):
-  const parsedBoxEarly = parseBoxBarcode(trimmedBarcode);
-  const pureBarcodeDigits = trimmedBarcode.replace(/[^0-9]/g, '');
-  if (!parsedBoxEarly && pureBarcodeDigits.length > 0 && (pureBarcodeDigits.length < 8 || pureBarcodeDigits.length > 30)) {
-    sfx.alert();
-    if (lastScanReadoutContainer) lastScanReadoutContainer.classList.add('alert-yellow');
-    if (scanActionTitle) scanActionTitle.textContent = 'INVALID BARCODE RANGE';
-    if (lastScanDisplay) lastScanDisplay.textContent = `[${trimmedBarcode}] is outside valid barcode range (8-30 digits).`;
-    if (largeStatReadout) {
-      largeStatReadout.textContent = '!';
-      largeStatReadout.style.color = '#dc2626';
-    }
-    clearTimeout(scanAlertTimeout);
-    scanAlertTimeout = setTimeout(() => {
-      clearScanAlertBanner();
-    }, 6000);
-    return;
-  }
-
-  // Validate ticket number range within roll (000-300)
-  if (parsedPreview && parsedPreview.ticketNumber !== null && (parsedPreview.ticketNumber < 0 || parsedPreview.ticketNumber > 300)) {
-    sfx.alert();
-    if (lastScanReadoutContainer) lastScanReadoutContainer.classList.add('alert-yellow');
-    if (scanActionTitle) scanActionTitle.textContent = 'TICKET OUT OF RANGE';
-    if (lastScanDisplay) lastScanDisplay.textContent = `Ticket #${parsedPreview.ticketNumber} exceeds maximum roll count (300).`;
-    if (largeStatReadout) {
-      largeStatReadout.textContent = '!';
-      largeStatReadout.style.color = '#dc2626';
-    }
-    clearTimeout(scanAlertTimeout);
-    scanAlertTimeout = setTimeout(() => {
-      clearScanAlertBanner();
-    }, 6000);
-    return;
-  }
-
-  // Scenario -1: Updating Inventory mode is active -> route barcode scan to inventory intake
-  if (state.isUpdatingInventory) {
-    handleUpdatingInventoryScan(rawBarcode);
-    return;
-  }
-
-  // Scenario -0.5: Box Adjust modal is open on Remove book tab -> route ticket scan to position input
-  if (boxAdjustModal?.open) {
-    const tabBoxRemove = document.getElementById('tabBoxRemove');
-    const rmPosInput = document.getElementById('rmPosInput');
-    if (tabBoxRemove?.classList.contains('on') && rmPosInput) {
-      const parsed = parseLotteryBarcode(rawBarcode, state.customGames);
-      if (parsed && parsed.isValid && typeof parsed.ticketNumber === 'number') {
-        rmPosInput.value = String(parsed.ticketNumber).padStart(3, '0');
-        sfx.chime();
-        showToast(`✓ Ticket position set to #${String(parsed.ticketNumber).padStart(3, '0')}`, 'info');
-        return;
-      }
-    }
-  }
-
-  // Scenario 0: Receive Packs view is active -> route barcode scan into intake form
-  const viewReceive = document.getElementById('viewReceivePacks');
-  if (viewReceive && viewReceive.style.display !== 'none') {
-    if (typeof window.handleReceivePackBarcode === 'function') {
-      window.handleReceivePackBarcode(rawBarcode);
-    }
-    return;
-  }
-
-  // Scenario 0b: Inventory View is active -> route barcode scan into In Stock inventory
-  const viewInv = document.getElementById('viewInventory');
-  if (viewInv && viewInv.style.display !== 'none') {
-    if (typeof window.addScannedTicketToInventory === 'function') {
-      window.addScannedTicketToInventory(rawBarcode);
-    }
-    return;
-  }
-
-  // Scenario 0c: Close Shift View is active -> route barcode scan to reconcile pack closing number
-  const viewClose = document.getElementById('viewCloseShift');
-  if (viewClose && viewClose.style.display !== 'none') {
-    if (typeof window.handleCloseShiftBarcode === 'function') {
-      window.handleCloseShiftBarcode(rawBarcode);
-    }
-    return;
-  }
-
-  // Scenario 1: Update Inventory Manager Modal is open -> handle ticket scan for intake
-  if (inventoryModal && inventoryModal.open) {
-    handleTicketBarcodeScan(rawBarcode, 'inventory');
-    return;
-  }
-
-  // Scenario 1a: Ticket Details Modal is open -> if user scans box barcode, advance to box and set; if ticket/pack scanned, refresh details
-  if (setTicketDetailsModal && setTicketDetailsModal.open) {
-    const parsedBoxNum = parseBoxBarcode(rawBarcode);
-    if (parsedBoxNum && parsedBoxNum >= 1 && parsedBoxNum <= 100) {
-      proceedToSetBoxStep();
-      if (setBoxNumberInput) setBoxNumberInput.value = parsedBoxNum;
-      confirmSetBoxForTicket(false);
-      return;
-    }
-    const parsedTix = parseLotteryBarcode(rawBarcode, state.customGames);
-    if (parsedTix && parsedTix.isValid) {
-      openSetTicketDetailsModal(rawBarcode);
-      showToast(`🏷️ Switched to scanned barcode [${rawBarcode}]`, 'info');
-      return;
-    }
-  }
-
-  // Scenario 1b: Set Box Modal is open -> if user scans box barcode, confirm set box; if ticket/pack scanned, switch to new ticket/pack
-  if (setBoxModal && setBoxModal.open) {
-    const parsedBoxNum = parseBoxBarcode(rawBarcode);
-    if (parsedBoxNum && parsedBoxNum >= 1 && parsedBoxNum <= 100) {
-      if (setBoxNumberInput) setBoxNumberInput.value = parsedBoxNum;
-      confirmSetBoxForTicket(false);
-      return;
-    }
-    const parsedTix = parseLotteryBarcode(rawBarcode, state.customGames);
-    if (parsedTix && parsedTix.isValid) {
-      isTransitioningSetBoxStep = true;
-      try {
-        setBoxModal?.close();
-        openSetTicketDetailsModal(rawBarcode);
-      } finally {
-        isTransitioningSetBoxStep = false;
-      }
-      showToast(`🏷️ Switched to scanned barcode [${rawBarcode}]`, 'info');
-      return;
-    }
-  }
-
-  // Scenario 2: Ticket Activation Modal is open -> clerk can scan a box barcode or new pack
-  if (activationModal && activationModal.open) {
-    const parsedBoxNum = parseBoxBarcode(rawBarcode);
-
-    if (parsedBoxNum && parsedBoxNum >= 1 && parsedBoxNum <= 100) {
-      keypadBoxInput.value = parsedBoxNum;
-      showToast(`✓ Box #${parsedBoxNum} barcode scanned! Activating pack into Box #${parsedBoxNum}...`, 'success');
-      commitBoxActivation();
-      return;
-    } else {
-      // Scanned another pack barcode: dynamically detect game & pack info
-      const parsed = parseLotteryBarcode(rawBarcode, state.customGames);
-      const matchedGame = findGameByBarcode(rawBarcode, state.customGames);
-      const gamePrice = matchedGame ? matchedGame.price : 20;
-      const gameName = matchedGame ? cleanGameTitle(matchedGame.name) : 'Scratch-Off Game';
-      const std = getStandardPackDetails(gamePrice);
-      const packNum = (parsed && parsed.packNumber) ? parsed.packNumber : (rawBarcode.replace(/[^0-9]/g, '').slice(-6) || '889901');
-      const startTicketNum = (parsed && parsed.ticketNumber !== null && parsed.ticketNumber !== undefined) ? parsed.ticketNumber : 0;
-
-      pendingActivationPack = {
-        packNumber: packNum,
-        gameId: matchedGame ? matchedGame.id : ('g' + Math.floor(100 + Math.random() * 900)),
-        gameName: gameName,
-        price: gamePrice,
-        packSize: std.packSize,
-        startTicket: startTicketNum
-      };
-      if (activationGameTitle) {
-        activationGameTitle.textContent = formatGameTitle(pendingActivationPack.price, pendingActivationPack.gameName);
-      }
-      const presetPackInput = document.getElementById('presetPackNumberInput');
-      if (presetPackInput) presetPackInput.value = packNum;
-      const presetStartInput = document.getElementById('presetStartTicketInput');
-      if (presetStartInput) presetStartInput.value = startTicketNum;
-      const activationGameDropdown = document.getElementById('activationGameDropdown');
-      if (activationGameDropdown && matchedGame) {
-        activationGameDropdown.value = matchedGame.id;
-      }
-      updateActivationPackHints(pendingActivationPack);
-      sfx.beep();
-
-      const currentBoxVal = keypadBoxInput ? parseInt(keypadBoxInput.value, 10) : NaN;
-      if (!isNaN(currentBoxVal) && currentBoxVal >= 1 && currentBoxVal <= 100) {
-        showToast(`✓ Pack #${pendingActivationPack.packNumber} scanned! Activating into Box #${currentBoxVal}...`, 'success');
-        commitBoxActivation();
-        return;
-      }
-
-      showToast(`✓ Pack #${pendingActivationPack.packNumber} scanned: $${gamePrice} ${gameName}!`, 'info');
-      return;
-    }
-  }
-
-  // Scenario 3: End Shift Scanning (Verify Active Boxes)
-  if (state.shiftStatus === 'SCANNING_END_SHIFT') {
-    const parsedBoxNum = parseBoxBarcode(rawBarcode);
-    const parsedTicket = parseLotteryBarcode(rawBarcode, state.customGames);
-    const cleanDigits = rawBarcode.replace(/[^0-9]/g, '');
-    let targetSlot = null;
-
-    // 1. Check if scanned barcode is a box identifier (e.g. "BOX-01", "1")
-    if (parsedBoxNum) {
-      targetSlot = state.slots.find(s => s.boxNumber === parsedBoxNum && isBoxActive(s));
-    }
-
-    // 2. Check if this exact barcode was previously scanned and stored into any active box
-    if (!targetSlot) {
-      const scannedInfo = findScannedBarcodeInfo(rawBarcode);
-      if (scannedInfo && scannedInfo.boxNumber) {
-        targetSlot = state.slots.find(s => s.boxNumber === scannedInfo.boxNumber && isBoxActive(s));
-      }
-    }
-
-    // 3. Match by parsed pack number AND game number (STRICT: requires both to prevent cross-game false matches)
-    if (!targetSlot && parsedTicket && parsedTicket.packNumber) {
-      targetSlot = state.slots.find(s => {
-        if (!isBoxActive(s)) return false;
-        const packMatches = isPackNumberMatch(s.packNumber, parsedTicket.packNumber) ||
-          (parsedTicket.packCombined && isPackNumberMatch(s.packNumber, parsedTicket.packCombined)) ||
-          (parsedTicket.packClean && isPackNumberMatch(s.packNumber, parsedTicket.packClean));
-        if (!packMatches) return false;
-        // CRITICAL: Also verify game number matches to prevent cross-game false positives
-        if (parsedTicket.gameNumber && !slotMatchesGameNumber(s, parsedTicket.gameNumber)) return false;
+    // 3. Search shiftHistory (from newest to oldest shift)
+    const history = state.shiftHistory || [];
+    for (let i = history.length - 1; i >= 0; i--) {
+      const h = history[i];
+      const foundSo = (h.soldOutSnapshot || []).find(so => {
+        if (!isPackNumberMatch(so.packNumber, candidatePack)) return false;
+        if (candidateGame && so.gameNumber && so.gameNumber !== candidateGame) return false;
+        if (candidateGame && so.barcodePrefix && so.barcodePrefix !== candidateGame) return false;
         return true;
       });
-    }
+      if (foundSo) return { ...foundSo, shiftNumber: h.shiftNumber, source: 'shiftHistory' };
 
-    // 4. Also check if barcode contains an active box's exact normalized pack number (with game verification)
-    if (!targetSlot && parsedTicket && parsedTicket.gameNumber) {
-      targetSlot = state.slots.find(s => {
-        if (!isBoxActive(s)) return false;
-        if (!slotMatchesGameNumber(s, parsedTicket.gameNumber)) return false;
-        const slotPackNorm = normalizePackNumber(s.packNumber);
-        if (slotPackNorm.length < 4) return false;
-        return cleanDigits.includes(slotPackNorm);
+      const foundSlot = (h.slotsSnapshot || []).find(s => {
+        if (!s.packNumber || !isPackNumberMatch(s.packNumber, candidatePack)) return false;
+        if (candidateGame && !slotMatchesGameNumber(s, candidateGame)) return false;
+        const std = getStandardPackDetails(s.price || 1);
+        const packSize = s.packSize || std.packSize || 100;
+        return s.status === 'SOLD_OUT' || (s.currentTicket !== undefined && s.currentTicket >= packSize);
       });
-    }
-
-    // 5. Match by game barcodePrefix (ONLY if pack number also matches exactly)
-    if (!targetSlot && parsedTicket && parsedTicket.gameNumber && parsedTicket.packNumber) {
-      const matchingSlots = state.slots.filter(s => {
-        if (!isBoxActive(s)) return false;
-        if (!isPackNumberMatch(s.packNumber, parsedTicket.packNumber)) {
-          return false;
-        }
-        const gameDef = SAMPLE_GAMES.find(g => g.id === s.gameId) || (state.customGames || []).find(g => g.id === s.gameId);
-        return gameDef && gameDef.barcodePrefix === parsedTicket.gameNumber;
-      });
-      if (matchingSlots.length === 1) {
-        targetSlot = matchingSlots[0];
-      }
-    }
-
-    // If this box was already scanned and is waiting for activation:
-    if (targetSlot && targetSlot.needsActivation) {
-      sfx.beep?.();
-      bringBoxToVisibleRack(targetSlot.boxNumber);
-      state.lastScannedSlot = targetSlot.boxNumber;
-      showToast(`ℹ️ Box #${targetSlot.boxNumber} is waiting for activation. Tap "Activate" on Box #${targetSlot.boxNumber} to activate!`, 'info');
-      renderHeaderAndMetrics();
-      renderDispenserRack();
-      return;
-    }
-
-    // If scanned barcode does not match ANY active dispenser box:
-    // In Get Report phase, add the ticket box to the rack with an "Activate" button!
-    // The 2-step activation modal ONLY opens when the cashier taps "Activate" on the box!
-    if (!targetSlot) {
-      if (parsedTicket && parsedTicket.isValid && !parsedTicket.isRetailProduct && !parsedTicket.isNonLotteryBarcode) {
-        const inStock = findInStockPack(parsedTicket, rawBarcode);
-        const inStockItem = inStock?.item;
-        const matchedGame = findGameByBarcode(rawBarcode, state.customGames) ||
-          SAMPLE_GAMES.find(g => g.id === parsedTicket.gameNumber) ||
-          (state.customGames || []).find(g => g.id === parsedTicket.gameNumber) ||
-          SAMPLE_GAMES.find(g => g.barcodePrefix === parsedTicket.gameNumber);
-        const gameName = inStockItem?.gameName || inStockItem?.game || matchedGame?.name || parsedTicket.gameName || 'Scratch-Off Game';
-        const cleanName = cleanGameTitle(gameName);
-        const chosenPrice = inStockItem?.price || matchedGame?.price || parsedTicket.price || 1;
-        const std = getStandardPackDetails(chosenPrice);
-        const packSize = inStockItem?.packSizeNum || matchedGame?.packSize || parsedTicket.packSize || std.packSize || 100;
-        const packNum = inStockItem?.packNumber || parsedTicket.packCombined || parsedTicket.packNumber || (rawBarcode ? String(rawBarcode).replace(/[^0-9]
-...[truncated for diff preview]
-        const packNum = inStockItem?.packNumber || parsedTicket.packCombined || parsedTicket.packNumber || (rawBarcode ? String(rawBarcode).replace(/[^0-9]/g, '').slice(-7) : '000000');
-        const tixNum = (parsedTicket.ticketNumber !== null && parsedTicket.ticketNumber !== undefined) ? parsedTicket.ticketNumber : Math.max(0, packSize - 1);
-        const effectiveSec = (parsedTicket && parsedTicket.hasExplicitSecurityCode && parsedTicket.securityCode)
-          ? parsedTicket.securityCode
-          : (parsedTicket?.securityCode || computeLotterySeriesCode(parsedTicket?.gameNumber || (matchedGame ? matchedGame.barcodePrefix : ''), tixNum, state.customGames, packSize));
-
-        const targetBoxNum = findFirstEmptyBox() || ((state.slots?.length || 0) + 1);
-        let slot = state.slots.find(s => Number(s.boxNumber) === Number(targetBoxNum));
-        if (!slot) {
-          slot = {
-            boxNumber: targetBoxNum,
-            status: 'EMPTY',
-            gameId: null,
-            gameName: null,
-            price: null,
-            packNumber: null,
-            packSize: null,
-            startTicket: 0,
-            currentTicket: 0,
-            ticketsSold: 0,
-            ticketsInBox: 0,
-            scannedBarcodes: [],
-            activatedThisShift: false,
-            daysActive: 0,
-            scannedInEndShift: false
-          };
-          state.slots.push(slot);
-          state.totalSlots = Math.max(state.totalSlots || 0, targetBoxNum);
-        }
-
-        slot.status = 'ACTIVE';
-        slot.needsActivation = true;
-        slot.gameId = inStockItem?.gameId || matchedGame?.id || parsedTicket.gameNumber || 'custom';
-        slot.gameName = cleanName;
-        slot.price = chosenPrice;
-        slot.packNumber = packNum;
-        slot.packSize = packSize;
-        slot.initialTickets = packSize;
-        slot.startTicket = tixNum;
-        slot.currentTicket = tixNum;
-        slot.packStartTicket = tixNum;
-        slot.packCumulativeSold = 0;
-        slot.packCumulativeSoldBase = 0;
-        slot.ticketsSold = 0;
-        slot.securityCode = effectiveSec;
-        slot.startSecurityCode = effectiveSec;
-        slot.currentSecurityCode = effectiveSec;
-        slot.scannedInEndShift = false;
-        slot.pendingEndShiftBarcode = rawBarcode;
-        slot.pendingEndShiftEffectiveBarcode = (parsedTicket && parsedTicket.standardBarcode) ? parsedTicket.standardBarcode : rawBarcode;
-        slot.pendingEndShiftParsed = parsedTicket;
-
-        if (!Array.isArray(state.visibleBoxNumbers)) state.visibleBoxNumbers = [];
-        if (!state.visibleBoxNumbers.some(n => Number(n) === Number(targetBoxNum))) {
-          state.visibleBoxNumbers.unshift(Number(targetBoxNum));
-        }
-        bringBoxToVisibleRack(targetBoxNum);
-        state.lastScannedSlot = targetBoxNum;
-        state.lastScanData = {
-          barcode: rawBarcode,
-          boxNumber: targetBoxNum,
-          gameName: cleanName,
-          price: chosenPrice,
-          packNumber: packNum || '---',
-          ticketNumber: tixNum,
-          soldCount: 0,
-          action: 'NEEDS_ACTIVATION'
+      if (foundSlot) {
+        const std = getStandardPackDetails(foundSlot.price || 1);
+        const packSize = foundSlot.packSize || std.packSize || 100;
+        return {
+          boxNumber: foundSlot.boxNumber,
+          gameName: foundSlot.gameName,
+          price: foundSlot.price,
+          packNumber: foundSlot.packNumber,
+          packSize: packSize,
+          startTicket: foundSlot.startTicket || 0,
+          closeTicket: foundSlot.currentTicket || packSize,
+          packStartTicket: foundSlot.packStartTicket || 0,
+          packCumulativeSold: foundSlot.packCumulativeSold || foundSlot.ticketsSold || 0,
+          ticketsSold: foundSlot.ticketsSold || 0,
+          salesAmount: (foundSlot.ticketsSold || 0) * (foundSlot.price || 1),
+          shiftNumber: h.shiftNumber,
+          source: 'shiftHistory'
         };
-        saveState(state);
-        sfx.chime?.() || sfx.beep?.();
-        if (lastScanReadoutContainer) lastScanReadoutContainer.classList.remove('alert-yellow');
-        if (scanActionTitle) scanActionTitle.textContent = `Box #${targetBoxNum} Added`;
-        if (lastScanDisplay) lastScanDisplay.textContent = `${cleanName} ($${chosenPrice}) · Tap Activate on Box #${targetBoxNum}`;
-        if (largeStatReadout) {
-          largeStatReadout.textContent = String(targetBoxNum);
-          largeStatReadout.style.color = '';
-        }
-        renderHeaderAndMetrics();
-        renderDispenserRack();
-        renderSlotsRibbon();
-        if (typeof renderReceivePacksView === 'function') renderReceivePacksView();
-        if (typeof renderDayReportView === 'function') renderDayReportView();
-        if (typeof renderInventoryView === 'function') renderInventoryView();
-        if (typeof renderHistoryView === 'function') renderHistoryView();
-        if (typeof populateSettingsInputs === 'function') populateSettingsInputs();
-        return;
       }
+    }
 
-      const soldOutMatch = (state.soldOutThisShift || []).find(so => {
-        if (!so.packNumber) return false;
-        const soClean = String(so.packNumber).replace(/[^0-9]/g, '');
-        return cleanDigits.includes(soClean) || (parsedTicket?.packNumber && parsedTicket.packNumber.includes(soClean));
-      });
+    // 4. Search current slots marked SOLD_OUT
+    const currentSoldOut = (state.slots || []).find(s => {
+      if (s.status !== 'SOLD_OUT' || !s.packNumber) return false;
+      if (candidateGame && !slotMatchesGameNumber(s, candidateGame)) return false;
+      return isPackNumberMatch(s.packNumber, candidatePack);
+    });
+    if (currentSoldOut) {
+      const std = getStandardPackDetails(currentSoldOut.price || 1);
+      const packSize = currentSoldOut.packSize || std.packSize || 100;
+      return {
+        boxNumber: currentSoldOut.boxNumber,
+        gameName: currentSoldOut.gameName,
+        price: currentSoldOut.price,
+        packNumber: currentSoldOut.packNumber,
+        packSize: packSize,
+        startTicket: currentSoldOut.startTicket || 0,
+        closeTicket: currentSoldOut.currentTicket || packSize,
+        packStartTicket: currentSoldOut.packStartTicket || 0,
+        packCumulativeSold: currentSoldOut.packCumulativeSold || currentSoldOut.ticketsSold || 0,
+        ticketsSold: currentSoldOut.ticketsSold || 0,
+        source: 'currentSlots'
+      };
+    }
 
+    // 5. Search inventory packs marked SOLD_OUT or DEPLETED
+    const invSoldOut = (state.inventory || []).find(p =>
+      (p.status === 'SOLD_OUT' || p.status === 'DEPLETED') && isPackNumberMatch(p.packNumber, candidatePack)
+    );
+    if (invSoldOut) return { ...invSoldOut, source: 'inventory' };
+
+    return null;
+  }
+  if (typeof window !== 'undefined') {
+    window.findPreviouslySoldOutPack = findPreviouslySoldOutPack;
+  }
+
+  let lastScannedRawBarcode = '';
+  let lastScannedBarcodeTime = 0;
+
+  function processScannedBarcode(rawBarcode) {
+    sfx.beep();
+    const parsedPreview = parseLotteryBarcode(rawBarcode, state.customGames, state.lotteryJurisdiction);
+    const effectivePreviewBarcode = (parsedPreview && (parsedPreview.displayBarcode || parsedPreview.standardBarcode))
+      ? (parsedPreview.displayBarcode || parsedPreview.standardBarcode)
+      : rawBarcode;
+    state.lastScannedBarcode = effectivePreviewBarcode;
+
+    // Reset any alert banner styles from previous gatekeeper warnings
+    if (scanAlertTimeout) {
+      clearTimeout(scanAlertTimeout);
+      scanAlertTimeout = null;
+    }
+    if (lastScanReadoutContainer) {
+      lastScanReadoutContainer.classList.remove('alert-yellow');
+    }
+    if (scanActionTitle) {
+      scanActionTitle.style.background = '';
+      scanActionTitle.style.color = '';
+      scanActionTitle.style.padding = '';
+      scanActionTitle.style.borderRadius = '';
+    }
+
+    // Validate that input does not exceed ticket barcode range
+    const trimmedBarcode = String(rawBarcode || '').trim();
+    const isUrl = trimmedBarcode.includes('http://') || trimmedBarcode.includes('https://') || trimmedBarcode.includes('www.');
+    if (!isUrl && trimmedBarcode.length > 36) {
       sfx.alert();
-      voice.speakTicket();
-      if (lastScanReadoutContainer) {
-        lastScanReadoutContainer.classList.add('alert-yellow');
-      }
-      if (scanActionTitle) {
-        scanActionTitle.textContent = soldOutMatch ? 'PACK ALREADY SOLD OUT' : 'WRONG TICKET - NOT IN ACTIVE BOX';
-      }
-      if (lastScanDisplay) {
-        lastScanDisplay.textContent = soldOutMatch
-          ? `Pack #${soldOutMatch.packNumber} (Box #${soldOutMatch.boxNumber}) is already sold out!`
-          : `Barcode [${rawBarcode}] is NOT in any active dispenser box!`;
-      }
+      if (lastScanReadoutContainer) lastScanReadoutContainer.classList.add('alert-yellow');
+      if (scanActionTitle) scanActionTitle.textContent = 'BARCODE EXCEEDS LIMIT';
+      if (lastScanDisplay) lastScanDisplay.textContent = `Input exceeds maximum 36 characters (${trimmedBarcode.length} chars).`;
+      if (lastScanDisplay) lastScanDisplay.textContent = 'Incomplete barcode — please rescan.';
+      showToast('Incomplete barcode — please rescan.', 'error');
       if (largeStatReadout) {
         largeStatReadout.textContent = '!';
         largeStatReadout.style.color = '#dc2626';
       }
-
       clearTimeout(scanAlertTimeout);
       scanAlertTimeout = setTimeout(() => {
-        if (lastScanReadoutContainer?.classList.contains('alert-yellow') && (scanActionTitle?.textContent === 'WRONG TICKET - NOT IN ACTIVE BOX' || scanActionTitle?.textContent === 'PACK ALREADY SOLD OUT')) {
-          clearScanAlertBanner();
-        }
-      }, 5000);
+        clearScanAlertBanner();
+      }, 6000);
       return;
     }
 
-    // Validate pack ownership strictly before modifying slot or calculating sales
-    let packOwnershipValid = true;
-    if (parsedTicket && parsedTicket.packNumber && targetSlot.packNumber) {
-      packOwnershipValid = isPackNumberMatch(targetSlot.packNumber, parsedTicket.packNumber) ||
-        (parsedTicket.packCombined && isPackNumberMatch(targetSlot.packNumber, parsedTicket.packCombined)) ||
-        (parsedTicket.packClean && isPackNumberMatch(targetSlot.packNumber, parsedTicket.packClean));
-    }
-    if (!packOwnershipValid) {
+    // Reject incomplete or truncated barcodes immediately (< 10 digits when not a box number)
+    const parsedBoxEarly = parseBoxBarcode(trimmedBarcode);
+    const normalizedInput = stripScannerPrefix(trimmedBarcode) || trimmedBarcode;
+    const pureBarcodeDigits = normalizedInput.replace(/[^0-9]/g, '');
+    if (!parsedBoxEarly && !parsedPreview?.isValid && (parsedPreview?.isIncomplete || (pureBarcodeDigits.length > 0 && pureBarcodeDigits.length < 10))) {
       sfx.alert();
-      voice.speakTicket();
       if (lastScanReadoutContainer) lastScanReadoutContainer.classList.add('alert-yellow');
-      if (scanActionTitle) scanActionTitle.textContent = 'WRONG PACK FOR BOX';
-      if (lastScanDisplay) lastScanDisplay.textContent = `Scanned ticket pack #${parsedTicket?.packNumber} does not match Box #${targetSlot.boxNumber} (Pack #${targetSlot.packNumber})!`;
+      if (scanActionTitle) scanActionTitle.textContent = 'INCOMPLETE BARCODE';
+      if (lastScanDisplay) lastScanDisplay.textContent = 'Incomplete barcode — please rescan.';
+      showToast('Incomplete barcode — please rescan.', 'error');
+      if (largeStatReadout) {
+        largeStatReadout.textContent = '!';
+        largeStatReadout.style.color = '#dc2626';
+      }
+      clearTimeout(scanAlertTimeout);
+      scanAlertTimeout = setTimeout(() => {
+        clearScanAlertBanner();
+      }, 6000);
+      return;
+    }
+
+    if (!parsedBoxEarly && !parsedPreview?.isValid && pureBarcodeDigits.length > 30) {
+      sfx.alert();
+      if (lastScanReadoutContainer) lastScanReadoutContainer.classList.add('alert-yellow');
+      if (scanActionTitle) scanActionTitle.textContent = 'INVALID BARCODE RANGE';
+      if (lastScanDisplay) lastScanDisplay.textContent = `[${trimmedBarcode}] exceeds valid barcode length (${pureBarcodeDigits.length} digits).`;
+      if (largeStatReadout) {
+        largeStatReadout.textContent = '!';
+        largeStatReadout.style.color = '#dc2626';
+      }
+      clearTimeout(scanAlertTimeout);
+      scanAlertTimeout = setTimeout(() => {
+        clearScanAlertBanner();
+      }, 6000);
+      return;
+    }
+
+    // Validate ticket number range within roll (000-300)
+    if (parsedPreview && parsedPreview.ticketNumber !== null && (parsedPreview.ticketNumber < 0 || parsedPreview.ticketNumber > 300)) {
+      sfx.alert();
+      if (lastScanReadoutContainer) lastScanReadoutContainer.classList.add('alert-yellow');
+      if (scanActionTitle) scanActionTitle.textContent = 'TICKET OUT OF RANGE';
+      if (lastScanDisplay) lastScanDisplay.textContent = `Ticket #${parsedPreview.ticketNumber} exceeds maximum roll count (300).`;
+      if (largeStatReadout) {
+        largeStatReadout.textContent = '!';
+        largeStatReadout.style.color = '#dc2626';
+      }
+      clearTimeout(scanAlertTimeout);
+      scanAlertTimeout = setTimeout(() => {
+        clearScanAlertBanner();
+      }, 6000);
+      return;
+    }
+
+    // Scenario -1: Updating Inventory mode is active -> route barcode scan to inventory intake
+    if (state.isUpdatingInventory) {
+      handleUpdatingInventoryScan(rawBarcode);
+      return;
+    }
+
+    // Scenario -0.5: Box Adjust modal is open on Remove book tab -> route ticket scan to position input
+    if (boxAdjustModal?.open) {
+      const tabBoxRemove = document.getElementById('tabBoxRemove');
+      const rmPosInput = document.getElementById('rmPosInput');
+      if (tabBoxRemove?.classList.contains('on') && rmPosInput) {
+        const parsed = parseLotteryBarcode(rawBarcode, state.customGames, state.lotteryJurisdiction);
+        if (parsed && parsed.isValid && typeof parsed.ticketNumber === 'number') {
+          rmPosInput.value = String(parsed.ticketNumber).padStart(3, '0');
+          sfx.chime();
+          showToast(`✓ Ticket position set to #${String(parsed.ticketNumber).padStart(3, '0')}`, 'info');
+          return;
+        }
+      }
+    }
+
+    // Scenario 0: Receive Packs view is active -> route barcode scan into intake form
+    const viewReceive = document.getElementById('viewReceivePacks');
+    if (viewReceive && viewReceive.style.display !== 'none') {
+      if (typeof window.handleReceivePackBarcode === 'function') {
+        window.handleReceivePackBarcode(rawBarcode);
+      }
+      return;
+    }
+
+    // Scenario 0b: Inventory View is active -> open Add New Book modal and fill scanned ticket details
+    const receiveBookModalEl = document.getElementById('receiveBookModernModal');
+    if (receiveBookModalEl?.open) {
+      rbFillFromBarcode(rawBarcode);
+      return;
+    }
+
+    const viewInv = document.getElementById('viewInventory');
+    if (viewInv && viewInv.style.display !== 'none' && !boxAdjustModal?.open) {
+      const invUpdateBanner = document.getElementById('invUpdateBanner');
+      const activeEl = document.activeElement;
+      if ((invUpdateBanner && invUpdateBanner.style.display === 'block') || activeEl?.id === 'invScanBarcodeInput') {
+        if (typeof window.addScannedTicketToInventory === 'function') {
+          window.addScannedTicketToInventory(rawBarcode);
+        }
+        return;
+      }
+      const parsed = parsedPreview || parseLotteryBarcode(rawBarcode, state.customGames, state.lotteryJurisdiction);
+      if (parsed && parsed.isAmbiguous) {
+        sfx.alert();
+        showToast(`⚠️ ${parsed.error}`, 'warning');
+        return;
+      }
+      if (parsed && parsed.isUncatalogued) {
+        sfx.alert();
+        showToast(`⚠️ ${parsed.error} (uncatalogued SCEL game — cannot invent price/pack size)`, 'error');
+        return;
+      }
+      const isUncatFourSegGA = state.lotteryJurisdiction !== 'SC' && /^\d{4}[-_/\s.:]+\d{6}[-_/\s.:]+\d[-_/\s.:]+\d{3}/.test(String(rawBarcode || '').trim());
+      if ((!parsed || !parsed.isValid || parsed.isRetailProduct || parsed.isNonLotteryBarcode) && !isUncatFourSegGA) {
+        sfx.alert();
+        showToast(`❌ [${rawBarcode}] is not a valid lottery ticket.`, 'error');
+        return;
+      }
+      openReceiveBookModernModal(rawBarcode);
+      return;
+    }
+
+    // Scenario 0c: Close Shift View is active -> route barcode scan to reconcile pack closing number
+    const viewClose = document.getElementById('viewCloseShift');
+    if (viewClose && viewClose.style.display !== 'none') {
+      if (typeof window.handleCloseShiftBarcode === 'function') {
+        window.handleCloseShiftBarcode(rawBarcode);
+      }
+      return;
+    }
+
+    // Scenario 1: Update Inventory Manager Modal is open -> handle ticket scan for intake
+    if (inventoryModal && inventoryModal.open) {
+      handleTicketBarcodeScan(rawBarcode, 'inventory');
+      return;
+    }
+
+    // Scenario 1a: Ticket Details Modal is open -> if user scans box barcode, advance to box and set; if ticket/pack scanned, refresh details
+    if (setTicketDetailsModal && setTicketDetailsModal.open) {
+      const parsedBoxNum = parseBoxBarcode(rawBarcode);
+      if (parsedBoxNum && parsedBoxNum >= 1 && parsedBoxNum <= 100) {
+        proceedToSetBoxStep();
+        if (setBoxNumberInput) setBoxNumberInput.value = parsedBoxNum;
+        confirmSetBoxForTicket(false);
+        return;
+      }
+      const parsedTix = parseLotteryBarcode(rawBarcode, state.customGames, state.lotteryJurisdiction);
+      if (parsedTix && parsedTix.isValid) {
+        openSetTicketDetailsModal(rawBarcode);
+        showToast(`🏷️ Switched to scanned barcode [${rawBarcode}]`, 'info');
+        return;
+      }
+    }
+
+    // Scenario 1b: Set Box Modal is open -> if user scans box barcode, confirm set box; if ticket/pack scanned, switch to new ticket/pack
+    if (setBoxModal && setBoxModal.open) {
+      const parsedBoxNum = parseBoxBarcode(rawBarcode);
+      if (parsedBoxNum && parsedBoxNum >= 1 && parsedBoxNum <= 100) {
+        if (setBoxNumberInput) setBoxNumberInput.value = parsedBoxNum;
+        confirmSetBoxForTicket(false);
+        return;
+      }
+      const parsedTix = parseLotteryBarcode(rawBarcode, state.customGames, state.lotteryJurisdiction);
+      if (parsedTix && parsedTix.isValid) {
+        isTransitioningSetBoxStep = true;
+        try {
+          setBoxModal?.close();
+          openSetTicketDetailsModal(rawBarcode);
+        } finally {
+          isTransitioningSetBoxStep = false;
+        }
+        showToast(`🏷️ Switched to scanned barcode [${rawBarcode}]`, 'info');
+        return;
+      }
+    }
+
+    // Scenario 2: Ticket Activation Modal is open -> clerk can scan a box barcode or new pack
+    if (activationModal && activationModal.open) {
+      const parsedBoxNum = parseBoxBarcode(rawBarcode);
+
+      if (parsedBoxNum && parsedBoxNum >= 1 && parsedBoxNum <= 100) {
+        keypadBoxInput.value = parsedBoxNum;
+        showToast(`✓ Box #${parsedBoxNum} barcode scanned! Activating pack into Box #${parsedBoxNum}...`, 'success');
+        commitBoxActivation();
+        return;
+      } else {
+        // Scanned another pack barcode: dynamically detect game & pack info
+        const parsed = parseLotteryBarcode(rawBarcode, state.customGames, state.lotteryJurisdiction);
+        const matchedGame = findGameByBarcode(rawBarcode, state.customGames, state.lotteryJurisdiction);
+        const gamePrice = matchedGame ? matchedGame.price : 20;
+        const gameName = matchedGame ? cleanGameTitle(matchedGame.name) : 'Scratch-Off Game';
+        const std = getStandardPackDetails(gamePrice);
+        const packNum = (parsed && parsed.packNumber) ? parsed.packNumber : (rawBarcode.replace(/[^0-9]/g, '').slice(-6) || '889901');
+        const startTicketNum = (parsed && parsed.ticketNumber !== null && parsed.ticketNumber !== undefined) ? parsed.ticketNumber : 0;
+
+        pendingActivationPack = {
+          packNumber: packNum,
+          gameId: matchedGame ? matchedGame.id : ('g' + Math.floor(100 + Math.random() * 900)),
+          gameName: gameName,
+          price: gamePrice,
+          packSize: std.packSize,
+          startTicket: startTicketNum
+        };
+        if (activationGameTitle) {
+          activationGameTitle.textContent = formatGameTitle(pendingActivationPack.price, pendingActivationPack.gameName);
+        }
+        const presetPackInput = document.getElementById('presetPackNumberInput');
+        if (presetPackInput) presetPackInput.value = packNum;
+        const presetStartInput = document.getElementById('presetStartTicketInput');
+        if (presetStartInput) presetStartInput.value = startTicketNum;
+        const activationGameDropdown = document.getElementById('activationGameDropdown');
+        if (activationGameDropdown && matchedGame) {
+          activationGameDropdown.value = matchedGame.id;
+        }
+        updateActivationPackHints(pendingActivationPack);
+        sfx.beep();
+
+        const currentBoxVal = keypadBoxInput ? parseInt(keypadBoxInput.value, 10) : NaN;
+        if (!isNaN(currentBoxVal) && currentBoxVal >= 1 && currentBoxVal <= 100) {
+        }
+        return;
+      }
+    }
+
+    // Scenario 3: End Shift Scanning (Verify Active Boxes)
+    if (state.shiftStatus === 'SCANNING_END_SHIFT') {
+      const parsedBoxNum = parseBoxBarcode(rawBarcode);
+      const parsedTicket = parseLotteryBarcode(rawBarcode, state.customGames, state.lotteryJurisdiction);
+      const cleanDigits = rawBarcode.replace(/[^0-9]/g, '');
+      let targetSlot = null;
+
+      // 1. Check if scanned barcode is a box identifier (e.g. "BOX-01", "1")
+      if (parsedBoxNum) {
+        targetSlot = state.slots.find(s => s.boxNumber === parsedBoxNum && isBoxActive(s));
+      }
+
+      // 2. Check if this exact barcode was previously scanned and stored into any active box
+      if (!targetSlot) {
+        const scannedInfo = findScannedBarcodeInfo(rawBarcode);
+        if (scannedInfo && scannedInfo.boxNumber) {
+          targetSlot = state.slots.find(s => s.boxNumber === scannedInfo.boxNumber && isBoxActive(s));
+        }
+      }
+
+      // 3. Match by parsed pack number AND game number (STRICT: requires both to prevent cross-game false matches)
+      if (!targetSlot && parsedTicket && parsedTicket.packNumber) {
+        const matchingSlots = state.slots.filter(s => {
+          if (!isBoxActive(s) && !s.needsActivation) return false;
+          const packMatches = isPackNumberMatch(s.packNumber, parsedTicket.packNumber) ||
+            (parsedTicket.packCombined && isPackNumberMatch(s.packNumber, parsedTicket.packCombined)) ||
+            (parsedTicket.packClean && isPackNumberMatch(s.packNumber, parsedTicket.packClean)) ||
+            (parsedTicket.basePackNumber && isPackNumberMatch(s.packNumber, parsedTicket.basePackNumber)) ||
+            (s.basePackNumber && isPackNumberMatch(s.basePackNumber, parsedTicket.packNumber)) ||
+            (s.packCombined && isPackNumberMatch(s.packCombined, parsedTicket.packNumber));
+          if (!packMatches) return false;
+          // CRITICAL: Also verify game number matches to prevent cross-game false positives
+          if (parsedTicket.gameNumber && !slotMatchesGameNumber(s, parsedTicket.gameNumber)) return false;
+          return true;
+        });
+        if (matchingSlots.length === 1) {
+          targetSlot = matchingSlots[0];
+        } else if (matchingSlots.length > 1) {
+          const boxList = matchingSlots.map(s => `#${s.boxNumber}`).join(', ');
+          showToast(`⚠️ Conflict: Pack #${formatDisplayPackNumber(parsedTicket.packNumber)} is assigned to multiple boxes (${boxList}).`, 'error');
+          return;
+        }
+      }
+
+      // 4. Also check if barcode contains an active box's exact normalized pack number (with game verification)
+      if (!targetSlot && parsedTicket && parsedTicket.gameNumber) {
+        targetSlot = state.slots.find(s => {
+          if (!slotMatchesGameNumber(s, parsedTicket.gameNumber)) return false;
+          const slotPackNorm = normalizePackNumber(s.packNumber);
+          if (slotPackNorm.length < 4) return false;
+          return cleanDigits.includes(slotPackNorm);
+        });
+      }
+
+      // 5. Match by game barcodePrefix (ONLY if pack number also matches exactly)
+      if (!targetSlot && parsedTicket && parsedTicket.gameNumber && parsedTicket.packNumber) {
+        const matchingSlots = state.slots.filter(s => {
+          if (!isBoxActive(s) && !s.needsActivation) return false;
+          if (!isPackNumberMatch(s.packNumber, parsedTicket.packNumber)) {
+            return false;
+          }
+          const gameDef = SAMPLE_GAMES.find(g => g.id === s.gameId) || (state.customGames || []).find(g => g.id === s.gameId);
+          return gameDef && gameDef.barcodePrefix === parsedTicket.gameNumber;
+        });
+        if (matchingSlots.length === 1) {
+          targetSlot = matchingSlots[0];
+        }
+      }
+
+      // If this box was already scanned and is waiting for activation:
+      if (targetSlot && targetSlot.needsActivation) {
+        sfx.beep?.();
+        bringBoxToVisibleRack(targetSlot.boxNumber);
+        state.lastScannedSlot = targetSlot.boxNumber;
+        showToast(`ℹ️ Box #${targetSlot.boxNumber} is waiting for activation. Tap "Activate" on Box #${targetSlot.boxNumber} to activate!`, 'info');
+        renderHeaderAndMetrics();
+        renderDispenserRack();
+        return;
+      }
+
+      // If scanned barcode does not match ANY active dispenser box (strictly matching physical pack AND game, never attaching a different pack of same game):
+      if (!targetSlot && state.lastScannedSlot && parsedTicket?.packNumber) {
+        const focused = state.slots.find(s => s.boxNumber === state.lastScannedSlot && isBoxActive(s));
+        if (focused) {
+          const packMatches = isPackNumberMatch(focused.packNumber, parsedTicket.packNumber) ||
+            (parsedTicket.packCombined && isPackNumberMatch(focused.packNumber, parsedTicket.packCombined)) ||
+            (parsedTicket.packClean && isPackNumberMatch(focused.packNumber, parsedTicket.packClean)) ||
+            (parsedTicket.basePackNumber && isPackNumberMatch(focused.packNumber, parsedTicket.basePackNumber)) ||
+            (focused.basePackNumber && isPackNumberMatch(focused.basePackNumber, parsedTicket.packNumber)) ||
+            (focused.packCombined && isPackNumberMatch(focused.packCombined, parsedTicket.packNumber));
+          const gameMatches = parsedTicket.gameNumber ? slotMatchesGameNumber(focused, parsedTicket.gameNumber) : true;
+          if (packMatches && gameMatches) {
+            targetSlot = focused;
+          }
+        }
+      }
+
+      if (!targetSlot) {
+        // If scanned barcode does not match ANY active dispenser box:
+        // In Get Report phase, ask which box to put it in first!
+        // Once confirmed in Set Box modal, it stages on that chosen box with the "ACTIVATE" button.
+        if (parsedTicket && parsedTicket.isAmbiguous) {
+          sfx.alert();
+          showToast(parsedTicket.error || `⚠️ Ambiguous game #${parsedTicket.gameNumber} (GA vs SC). Set store jurisdiction in Settings.`, 'error');
+          return;
+        }
+        if (parsedTicket && parsedTicket.isUncatalogued) {
+          sfx.alert();
+          showToast(parsedTicket.error || `⚠️ Unknown SCEL game #${parsedTicket.gameNumber}. Cannot infer price or pack size.`, 'error');
+          return;
+        }
+        if (parsedTicket && parsedTicket.isValid && !parsedTicket.isRetailProduct && !parsedTicket.isNonLotteryBarcode) {
+          const inStock = findInStockPack(parsedTicket, rawBarcode);
+          if (inStock && inStock.item) {
+            openSetBoxForInStockPack(inStock.item, parsedTicket, rawBarcode);
+            return;
+          }
+          const matchedGame = findGameByBarcode(rawBarcode, state.customGames, state.lotteryJurisdiction) ||
+            (parsedTicket.jurisdiction !== 'SC' ? (
+              SAMPLE_GAMES.find(g => g.id === parsedTicket.gameNumber) ||
+              (state.customGames || []).find(g => g.id === parsedTicket.gameNumber) ||
+              SAMPLE_GAMES.find(g => g.barcodePrefix === parsedTicket.gameNumber)
+            ) : (state.customGames || []).find(g => g.id === parsedTicket.gameNumber && (!g.jurisdiction || g.jurisdiction === 'SC')));
+          if (parsedTicket.jurisdiction === 'SC' && !matchedGame) {
+            sfx.alert();
+            showToast(`⚠️ Unknown SCEL game #${parsedTicket.gameNumber}. Cannot infer price or pack size.`, 'error');
+            return;
+          }
+          const jur = parsedTicket.jurisdiction || matchedGame?.jurisdiction || state.lotteryJurisdiction || 'GA';
+          const cleanName = cleanGameTitle(matchedGame?.name || parsedTicket.gameName || 'Scratch-Off Game');
+          const chosenPrice = matchedGame?.price || parsedTicket.price || 1;
+          const std = getStandardPackDetails(chosenPrice);
+          const packSize = matchedGame?.packSize || parsedTicket.packSize || std.packSize || 100;
+          const packValue = packSize * chosenPrice;
+          const effectiveSec = (parsedTicket && parsedTicket.hasExplicitSecurityCode && parsedTicket.securityCode)
+            ? parsedTicket.securityCode
+            : (parsedTicket?.securityCode || computeLotterySeriesCode(parsedTicket?.gameNumber || (matchedGame ? matchedGame.barcodePrefix : ''), parsedTicket.ticketNumber || 0, state.customGames, packSize, jur));
+          const effectiveBarcode = (parsedTicket && parsedTicket.standardBarcode) ? parsedTicket.standardBarcode : rawBarcode;
+
+          pendingChosenName = cleanName;
+          pendingChosenPrice = chosenPrice;
+          pendingChosenPackSize = packSize;
+          pendingChosenPackValue = packValue;
+          pendingSetBoxBarcode = effectiveBarcode;
+          pendingNewTicketBarcode = effectiveBarcode;
+          pendingSetBoxSecurityCode = effectiveSec;
+          pendingSetBoxDisplayBarcode = parsedTicket?.displayBarcode || formatLotteryBarcode(rawBarcode || effectiveBarcode, state.customGames, effectiveSec, jur);
+          pendingSetBoxJurisdiction = jur || null;
+          pendingSetBoxGame = matchedGame || null;
+
+          openSetBoxModal(effectiveBarcode);
+          sfx.beep?.();
+          showToast(`📦 ${cleanName} ($${chosenPrice}): Choose which box to put it in.`, 'info');
+          return;
+        }
+
+        const soldOutMatch = (state.soldOutThisShift || []).find(so => {
+          if (!so.packNumber) return false;
+          const soClean = String(so.packNumber).replace(/[^0-9]/g, '');
+          return cleanDigits.includes(soClean) || (parsedTicket?.packNumber && parsedTicket.packNumber.includes(soClean));
+        });
+
+        sfx.alert();
+        voice.speakTicket();
+        const msg = soldOutMatch
+          ? `Pack #${formatDisplayPackNumber(soldOutMatch.packNumber)} is already sold out.`
+          : `Ticket is not in any active dispenser box.`;
+        showToast(msg, 'error', soldOutMatch ? `Box #${soldOutMatch.boxNumber} already sold out` : 'Please check ticket barcode or select correct box');
+        return;
+      }
+
+      // Validate pack ownership strictly before modifying slot or calculating sales
+      let packOwnershipValid = true;
+      if (parsedTicket && parsedTicket.packNumber && targetSlot.packNumber) {
+        packOwnershipValid = isPackNumberMatch(targetSlot.packNumber, parsedTicket.packNumber) ||
+          (parsedTicket.packCombined && isPackNumberMatch(targetSlot.packNumber, parsedTicket.packCombined)) ||
+          (parsedTicket.packClean && isPackNumberMatch(targetSlot.packNumber, parsedTicket.packClean)) ||
+          (parsedTicket.basePackNumber && isPackNumberMatch(targetSlot.packNumber, parsedTicket.basePackNumber)) ||
+          (targetSlot.basePackNumber && isPackNumberMatch(targetSlot.basePackNumber, parsedTicket.packNumber)) ||
+          (targetSlot.packCombined && isPackNumberMatch(targetSlot.packCombined, parsedTicket.packNumber));
+      }
+      if (!packOwnershipValid) {
+        sfx.alert();
+        voice.speakTicket();
+        showToast(`Ticket does not match Box #${targetSlot.boxNumber}.`, 'error', `Scanned pack does not match Box #${targetSlot.boxNumber}`);
+        return;
+      }
+
+      // Box was found. Check if it was ALREADY verified in this End Shift session
+      if (targetSlot.scannedInEndShift) {
+        let ticketUpdated = false;
+        const prevTicket = targetSlot.currentTicket;
+        if (parsedTicket && parsedTicket.ticketNumber !== null) {
+          const std = getStandardPackDetails(targetSlot.price || 2);
+          const packSize = targetSlot.packSize || std.packSize;
+          if (parsedTicket.ticketNumber >= 0 && parsedTicket.ticketNumber <= packSize) {
+            if (targetSlot.currentTicket !== parsedTicket.ticketNumber) {
+              targetSlot.currentTicket = parsedTicket.ticketNumber;
+              ticketUpdated = true;
+            }
+            if (parsedTicket.hasExplicitSecurityCode && parsedTicket.securityCode) {
+              targetSlot.currentSecurityCode = parsedTicket.securityCode;
+            }
+            if (targetSlot.startTicket === 0 && parsedTicket.ticketNumber === packSize - 1) {
+              targetSlot.startTicket = parsedTicket.ticketNumber;
+            }
+            targetSlot.ticketsSold = calculateSlotSoldTickets(targetSlot);
+          }
+        }
+
+        if (ticketUpdated) {
+          recordUndoAction({
+            type: 'VERIFY_END_SHIFT',
+            boxNumber: targetSlot.boxNumber,
+            prevTicket: prevTicket,
+            prevScannedInEndShift: true
+          });
+        }
+
+        const cleanName = cleanGameTitle(targetSlot.gameName);
+        state.lastScannedSlot = targetSlot.boxNumber;
+        bringBoxToVisibleRack(targetSlot.boxNumber);
+        const verifiedSold = calculateSlotSoldTickets(targetSlot);
+        const endVerifiedDisp = parsedTicket?.displayBarcode || rawBarcode;
+        const endVerifiedSec = parsedTicket?.securityCode || targetSlot.currentSecurityCode || null;
+        state.lastScanData = {
+          barcode: endVerifiedDisp,
+          boxNumber: targetSlot.boxNumber,
+          gameName: cleanName,
+          price: targetSlot.price,
+          packNumber: targetSlot.packNumber || '---',
+          ticketNumber: targetSlot.currentTicket || 0,
+          securityCode: endVerifiedSec,
+          soldCount: verifiedSold,
+          action: 'VERIFIED'
+        };
+        state.lastScannedBarcode = `[${endVerifiedDisp}] Box #${targetSlot.boxNumber} Already Verified: $${Number(targetSlot.price).toFixed(2)} · ${cleanName} (${verifiedSold} sold, #${String(targetSlot.currentTicket || 0).padStart(3, '0')}${endVerifiedSec ? ' (' + endVerifiedSec + ')' : ''})`;
+        sfx.beep();
+        if (ticketUpdated) {
+          showToast(`Box #${targetSlot.boxNumber} closing ticket updated.`, 'info', `#${String(targetSlot.currentTicket || 0).padStart(2, '0')} (${verifiedSold} sold)`);
+        } else {
+          showToast('This box has already been scanned.', 'info', `Box #${targetSlot.boxNumber} (${verifiedSold} sold)`);
+        }
+
+        saveState(state);
+        renderHeaderAndMetrics();
+        renderDispenserRack();
+        renderSlotsRibbon();
+        return;
+      }
+
+      // First time verifying this active box in this End Shift
+      const prevTicket = targetSlot.currentTicket;
+
+      // If a valid ticket number was extracted from the scanned barcode, update currentTicket
+      if (parsedTicket && parsedTicket.ticketNumber !== null) {
+        targetSlot.currentTicket = parsedTicket.ticketNumber;
+        if (parsedTicket.hasExplicitSecurityCode && parsedTicket.securityCode) {
+          targetSlot.currentSecurityCode = parsedTicket.securityCode;
+        }
+        const std = getStandardPackDetails(targetSlot.price || 1);
+        const packSize = targetSlot.packSize || std.packSize || 100;
+        if (targetSlot.startTicket === 0 && parsedTicket.ticketNumber === packSize - 1) {
+          targetSlot.startTicket = parsedTicket.ticketNumber;
+        }
+      }
+
+      targetSlot.scannedInEndShift = true;
+      const sold = calculateSlotSoldTickets(targetSlot);
+      targetSlot.ticketsSold = sold;
+
+      recordUndoAction({
+        type: 'VERIFY_END_SHIFT',
+        boxNumber: targetSlot.boxNumber,
+        prevTicket: prevTicket,
+        prevScannedInEndShift: false
+      });
+
+      const cleanName = cleanGameTitle(targetSlot.gameName);
+      state.lastScannedSlot = targetSlot.boxNumber;
+      bringBoxToVisibleRack(targetSlot.boxNumber);
+      const endFirstDisp = parsedTicket?.displayBarcode || rawBarcode;
+      const endFirstSec = parsedTicket?.securityCode || targetSlot.currentSecurityCode || null;
+      state.lastScanData = {
+        barcode: endFirstDisp,
+        boxNumber: targetSlot.boxNumber,
+        gameName: cleanName,
+        price: targetSlot.price,
+        packNumber: targetSlot.packNumber || '---',
+        ticketNumber: targetSlot.currentTicket || 0,
+        securityCode: endFirstSec,
+        soldCount: sold,
+        action: 'VERIFIED'
+      };
+      state.lastScannedBarcode = `[${endFirstDisp}] Box #${targetSlot.boxNumber} Verified: $${Number(targetSlot.price).toFixed(2)} · ${cleanName} (${sold} sold, #${String(targetSlot.currentTicket || 0).padStart(3, '0')}${endFirstSec ? ' (' + endFirstSec + ')' : ''})`;
+
+      const activeSlots = state.slots.filter(isBoxActive);
+      const verifiedCount = activeSlots.filter(s => s.scannedInEndShift).length;
+      const remainingCount = activeSlots.length - verifiedCount;
+
+      if (remainingCount === 0) {
+        sfx.chime();
+        showToast(`Box #${targetSlot.boxNumber} successfully verified.`, 'success', `All ${activeSlots.length} boxes verified!`);
+      } else {
+        sfx.success();
+        showToast(`Box #${targetSlot.boxNumber} successfully verified.`, 'success', `$${Number(targetSlot.price).toFixed(2)} · ${cleanName} (${sold} sold)`);
+      }
+
+      saveState(state);
+      renderHeaderAndMetrics();
+      renderDispenserRack();
+      renderSlotsRibbon();
+      return;
+    } else if (state.shiftStatus === 'SHIFT_ENDED') {
+      // If user scans a ticket to activate or put into in-stock after shift ended:
+      const parsedTicket = parseLotteryBarcode(rawBarcode, state.customGames, state.lotteryJurisdiction);
+      if (parsedTicket && parsedTicket.isValid && !parsedTicket.isRetailProduct && !parsedTicket.isNonLotteryBarcode) {
+        const effectiveBarcode = (parsedTicket && parsedTicket.standardBarcode) ? parsedTicket.standardBarcode : rawBarcode;
+        const inStock = findInStockPack(parsedTicket, rawBarcode);
+        if (inStock && inStock.item) {
+          openSetBoxForInStockPack(inStock.item, parsedTicket, rawBarcode);
+          return;
+        }
+        openSetTicketDetailsModal(rawBarcode, effectiveBarcode);
+        return;
+      }
+
+      // Otherwise, shift is ended (closed) -> DO NOT sell tickets!
+      sfx.alert();
+      if (lastScanReadoutContainer) lastScanReadoutContainer.classList.add('alert-yellow');
+      if (scanActionTitle) scanActionTitle.textContent = 'SHIFT CLOSED - NOT SELLING';
+      if (lastScanDisplay) lastScanDisplay.innerHTML = 'Shift is ended. Click &quot;Start Shift&quot; on dashboard to begin selling.';
       if (largeStatReadout) {
         largeStatReadout.textContent = '!';
         largeStatReadout.style.color = '#dc2626';
@@ -11931,459 +12754,214 @@ function processScannedBarcode(rawBarcode) {
         clearScanAlertBanner();
       }, 5000);
       return;
-    }
-
-    // Box was found. Check if it was ALREADY verified in this End Shift session
-    if (targetSlot.scannedInEndShift) {
-      let ticketUpdated = false;
-      const prevTicket = targetSlot.currentTicket;
-      if (parsedTicket && parsedTicket.ticketNumber !== null) {
-        const std = getStandardPackDetails(targetSlot.price || 2);
-        const packSize = targetSlot.packSize || std.packSize;
-        if (parsedTicket.ticketNumber >= 0 && parsedTicket.ticketNumber <= packSize) {
-          targetSlot.currentTicket = parsedTicket.ticketNumber;
-          if (parsedTicket.securityCode) {
-            targetSlot.currentSecurityCode = parsedTicket.securityCode;
-          }
-          if (targetSlot.startTicket === 0 && (parsedTicket.ticketNumber === packSize - 1 || parsedTicket.ticketNumber > packSize / 2)) {
-            targetSlot.startTicket = parsedTicket.ticketNumber;
-            if (!(targetSlot.packCumulativeSoldBase > 0) && !(targetSlot.packCumulativeSold > 0) && (targetSlot.packStartTicket === 0 || targetSlot.packStartTicket === null || targetSlot.packStartTicket === undefined)) {
-              targetSlot.packStartTicket = parsedTicket.ticketNumber;
-            }
-          }
-          targetSlot.ticketsSold = calculateSlotSoldTickets(targetSlot);
-          ticketUpdated = true;
-        }
-      }
-
-      if (ticketUpdated) {
-        recordUndoAction({
-          type: 'VERIFY_END_SHIFT',
-          boxNumber: targetSlot.boxNumber,
-          prevTicket: prevTicket,
-          prevScannedInEndShift: true
-        });
-      }
-
-      const cleanName = cleanGameTitle(targetSlot.gameName);
-      state.lastScannedSlot = targetSlot.boxNumber;
-      bringBoxToVisibleRack(targetSlot.boxNumber);
-      const verifiedSold = calculateSlotSoldTickets(targetSlot);
-      state.lastScanData = {
-        barcode: rawBarcode,
-        boxNumber: targetSlot.boxNumber,
-        gameName: cleanName,
-        price: targetSlot.price,
-        packNumber: targetSlot.packNumber || '---',
-        ticketNumber: targetSlot.currentTicket || 0,
-        soldCount: verifiedSold,
-        action: 'VERIFIED'
-      };
-      state.lastScannedBarcode = `[${rawBarcode}] Box #${targetSlot.boxNumber} Already Verified: $${Number(targetSlot.price).toFixed(2)} · ${cleanName} (${verifiedSold} sold, #${String(targetSlot.currentTicket || 0).padStart(2, '0')})`;
-      sfx.beep();
-      if (ticketUpdated) {
-        showToast(`ℹ️ Box #${targetSlot.boxNumber} closing ticket updated to #${String(targetSlot.currentTicket || 0).padStart(2, '0')} (${verifiedSold} sold).`, 'info');
-      } else {
-        showToast(`ℹ️ Box #${targetSlot.boxNumber} was already verified ($${Number(targetSlot.price).toFixed(2)} · ${cleanName}: ${verifiedSold} sold).`, 'info');
-      }
-
-      saveState(state);
-      renderHeaderAndMetrics();
-      renderDispenserRack();
-      renderSlotsRibbon();
-      return;
-    }
-
-    // First time verifying this active box in this End Shift
-    const prevTicket = targetSlot.currentTicket;
-
-    // If a valid ticket number was extracted from the scanned barcode, update currentTicket
-    if (parsedTicket && parsedTicket.ticketNumber !== null) {
-      targetSlot.currentTicket = parsedTicket.ticketNumber;
-      if (parsedTicket.securityCode) {
-        targetSlot.currentSecurityCode = parsedTicket.securityCode;
-      }
-      const std = getStandardPackDetails(targetSlot.price || 1);
-      const packSize = targetSlot.packSize || std.packSize || 100;
-      if (targetSlot.startTicket === 0 && (parsedTicket.ticketNumber === packSize - 1 || parsedTicket.ticketNumber > packSize / 2)) {
-        targetSlot.startTicket = parsedTicket.ticketNumber;
-        if (!(targetSlot.packCumulativeSoldBase > 0) && !(targetSlot.packCumulativeSold > 0) && (targetSlot.packStartTicket === 0 || targetSlot.packStartTicket === null || targetSlot.packStartTicket === undefined)) {
-          targetSlot.packStartTicket = parsedTicket.ticketNumber;
-        }
-      }
-    }
-
-    targetSlot.scannedInEndShift = true;
-    const sold = calculateSlotSoldTickets(targetSlot);
-    targetSlot.ticketsSold = sold;
-
-    recordUndoAction({
-      type: 'VERIFY_END_SHIFT',
-      boxNumber: targetSlot.boxNumber,
-      prevTicket: prevTicket,
-      prevScannedInEndShift: false
-    });
-
-    const cleanName = cleanGameTitle(targetSlot.gameName);
-    state.lastScannedSlot = targetSlot.boxNumber;
-    bringBoxToVisibleRack(targetSlot.boxNumber);
-    state.lastScanData = {
-      barcode: rawBarcode,
-      boxNumber: targetSlot.boxNumber,
-      gameName: cleanName,
-      price: targetSlot.price,
-      packNumber: targetSlot.packNumber || '---',
-      ticketNumber: targetSlot.currentTicket || 0,
-      soldCount: sold,
-      action: 'VERIFIED'
-    };
-    state.lastScannedBarcode = `[${rawBarcode}] Box #${targetSlot.boxNumber} Verified: $${Number(targetSlot.price).toFixed(2)} · ${cleanName} (${sold} sold, #${String(targetSlot.currentTicket || 0).padStart(2, '0')})`;
-
-    const activeSlots = state.slots.filter(isBoxActive);
-    const verifiedCount = activeSlots.filter(s => s.scannedInEndShift).length;
-    const remainingCount = activeSlots.length - verifiedCount;
-
-    if (remainingCount === 0) {
-      sfx.chime();
-      showToast(`✓ Box #${targetSlot.boxNumber} Verified (${sold} sold)! All ${activeSlots.length} active dispenser boxes are verified!`, 'success');
     } else {
-      sfx.success();
-      showToast(`✓ Scanned [${rawBarcode}] Box #${targetSlot.boxNumber} (${sold} sold, $${Number(targetSlot.price).toFixed(2)} · ${cleanName}) · ${remainingCount} remaining`, 'success');
-    }
+      // Scenario 4: Normal Shift in Progress
+      // 1. Check if scanned barcode is a box identifier (e.g. "3", "BOX-03", "B3")
+      const scannedBoxNum = parseBoxBarcode(rawBarcode);
+      if (scannedBoxNum) {
+        const slot = state.slots.find(s => s.boxNumber === scannedBoxNum);
+        const isBoxEmpty = !slot || slot.status !== 'ACTIVE' || !slot.packNumber;
 
-    saveState(state);
-    renderHeaderAndMetrics();
-    renderDispenserRack();
-    renderSlotsRibbon();
-    return;
-  } else if (state.shiftStatus === 'SHIFT_ENDED') {
-    // If user scans a ticket to activate or put into in-stock after shift ended:
-    const parsedTicket = parseLotteryBarcode(rawBarcode, state.customGames);
-    if (parsedTicket && parsedTicket.isValid && !parsedTicket.isRetailProduct && !parsedTicket.isNonLotteryBarcode) {
-      const effectiveBarcode = (parsedTicket && parsedTicket.standardBarcode) ? parsedTicket.standardBarcode : rawBarcode;
-      const inStock = findInStockPack(parsedTicket, rawBarcode);
-      if (inStock && inStock.item) {
-        openSetBoxForInStockPack(inStock.item, parsedTicket, rawBarcode);
-        return;
-      }
-      openSetTicketDetailsModal(rawBarcode, effectiveBarcode);
-      return;
-    }
-
-    // Otherwise, shift is ended (closed) -> DO NOT sell tickets!
-    sfx.alert();
-    if (lastScanReadoutContainer) lastScanReadoutContainer.classList.add('alert-yellow');
-    if (scanActionTitle) scanActionTitle.textContent = 'SHIFT CLOSED - NOT SELLING';
-    if (lastScanDisplay) lastScanDisplay.innerHTML = 'Shift is ended. Click &quot;Start Shift&quot; on dashboard to begin selling.';
-    if (largeStatReadout) {
-      largeStatReadout.textContent = '!';
-      largeStatReadout.style.color = '#dc2626';
-    }
-    clearTimeout(scanAlertTimeout);
-    scanAlertTimeout = setTimeout(() => {
-      clearScanAlertBanner();
-    }, 5000);
-    return;
-  } else {
-    // Scenario 4: Normal Shift in Progress
-    // 1. Check if scanned barcode is a box identifier (e.g. "3", "BOX-03", "B3")
-    const scannedBoxNum = parseBoxBarcode(rawBarcode);
-    if (scannedBoxNum) {
-      const slot = state.slots.find(s => s.boxNumber === scannedBoxNum);
-      const isBoxEmpty = !slot || slot.status !== 'ACTIVE' || !slot.packNumber;
-
-      if (isBoxEmpty) {
-        openActivationForBox(scannedBoxNum);
-      } else {
-        state.lastScannedSlot = slot.boxNumber;
-        bringBoxToVisibleRack(slot.boxNumber);
-        sfx.beep();
-        renderHeaderAndMetrics();
-        renderDispenserRack();
-      }
-      return;
-    }
-
-    // 2. Parse barcode as lottery ticket
-    const parsedTicket = parseLotteryBarcode(rawBarcode, state.customGames);
-    const cleanNum = rawBarcode.replace(/[^0-9]/g, '');
-
-    // Reject retail product barcodes, laptop serials, and non-lottery barcodes immediately
-    if (!parsedTicket || !parsedTicket.isValid || parsedTicket.isRetailProduct || parsedTicket.isNonLotteryBarcode) {
-      sfx.alert();
-      if (lastScanReadoutContainer) lastScanReadoutContainer.classList.add('alert-yellow');
-      if (scanActionTitle) {
-        scanActionTitle.textContent = parsedTicket?.isRetailProduct
-          ? 'RETAIL MERCHANDISE - NOT A LOTTERY TICKET'
-          : 'NON-LOTTERY BARCODE';
-      }
-      if (lastScanDisplay) {
-        lastScanDisplay.textContent = parsedTicket?.isRetailProduct
-          ? `[${rawBarcode}] is retail merchandise, not a lottery ticket.`
-          : `[${rawBarcode}] is not a valid lottery ticket.`;
-      }
-      if (largeStatReadout) {
-        largeStatReadout.textContent = '!';
-        largeStatReadout.style.color = '#dc2626';
-      }
-
-      clearTimeout(scanAlertTimeout);
-      scanAlertTimeout = setTimeout(() => {
-        if (lastScanReadoutContainer?.classList.contains('alert-yellow') && (scanActionTitle?.textContent?.includes('NOT A LOTTERY') || scanActionTitle?.textContent?.includes('NON-LOTTERY') || scanActionTitle?.textContent?.includes('RETAIL'))) {
-          clearScanAlertBanner();
+        if (isBoxEmpty) {
+          openActivationForBox(scannedBoxNum);
+        } else {
+          state.lastScannedSlot = slot.boxNumber;
+          bringBoxToVisibleRack(slot.boxNumber);
+          sfx.beep();
+          renderHeaderAndMetrics();
+          renderDispenserRack();
         }
-      }, 5000);
-      return;
-    }
-
-    // Check if this scanned ticket belongs to a Partial Take Out pack in storage
-    const matchingPto = (state.partialTakeOuts || []).find(pto => {
-      if (!pto.packNumber) return false;
-      const ptoPackClean = String(pto.packNumber).replace(/[^0-9]/g, '');
-      if (parsedTicket && parsedTicket.packNumber) {
-        const ticketPackClean = String(parsedTicket.packNumber).replace(/[^0-9]/g, '');
-        if (ticketPackClean === ptoPackClean || isPackNumberMatch(parsedTicket.packNumber, pto.packNumber)) {
-          // Also verify game number if available on PTO
-          if (parsedTicket.gameNumber && pto.gameNumber && pto.gameNumber !== parsedTicket.gameNumber) {
-            return false;
-          }
-          return true;
-        }
-      }
-      return false;
-    });
-
-    if (matchingPto) {
-      openPartialTakeOutActionModal(matchingPto, rawBarcode, parsedTicket);
-      return;
-    }
-
-    // 2a. Match by exact normalized pack number AND game number (CRITICAL: prevents cross-game false positives)
-    let activeSlotToSell = null;
-    if (parsedTicket && parsedTicket.packNumber) {
-      activeSlotToSell = state.slots.find(s => {
-        if (s.status !== 'ACTIVE' || !s.packNumber) return false;
-        const packMatches = isPackNumberMatch(s.packNumber, parsedTicket.packNumber) ||
-          (parsedTicket.packCombined && isPackNumberMatch(s.packNumber, parsedTicket.packCombined)) ||
-          (parsedTicket.packClean && isPackNumberMatch(s.packNumber, parsedTicket.packClean));
-        if (!packMatches) return false;
-        if (parsedTicket.gameNumber && !slotMatchesGameNumber(s, parsedTicket.gameNumber)) {
-          return false;
-        }
-        return true;
-      });
-    }
-
-    // 2a-fallback. Check if this exact barcode is saved in an active box's scannedBarcodes
-    if (!activeSlotToSell) {
-      activeSlotToSell = (state.slots || []).find(s => {
-        if (s.status !== 'ACTIVE' || !s.packNumber) return false;
-        if (parsedTicket?.gameNumber && !slotMatchesGameNumber(s, parsedTicket.gameNumber)) return false;
-        return (s.scannedBarcodes || []).some(b => {
-          const bStr = typeof b === 'string' ? b : b.barcode;
-          return bStr === rawBarcode ||
-            (parsedTicket?.standardBarcode && bStr === parsedTicket.standardBarcode) ||
-            (parsedTicket?.canonicalId && bStr === parsedTicket.canonicalId);
-        });
-      }) || null;
-    }
-
-    // 2a-fallback2. If game-strict match failed, try pack-only match (ONLY for legacy slots with NO game info)
-    if (!activeSlotToSell && parsedTicket && parsedTicket.packNumber) {
-      activeSlotToSell = state.slots.find(s => {
-        if (s.status !== 'ACTIVE' || !s.packNumber) return false;
-        const packMatches = isPackNumberMatch(s.packNumber, parsedTicket.packNumber) ||
-          (parsedTicket.packCombined && isPackNumberMatch(s.packNumber, parsedTicket.packCombined));
-        if (!packMatches) return false;
-        // Only allow pack-only match for slots that have no game info at all
-        return !s.gameId && !s.barcodePrefix;
-      });
-    }
-
-    // 2b. Match by slot's normalized pack number contained in clean barcode digits (with game verification)
-    if (!activeSlotToSell && parsedTicket && parsedTicket.gameNumber) {
-      activeSlotToSell = state.slots.find(s => {
-        if (s.status !== 'ACTIVE' || !s.packNumber) return false;
-        if (!slotMatchesGameNumber(s, parsedTicket.gameNumber)) return false;
-        const slotPackNorm = normalizePackNumber(s.packNumber);
-        if (slotPackNorm.length < 4) return false;
-        return cleanNum.includes(slotPackNorm);
-      });
-    }
-
-    // 2c. Check if barcode was previously assigned/recorded to an active box (with pack verification)
-    if (!activeSlotToSell) {
-      const existingInfo = findScannedBarcodeInfo(parsedTicket?.standardBarcode) || findScannedBarcodeInfo(rawBarcode);
-      if (existingInfo && existingInfo.boxNumber) {
-        const slot = state.slots.find(s => s.boxNumber === existingInfo.boxNumber && s.status === 'ACTIVE' && s.packNumber);
-        if (slot && (!parsedTicket?.packNumber || isPackNumberMatch(slot.packNumber, parsedTicket.packCombined || parsedTicket.packNumber)) &&
-          (!parsedTicket?.gameNumber || slotMatchesGameNumber(slot, parsedTicket.gameNumber))) {
-          activeSlotToSell = slot;
-        }
-      }
-    }
-
-    // 2d. Match by game barcodePrefix ONLY if pack number matches an active slot
-    if (!activeSlotToSell && parsedTicket && parsedTicket.gameNumber && parsedTicket.packNumber) {
-      const matchingSlots = state.slots.filter(s => {
-        if (s.status !== 'ACTIVE' || !s.packNumber) return false;
-        return slotMatchesGameNumber(s, parsedTicket.gameNumber);
-      });
-      if (matchingSlots.length > 0) {
-        activeSlotToSell = matchingSlots.find(s => isPackNumberMatch(s.packNumber, parsedTicket.packNumber)) || null;
-      }
-    }
-
-    if (activeSlotToSell) {
-      const now = Date.now();
-      // Hardware double-scan debounce (ignore exact duplicate within 400ms - scanner noise)
-      if (lastScannedRawBarcode === rawBarcode && (now - lastScannedBarcodeTime) < 400) {
-        sfx.beep();
-        showToast('⚠️ Duplicate scan ignored (scanner debounce).', 'info');
         return;
       }
 
-      lastScannedRawBarcode = rawBarcode;
-      lastScannedBarcodeTime = now;
+      // 2. Parse barcode as lottery ticket
+      const parsedTicket = parseLotteryBarcode(rawBarcode, state.customGames, state.lotteryJurisdiction);
+      const cleanNum = rawBarcode.replace(/[^0-9]/g, '');
 
-      const std = getStandardPackDetails(activeSlotToSell.price || 2);
-      const packSize = activeSlotToSell.packSize || std.packSize;
-
-      // Check if slot is already sold out (reached end of pack)
-      if (activeSlotToSell.status === 'SOLD_OUT' || (activeSlotToSell.currentTicket !== undefined && activeSlotToSell.currentTicket >= packSize)) {
+      // Reject retail product barcodes, laptop serials, and non-lottery barcodes immediately
+      if (!parsedTicket || !parsedTicket.isValid || parsedTicket.isRetailProduct || parsedTicket.isNonLotteryBarcode) {
         sfx.alert();
         if (lastScanReadoutContainer) lastScanReadoutContainer.classList.add('alert-yellow');
-        if (scanActionTitle) scanActionTitle.textContent = `BOX #${activeSlotToSell.boxNumber} IS SOLD OUT`;
-        if (lastScanDisplay) lastScanDisplay.textContent = `Full pack of ${packSize} tickets sold. Please load a new pack.`;
+        if (scanActionTitle) {
+          scanActionTitle.textContent = parsedTicket?.isAmbiguous
+            ? 'AMBIGUOUS GAME PREFIX (GA / SC)'
+            : parsedTicket?.isUncatalogued
+              ? 'UNKNOWN SCEL GAME'
+              : parsedTicket?.isRetailProduct
+                ? 'RETAIL MERCHANDISE - NOT A LOTTERY TICKET'
+                : 'NON-LOTTERY BARCODE';
+        }
+        if (lastScanDisplay) {
+          lastScanDisplay.textContent = (parsedTicket?.isAmbiguous || parsedTicket?.isUncatalogued) && parsedTicket.error
+            ? parsedTicket.error
+            : parsedTicket?.isRetailProduct
+              ? `[${rawBarcode}] is retail merchandise, not a lottery ticket.`
+              : `[${rawBarcode}] is not a valid lottery ticket.`;
+        }
         if (largeStatReadout) {
           largeStatReadout.textContent = '!';
           largeStatReadout.style.color = '#dc2626';
         }
+
         clearTimeout(scanAlertTimeout);
         scanAlertTimeout = setTimeout(() => {
-          clearScanAlertBanner();
+          if (lastScanReadoutContainer?.classList.contains('alert-yellow') && (scanActionTitle?.textContent?.includes('NOT A LOTTERY') || scanActionTitle?.textContent?.includes('NON-LOTTERY') || scanActionTitle?.textContent?.includes('RETAIL'))) {
+            clearScanAlertBanner();
+          }
         }, 5000);
         return;
       }
 
-      const cleanName = cleanGameTitle(activeSlotToSell.gameName);
-      const padLen = (activeSlotToSell.packSize || 100) >= 100 ? 3 : 2;
-      const tixNum = (parsedTicket && parsedTicket.ticketNumber !== null && parsedTicket.ticketNumber !== undefined)
-        ? parsedTicket.ticketNumber
-        : (activeSlotToSell.startTicket || 0);
-
-      // Check if this individual ticket was already sold (Section 6B / 9.14)
-      if (parsedTicket && parsedTicket.ticketNumber !== null && parsedTicket.ticketNumber !== undefined) {
-        const tNum = parsedTicket.ticketNumber;
-        const openingPos = (activeSlotToSell.startTicket !== undefined && activeSlotToSell.startTicket !== null)
-          ? Number(activeSlotToSell.startTicket)
-          : 0;
-        const currentPos = (activeSlotToSell.currentTicket !== undefined && activeSlotToSell.currentTicket !== null)
-          ? Number(activeSlotToSell.currentTicket)
-          : openingPos;
-        const isDescending = openingPos > (packSize / 2);
-
-        const soldInPast = isDescending ? (tNum > openingPos) : (tNum < openingPos);
-        const soldInCurrent = isDescending
-          ? (currentPos < openingPos && tNum > currentPos && tNum <= openingPos)
-          : (currentPos > openingPos && tNum >= openingPos && tNum < currentPos);
-        const barcodeRecorded = (activeSlotToSell.soldBarcodes || []).some(b => (typeof b === 'string' ? b : b.barcode) === rawBarcode);
-
-        if (soldInPast || soldInCurrent || barcodeRecorded) {
-          sfx.alert();
-          if (lastScanReadoutContainer) lastScanReadoutContainer.classList.add('alert-yellow');
-          if (scanActionTitle) scanActionTitle.textContent = 'TICKET ALREADY SOLD';
-          if (lastScanDisplay) lastScanDisplay.textContent = `Ticket #${String(tNum).padStart(padLen, '0')} (${cleanName}) was already sold. Cannot be sold again.`;
-          if (largeStatReadout) {
-            largeStatReadout.textContent = '!';
-            largeStatReadout.style.color = '#dc2626';
+      // Check if this scanned ticket belongs to a Partial Take Out pack in storage
+      const matchingPto = (state.partialTakeOuts || []).find(pto => {
+        if (!pto.packNumber) return false;
+        const ptoPackClean = String(pto.packNumber).replace(/[^0-9]/g, '');
+        if (parsedTicket && parsedTicket.packNumber) {
+          const ticketPackClean = String(parsedTicket.packNumber).replace(/[^0-9]/g, '');
+          if (ticketPackClean === ptoPackClean || isPackNumberMatch(parsedTicket.packNumber, pto.packNumber)) {
+            // Also verify game number if available on PTO
+            if (parsedTicket.gameNumber && pto.gameNumber && pto.gameNumber !== parsedTicket.gameNumber) {
+              return false;
+            }
+            return true;
           }
-          showToast(`⚠️ Ticket #${String(tNum).padStart(padLen, '0')} was already sold. Cannot be sold again.`, 'error');
-          clearTimeout(scanAlertTimeout);
-          scanAlertTimeout = setTimeout(() => {
-            clearScanAlertBanner();
-          }, 5000);
+        }
+        return false;
+      });
+
+      if (matchingPto) {
+        openPartialTakeOutActionModal(matchingPto, rawBarcode, parsedTicket);
+        return;
+      }
+
+      // 2a. Match by exact normalized pack number AND game number (CRITICAL: prevents cross-game false positives)
+      // Check for conflict: same physical pack assigned to multiple boxes
+      if (parsedTicket && parsedTicket.packNumber) {
+        const conflictingSlots = (state.slots || []).filter(s => {
+          if ((s.status !== 'ACTIVE' && !s.needsActivation) || !s.packNumber) return false;
+          if (parsedTicket.gameNumber && !slotMatchesGameNumber(s, parsedTicket.gameNumber)) return false;
+          return isPackNumberMatch(s.packNumber, parsedTicket.packNumber) ||
+            (parsedTicket.packCombined && isPackNumberMatch(s.packNumber, parsedTicket.packCombined)) ||
+            (parsedTicket.packClean && isPackNumberMatch(s.packNumber, parsedTicket.packClean));
+        });
+        if (conflictingSlots.length > 1) {
+          const boxList = conflictingSlots.map(s => `#${s.boxNumber}`).join(', ');
+          sfx.alert();
+          showToast(`⚠️ Conflict: Pack #${formatDisplayPackNumber(parsedTicket.packNumber)} is assigned to multiple boxes (${boxList}).`, 'error');
           return;
         }
       }
 
-      state.lastScannedSlot = activeSlotToSell.boxNumber;
-      bringBoxToVisibleRack(activeSlotToSell.boxNumber);
-
-      state.lastScanData = {
-        barcode: rawBarcode,
-        boxNumber: activeSlotToSell.boxNumber,
-        gameName: cleanName,
-        price: activeSlotToSell.price,
-        packNumber: activeSlotToSell.packNumber || '---',
-        ticketNumber: tixNum,
-        soldCount: 0,
-        action: 'ACTIVE_BOX'
-      };
-      state.lastScannedBarcode = `Box #${activeSlotToSell.boxNumber} · ${cleanName} · The shift is still active. End shift to count total sales.`;
-
-      sfx.beep();
-      showToast(`ℹ️ Box #${activeSlotToSell.boxNumber} (${cleanName}): The shift is still active. End shift to count total sales.`, 'info');
-
-      saveState(state);
-      renderHeaderAndMetrics();
-      renderDispenserRack();
-      renderSlotsRibbon();
-      return;
-    }
-
-    // 2b. Check if scanned barcode matches a previously sold-out pack (Recovery Flow - Phase 1)
-    const isDaily = state.settings?.operationMode !== 'SHIFTS';
-    const soldOutPack = findPreviouslySoldOutPack(parsedTicket, rawBarcode);
-    if (soldOutPack) {
-      sfx.alert();
-      voice.speakTicket();
-      if (lastScanReadoutContainer) {
-        lastScanReadoutContainer.classList.add('alert-yellow');
+      let activeSlotToSell = null;
+      if (parsedTicket && parsedTicket.packNumber) {
+        activeSlotToSell = state.slots.find(s => {
+          if ((s.status !== 'ACTIVE' && !s.needsActivation) || !s.packNumber) return false;
+          const packMatches = isPackNumberMatch(s.packNumber, parsedTicket.packNumber) ||
+            (parsedTicket.packCombined && isPackNumberMatch(s.packNumber, parsedTicket.packCombined)) ||
+            (parsedTicket.packClean && isPackNumberMatch(s.packNumber, parsedTicket.packClean)) ||
+            (parsedTicket.basePackNumber && isPackNumberMatch(s.packNumber, parsedTicket.basePackNumber)) ||
+            (s.basePackNumber && isPackNumberMatch(s.basePackNumber, parsedTicket.packNumber)) ||
+            (s.packCombined && isPackNumberMatch(s.packCombined, parsedTicket.packNumber));
+          if (!packMatches) return false;
+          if (parsedTicket.gameNumber && !slotMatchesGameNumber(s, parsedTicket.gameNumber)) {
+            return false;
+          }
+          return true;
+        });
       }
-      if (scanActionTitle) {
-        scanActionTitle.textContent = 'This Ticket was sold out in previous shift';
-      }
-      if (lastScanDisplay) {
-        lastScanDisplay.textContent = '';
-      }
-      pendingSoldOutBarcode = rawBarcode;
-      pendingSoldOutPack = soldOutPack;
-      pendingSoldOutRecovery = {
-        pack: soldOutPack,
-        barcode: rawBarcode,
-        scannedPosition: (parsedTicket && parsedTicket.ticketNumber !== null && parsedTicket.ticketNumber !== undefined)
-          ? parsedTicket.ticketNumber
-          : (soldOutPack.closeTicket !== undefined ? soldOutPack.closeTicket : 0),
-        parsedTicket: parsedTicket
-      };
 
-      if (soldOutGameHeader) {
-        soldOutGameHeader.textContent = cleanGameTitle(soldOutPack.gameName || 'Scratch Off Ticket');
+      // 2a-fallback. Check if this exact barcode is saved in an active box's scannedBarcodes
+      if (!activeSlotToSell) {
+        activeSlotToSell = (state.slots || []).find(s => {
+          if ((s.status !== 'ACTIVE' && !s.needsActivation) || !s.packNumber) return false;
+          if (parsedTicket?.gameNumber && !slotMatchesGameNumber(s, parsedTicket.gameNumber)) return false;
+          return (s.scannedBarcodes || []).some(b => {
+            const bStr = typeof b === 'string' ? b : b.barcode;
+            return bStr === rawBarcode ||
+              (parsedTicket?.standardBarcode && bStr === parsedTicket.standardBarcode) ||
+              (parsedTicket?.canonicalId && bStr === parsedTicket.canonicalId);
+          });
+        }) || null;
       }
-      const noticeEl = document.getElementById('soldOutModalNotice');
-      if (noticeEl) {
-        noticeEl.textContent = 'This Ticket was sold out in previous shift';
-      }
-      const questionEl = document.getElementById('soldOutModalQuestion');
-      if (questionEl) {
-        questionEl.textContent = 'Do you want to add this Ticket back into New Shift?';
-      }
-      updateSoldOutTicketModal?.showModal();
-      return;
-    }
 
-    // 3. If barcode was previously assigned to an active box, sell directly from that box!
-    const existing = findScannedBarcodeInfo(parsedTicket?.standardBarcode) || findScannedBarcodeInfo(rawBarcode);
-    if (existing && existing.boxNumber) {
-      const existingSlot = state.slots.find(s => s.boxNumber === existing.boxNumber && s.status === 'ACTIVE' && s.packNumber);
-      if (existingSlot && (!parsedTicket?.packNumber || isPackNumberMatch(existingSlot.packNumber, parsedTicket.packNumber)) && (!parsedTicket?.gameNumber || slotMatchesGameNumber(existingSlot, parsedTicket.gameNumber))) {
-        const std = getStandardPackDetails(existingSlot.price || 2);
-        const packSize = existingSlot.packSize || std.packSize;
-        if (existingSlot.status === 'SOLD_OUT' || (existingSlot.currentTicket !== undefined && existingSlot.currentTicket >= packSize)) {
+      // 2a-fallback2. If game-strict match failed, try pack-only match (ONLY for legacy slots with NO game info)
+      if (!activeSlotToSell && parsedTicket && parsedTicket.packNumber) {
+        activeSlotToSell = state.slots.find(s => {
+          if ((s.status !== 'ACTIVE' && !s.needsActivation) || !s.packNumber) return false;
+          const packMatches = isPackNumberMatch(s.packNumber, parsedTicket.packNumber) ||
+            (parsedTicket.packCombined && isPackNumberMatch(s.packNumber, parsedTicket.packCombined));
+          if (!packMatches) return false;
+          // Only allow pack-only match for slots that have no game info at all
+          return !s.gameId && !s.barcodePrefix;
+        });
+      }
+
+      // 2b. Match by slot's normalized pack number contained in clean barcode digits (with game verification)
+      if (!activeSlotToSell && parsedTicket && parsedTicket.gameNumber) {
+        activeSlotToSell = state.slots.find(s => {
+          if ((s.status !== 'ACTIVE' && !s.needsActivation) || !s.packNumber) return false;
+          if (!slotMatchesGameNumber(s, parsedTicket.gameNumber)) return false;
+          const slotPackNorm = normalizePackNumber(s.packNumber);
+          if (slotPackNorm.length < 4) return false;
+          return cleanNum.includes(slotPackNorm);
+        });
+      }
+
+      // 2c. Check if barcode was previously assigned/recorded to an active box (with pack verification)
+      if (!activeSlotToSell) {
+        const existingInfo = findScannedBarcodeInfo(parsedTicket?.standardBarcode) || findScannedBarcodeInfo(rawBarcode);
+        if (existingInfo && existingInfo.boxNumber) {
+          const slot = state.slots.find(s => Number(s.boxNumber) === Number(existingInfo.boxNumber) && (s.status === 'ACTIVE' || s.needsActivation) && s.packNumber);
+          if (slot && (!parsedTicket?.packNumber || isPackNumberMatch(slot.packNumber, parsedTicket.packCombined || parsedTicket.packNumber)) &&
+            (!parsedTicket?.gameNumber || slotMatchesGameNumber(slot, parsedTicket.gameNumber))) {
+            activeSlotToSell = slot;
+          }
+        }
+      }
+
+      // 2d. Match by game barcodePrefix ONLY if pack number matches an active slot
+      if (!activeSlotToSell && parsedTicket && parsedTicket.gameNumber && parsedTicket.packNumber) {
+        const matchingSlots = state.slots.filter(s => {
+          if ((s.status !== 'ACTIVE' && !s.needsActivation) || !s.packNumber) return false;
+          return slotMatchesGameNumber(s, parsedTicket.gameNumber);
+        });
+        if (matchingSlots.length > 0) {
+          activeSlotToSell = matchingSlots.find(s => isPackNumberMatch(s.packNumber, parsedTicket.packNumber)) || null;
+        }
+      }
+
+      // If activeSlotToSell is waiting for activation:
+      if (activeSlotToSell && activeSlotToSell.needsActivation) {
+        sfx.beep?.();
+        bringBoxToVisibleRack(activeSlotToSell.boxNumber);
+        state.lastScannedSlot = activeSlotToSell.boxNumber;
+        showToast(`ℹ️ Box #${activeSlotToSell.boxNumber} is waiting for activation. Tap "Activate" on Box #${activeSlotToSell.boxNumber} to activate!`, 'info');
+        renderHeaderAndMetrics();
+        renderDispenserRack();
+        renderSlotsRibbon();
+        return;
+      }
+
+      if (activeSlotToSell) {
+        const now = Date.now();
+        // Hardware double-scan debounce (ignore exact duplicate within 400ms - scanner noise)
+        if (lastScannedRawBarcode === rawBarcode && (now - lastScannedBarcodeTime) < 400) {
+          sfx.beep();
+          showToast('⚠️ Duplicate scan ignored (scanner debounce).', 'info');
+          return;
+        }
+
+        lastScannedRawBarcode = rawBarcode;
+        lastScannedBarcodeTime = now;
+
+        const std = getStandardPackDetails(activeSlotToSell.price || 2);
+        const packSize = activeSlotToSell.packSize || std.packSize;
+
+        // Check if slot is already sold out (reached end of pack)
+        if (activeSlotToSell.status === 'SOLD_OUT' || (activeSlotToSell.currentTicket !== undefined && activeSlotToSell.currentTicket >= packSize)) {
           sfx.alert();
           if (lastScanReadoutContainer) lastScanReadoutContainer.classList.add('alert-yellow');
-          if (scanActionTitle) scanActionTitle.textContent = `BOX #${existingSlot.boxNumber} IS SOLD OUT`;
+          if (scanActionTitle) scanActionTitle.textContent = `BOX #${activeSlotToSell.boxNumber} IS SOLD OUT`;
           if (lastScanDisplay) lastScanDisplay.textContent = `Full pack of ${packSize} tickets sold. Please load a new pack.`;
           if (largeStatReadout) {
             largeStatReadout.textContent = '!';
@@ -12395,181 +12973,318 @@ function processScannedBarcode(rawBarcode) {
           }, 5000);
           return;
         }
-        const cleanName = cleanGameTitle(existingSlot.gameName);
-        const padLen = (existingSlot.packSize || 100) >= 100 ? 3 : 2;
+
+        const cleanName = cleanGameTitle(activeSlotToSell.gameName);
+        const padLen = (activeSlotToSell.packSize || 100) >= 100 ? 3 : 2;
         const tixNum = (parsedTicket && parsedTicket.ticketNumber !== null && parsedTicket.ticketNumber !== undefined)
           ? parsedTicket.ticketNumber
-          : (existingSlot.startTicket || 0);
+          : (activeSlotToSell.startTicket || 0);
 
-        state.lastScannedSlot = existingSlot.boxNumber;
-        bringBoxToVisibleRack(existingSlot.boxNumber);
+        // Check if this individual ticket was already sold (Section 6B / 9.14)
+        if (parsedTicket && parsedTicket.ticketNumber !== null && parsedTicket.ticketNumber !== undefined) {
+          const tNum = parsedTicket.ticketNumber;
+          const openingPos = (activeSlotToSell.startTicket !== undefined && activeSlotToSell.startTicket !== null)
+            ? Number(activeSlotToSell.startTicket)
+            : 0;
+          const currentPos = (activeSlotToSell.currentTicket !== undefined && activeSlotToSell.currentTicket !== null)
+            ? Number(activeSlotToSell.currentTicket)
+            : openingPos;
+          const isDescending = openingPos > (packSize / 2);
+
+          const soldInPast = isDescending ? (tNum > openingPos) : (tNum < openingPos);
+          const soldInCurrent = isDescending
+            ? (currentPos < openingPos && tNum > currentPos && tNum <= openingPos)
+            : (currentPos > openingPos && tNum >= openingPos && tNum < currentPos);
+          const barcodeRecorded = (activeSlotToSell.soldBarcodes || []).some(b => (typeof b === 'string' ? b : b.barcode) === rawBarcode);
+
+          const isAlreadyScanned = soldInPast || soldInCurrent || barcodeRecorded ||
+            (state.lastScanData && state.lastScanData.barcode === rawBarcode) ||
+            (activeSlotToSell.scannedBarcodes || []).some(b => (typeof b === 'string' ? b : b.barcode) === rawBarcode);
+
+          if (isAlreadyScanned) {
+            sfx.alert();
+            if (lastScanReadoutContainer) lastScanReadoutContainer.classList.add('alert-yellow');
+            if (scanActionTitle) scanActionTitle.textContent = 'Already Scanned';
+            if (lastScanDisplay) lastScanDisplay.textContent = `Ticket #${String(tNum).padStart(padLen, '0')} was already scanned.`;
+            if (largeStatReadout) {
+              largeStatReadout.textContent = '!';
+              largeStatReadout.style.color = '#dc2626';
+            }
+            showToast(`⚠️ Already Scanned: Ticket #${String(tNum).padStart(padLen, '0')} was already scanned.`, 'error');
+            clearTimeout(scanAlertTimeout);
+            scanAlertTimeout = setTimeout(() => {
+              clearScanAlertBanner();
+            }, 5000);
+            return;
+          }
+        }
+
+        state.lastScannedSlot = activeSlotToSell.boxNumber;
+        bringBoxToVisibleRack(activeSlotToSell.boxNumber);
 
         state.lastScanData = {
           barcode: rawBarcode,
-          boxNumber: existingSlot.boxNumber,
+          boxNumber: activeSlotToSell.boxNumber,
           gameName: cleanName,
-          price: existingSlot.price,
-          packNumber: existingSlot.packNumber || '---',
+          price: activeSlotToSell.price,
+          packNumber: activeSlotToSell.packNumber || '---',
           ticketNumber: tixNum,
           soldCount: 0,
           action: 'ACTIVE_BOX'
         };
-        state.lastScannedBarcode = `Box #${existingSlot.boxNumber} · $${Number(existingSlot.price).toFixed(2)} · ${cleanName} (Ticket #${String(tixNum).padStart(padLen, '0')})`;
+        state.lastScannedBarcode = `Box #${activeSlotToSell.boxNumber} · ${cleanName} · The shift is still active. End shift to count total sales.`;
 
         sfx.beep();
-        showToast(`✓ Ticket was already activated in Box #${existingSlot.boxNumber} (${cleanName})!`, 'info');
+        showToast(`ℹ️ Box #${activeSlotToSell.boxNumber} (${cleanName}): The shift is still active. End shift to count total sales.`, 'info');
 
         saveState(state);
         renderHeaderAndMetrics();
         renderDispenserRack();
         renderSlotsRibbon();
-        if (typeof renderReceivePacksView === 'function') renderReceivePacksView();
-        if (typeof renderDayReportView === 'function') renderDayReportView();
-        if (typeof renderInventoryView === 'function') renderInventoryView();
-        if (typeof renderHistoryView === 'function') renderHistoryView();
-        if (typeof populateSettingsInputs === 'function') populateSettingsInputs();
         return;
       }
-    }
 
-    // 4. Scan-to-Appear: New ticket scanned (not in an active box yet)!
-    // Only open if the scanned barcode is a VALID lottery scratch ticket!
-    if (!parsedTicket || !parsedTicket.isValid || parsedTicket.isRetailProduct || parsedTicket.isNonLotteryBarcode) {
-      sfx.alert();
-      if (lastScanReadoutContainer) lastScanReadoutContainer.classList.add('alert-yellow');
-      if (scanActionTitle) {
-        scanActionTitle.textContent = parsedTicket?.isRetailProduct
-          ? 'RETAIL MERCHANDISE - NOT A LOTTERY TICKET'
-          : 'NOT A LOTTERY TICKET';
-      }
-      if (lastScanDisplay) {
-        lastScanDisplay.textContent = parsedTicket?.isRetailProduct
-          ? `[${rawBarcode}] is retail merchandise, not a lottery ticket.`
-          : `[${rawBarcode}] is not a valid lottery ticket format.`;
-      }
-      if (largeStatReadout) {
-        largeStatReadout.textContent = '!';
-        largeStatReadout.style.color = '#dc2626';
-      }
-
-      clearTimeout(scanAlertTimeout);
-      scanAlertTimeout = setTimeout(() => {
-        if (lastScanReadoutContainer?.classList.contains('alert-yellow') && (scanActionTitle?.textContent?.includes('NOT A LOTTERY') || scanActionTitle?.textContent?.includes('RETAIL'))) {
-          clearScanAlertBanner();
+      // 2b. Check if scanned barcode matches a previously sold-out pack (Recovery Flow - Phase 1)
+      const isDaily = state.settings?.operationMode !== 'SHIFTS';
+      const soldOutPack = findPreviouslySoldOutPack(parsedTicket, rawBarcode);
+      if (soldOutPack) {
+        sfx.alert();
+        voice.speakTicket();
+        if (lastScanReadoutContainer) {
+          lastScanReadoutContainer.classList.add('alert-yellow');
         }
-      }, 5000);
+        if (scanActionTitle) {
+          scanActionTitle.textContent = 'This Ticket was sold out in previous shift';
+        }
+        if (lastScanDisplay) {
+          lastScanDisplay.textContent = '';
+        }
+        pendingSoldOutBarcode = rawBarcode;
+        pendingSoldOutPack = soldOutPack;
+        pendingSoldOutRecovery = {
+          pack: soldOutPack,
+          barcode: rawBarcode,
+          scannedPosition: (parsedTicket && parsedTicket.ticketNumber !== null && parsedTicket.ticketNumber !== undefined)
+            ? parsedTicket.ticketNumber
+            : (soldOutPack.closeTicket !== undefined ? soldOutPack.closeTicket : 0),
+          parsedTicket: parsedTicket
+        };
+
+        if (soldOutGameHeader) {
+          soldOutGameHeader.textContent = cleanGameTitle(soldOutPack.gameName || 'Scratch Off Ticket');
+        }
+        const noticeEl = document.getElementById('soldOutModalNotice');
+        if (noticeEl) {
+          noticeEl.textContent = 'This Ticket was sold out in previous shift';
+        }
+        const questionEl = document.getElementById('soldOutModalQuestion');
+        if (questionEl) {
+          questionEl.textContent = 'Do you want to add this Ticket back into New Shift?';
+        }
+        updateSoldOutTicketModal?.showModal();
+        return;
+      }
+
+      // 3. If barcode was previously assigned to an active box, sell directly from that box!
+      const existing = findScannedBarcodeInfo(parsedTicket?.standardBarcode) || findScannedBarcodeInfo(rawBarcode);
+      if (existing && existing.boxNumber) {
+        const existingSlot = state.slots.find(s => Number(s.boxNumber) === Number(existing.boxNumber) && (s.status === 'ACTIVE' || s.needsActivation) && s.packNumber);
+        if (existingSlot && (!parsedTicket?.packNumber || isPackNumberMatch(existingSlot.packNumber, parsedTicket.packNumber)) && (!parsedTicket?.gameNumber || slotMatchesGameNumber(existingSlot, parsedTicket.gameNumber))) {
+          const std = getStandardPackDetails(existingSlot.price || 2);
+          const packSize = existingSlot.packSize || std.packSize;
+          if (existingSlot.status === 'SOLD_OUT' || (existingSlot.currentTicket !== undefined && existingSlot.currentTicket >= packSize)) {
+            sfx.alert();
+            if (lastScanReadoutContainer) lastScanReadoutContainer.classList.add('alert-yellow');
+            if (scanActionTitle) scanActionTitle.textContent = `BOX #${existingSlot.boxNumber} IS SOLD OUT`;
+            if (lastScanDisplay) lastScanDisplay.textContent = `Full pack of ${packSize} tickets sold. Please load a new pack.`;
+            if (largeStatReadout) {
+              largeStatReadout.textContent = '!';
+              largeStatReadout.style.color = '#dc2626';
+            }
+            clearTimeout(scanAlertTimeout);
+            scanAlertTimeout = setTimeout(() => {
+              clearScanAlertBanner();
+            }, 5000);
+            return;
+          }
+          const cleanName = cleanGameTitle(existingSlot.gameName);
+          const padLen = (existingSlot.packSize || 100) >= 100 ? 3 : 2;
+          const tixNum = (parsedTicket && parsedTicket.ticketNumber !== null && parsedTicket.ticketNumber !== undefined)
+            ? parsedTicket.ticketNumber
+            : (existingSlot.startTicket || 0);
+
+          state.lastScannedSlot = existingSlot.boxNumber;
+          bringBoxToVisibleRack(existingSlot.boxNumber);
+
+          const existingDisp = parsedTicket?.displayBarcode || rawBarcode;
+          const existingSec = parsedTicket?.securityCode || existingSlot.currentSecurityCode || null;
+          state.lastScanData = {
+            barcode: existingDisp,
+            boxNumber: existingSlot.boxNumber,
+            gameName: cleanName,
+            price: existingSlot.price,
+            packNumber: existingSlot.packNumber || '---',
+            ticketNumber: tixNum,
+            securityCode: existingSec,
+            soldCount: 0,
+            action: 'ACTIVE_BOX'
+          };
+          state.lastScannedBarcode = `Box #${existingSlot.boxNumber} · $${Number(existingSlot.price).toFixed(2)} · ${cleanName} (Ticket #${String(tixNum).padStart(3, '0')}${existingSec ? ' (' + existingSec + ')' : ''})`;
+
+          sfx.beep();
+          showToast(`✓ Ticket was already activated in Box #${existingSlot.boxNumber} (${cleanName})!`, 'info');
+
+          saveState(state);
+          renderHeaderAndMetrics();
+          renderDispenserRack();
+          renderSlotsRibbon();
+          if (typeof renderReceivePacksView === 'function') renderReceivePacksView();
+          if (typeof renderDayReportView === 'function') renderDayReportView();
+          if (typeof renderInventoryView === 'function') renderInventoryView();
+          if (typeof renderHistoryView === 'function') renderHistoryView();
+          if (typeof populateSettingsInputs === 'function') populateSettingsInputs();
+          return;
+        }
+      }
+
+      // 4. Scan-to-Appear: New ticket scanned (not in an active box yet)!
+      // Only open if the scanned barcode is a VALID lottery scratch ticket!
+      if (!parsedTicket || !parsedTicket.isValid || parsedTicket.isRetailProduct || parsedTicket.isNonLotteryBarcode) {
+        sfx.alert();
+        if (lastScanReadoutContainer) lastScanReadoutContainer.classList.add('alert-yellow');
+        if (scanActionTitle) {
+          scanActionTitle.textContent = parsedTicket?.isRetailProduct
+            ? 'RETAIL MERCHANDISE - NOT A LOTTERY TICKET'
+            : 'NOT A LOTTERY TICKET';
+        }
+        if (lastScanDisplay) {
+          lastScanDisplay.textContent = parsedTicket?.isRetailProduct
+            ? `[${rawBarcode}] is retail merchandise, not a lottery ticket.`
+            : `[${rawBarcode}] is not a valid lottery ticket format.`;
+        }
+        if (largeStatReadout) {
+          largeStatReadout.textContent = '!';
+          largeStatReadout.style.color = '#dc2626';
+        }
+
+        clearTimeout(scanAlertTimeout);
+        scanAlertTimeout = setTimeout(() => {
+          if (lastScanReadoutContainer?.classList.contains('alert-yellow') && (scanActionTitle?.textContent?.includes('NOT A LOTTERY') || scanActionTitle?.textContent?.includes('RETAIL'))) {
+            clearScanAlertBanner();
+          }
+        }, 5000);
+        return;
+      }
+
+      const effectiveBarcode = (parsedTicket && parsedTicket.standardBarcode) ? parsedTicket.standardBarcode : rawBarcode;
+
+      // 1. Check if this ticket is ALREADY in In-Stock inventory (Scan #2)
+      // When scanned again, open the Set in Box screen (#setBoxModal)!
+      const inStock = findInStockPack(parsedTicket, rawBarcode);
+      if (inStock && inStock.item) {
+        openSetBoxForInStockPack(inStock.item, parsedTicket, rawBarcode);
+        return;
+      }
+
+      // 2. Brand-new unrecognized ticket (Scan #1):
+      // Open screen to set ticket name & price (single-step, not 2 steps).
+      // It adds the ticket into In-Stock inventory without asking for a box.
+      openSetTicketDetailsModal(rawBarcode, effectiveBarcode);
       return;
     }
 
-    const effectiveBarcode = (parsedTicket && parsedTicket.standardBarcode) ? parsedTicket.standardBarcode : rawBarcode;
-
-    // 1. Check if this ticket is ALREADY in In-Stock inventory (Scan #2)
-    // When scanned again, open the Set in Box screen (#setBoxModal)!
-    const inStock = findInStockPack(parsedTicket, rawBarcode);
-    if (inStock && inStock.item) {
-      openSetBoxForInStockPack(inStock.item, parsedTicket, rawBarcode);
-      return;
-    }
-
-    // 2. Brand-new unrecognized ticket (Scan #1):
-    // Open screen to set ticket name & price (single-step, not 2 steps).
-    // It adds the ticket into In-Stock inventory without asking for a box.
-    openSetTicketDetailsModal(rawBarcode, effectiveBarcode);
-    return;
+    saveState(state);
+    renderHeaderAndMetrics();
+    renderDispenserRack();
+    renderSlotsRibbon();
   }
 
-  saveState(state);
-  renderHeaderAndMetrics();
-  renderDispenserRack();
-  renderSlotsRibbon();
-}
 
+  // -------------------------------------------------------------
+  // Shift History Viewer
+  // -------------------------------------------------------------
 
-// -------------------------------------------------------------
-// Shift History Viewer
-// -------------------------------------------------------------
+  function openHistoryModal(filter = 'all') {
+    if (!historyTableBody) return;
+    historyTableBody.innerHTML = '';
 
-function openHistoryModal(filter = 'all') {
-  if (!historyTableBody) return;
-  historyTableBody.innerHTML = '';
-
-  const now = new Date();
-  const isToday = (dateStr) => {
-    if (!dateStr) return false;
-    const d = new Date(dateStr);
-    return d.getFullYear() === now.getFullYear() &&
-      d.getMonth() === now.getMonth() &&
-      d.getDate() === now.getDate();
-  };
-
-  const isThisWeek = (dateStr) => {
-    if (!dateStr) return false;
-    const d = new Date(dateStr);
-    const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    return d >= oneWeekAgo && d <= now;
-  };
-
-  const isThisMonth = (dateStr) => {
-    if (!dateStr) return false;
-    const d = new Date(dateStr);
-    return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
-  };
-
-  // Setup filter button active states and click handlers
-  document.querySelectorAll('.history-filter-btn').forEach(btn => {
-    const f = btn.getAttribute('data-filter');
-    btn.classList.toggle('active', f === filter);
-    btn.onclick = () => {
-      sfx.keypad();
-      openHistoryModal(f);
+    const now = new Date();
+    const isToday = (dateStr) => {
+      if (!dateStr) return false;
+      const d = new Date(dateStr);
+      return d.getFullYear() === now.getFullYear() &&
+        d.getMonth() === now.getMonth() &&
+        d.getDate() === now.getDate();
     };
-  });
 
-  let list = state.shiftHistory || [];
-  if (filter === 'today') {
-    list = list.filter(h => isToday(h.endedAt || h.startedAt));
-  } else if (filter === 'week') {
-    list = list.filter(h => isThisWeek(h.endedAt || h.startedAt));
-  } else if (filter === 'month') {
-    list = list.filter(h => isThisMonth(h.endedAt || h.startedAt));
-  }
+    const isThisWeek = (dateStr) => {
+      if (!dateStr) return false;
+      const d = new Date(dateStr);
+      const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      return d >= oneWeekAgo && d <= now;
+    };
 
-  const isDailyMode = state.settings?.operationMode !== 'SHIFTS';
+    const isThisMonth = (dateStr) => {
+      if (!dateStr) return false;
+      const d = new Date(dateStr);
+      return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+    };
 
-  const histTitleText = document.getElementById('historyModalTitleText');
-  if (histTitleText) histTitleText.textContent = isDailyMode ? 'Past Days Audit History' : 'Past Shifts Audit History';
+    // Setup filter button active states and click handlers
+    document.querySelectorAll('.history-filter-btn').forEach(btn => {
+      const f = btn.getAttribute('data-filter');
+      btn.classList.toggle('active', f === filter);
+      btn.onclick = () => {
+        sfx.keypad();
+        openHistoryModal(f);
+      };
+    });
 
-  const histCol1Header = document.getElementById('historyCol1Header');
-  if (histCol1Header) histCol1Header.textContent = isDailyMode ? 'Day' : 'Shift';
+    let list = state.shiftHistory || [];
+    if (filter === 'today') {
+      list = list.filter(h => isToday(h.endedAt || h.startedAt));
+    } else if (filter === 'week') {
+      list = list.filter(h => isThisWeek(h.endedAt || h.startedAt));
+    } else if (filter === 'month') {
+      list = list.filter(h => isThisMonth(h.endedAt || h.startedAt));
+    }
 
-  const histBtnFilterAll = document.getElementById('historyBtnFilterAll');
-  if (histBtnFilterAll) histBtnFilterAll.textContent = isDailyMode ? 'All Days' : 'All Shifts';
+    const isDailyMode = state.settings?.operationMode !== 'SHIFTS';
 
-  const historyTotalBadge = document.getElementById('historyTotalBadge');
-  if (historyTotalBadge) {
-    historyTotalBadge.textContent = isDailyMode
-      ? `${list.length} Day${list.length === 1 ? '' : 's'}`
-      : `${list.length} Shift${list.length === 1 ? '' : 's'}`;
-  }
+    const histTitleText = document.getElementById('historyModalTitleText');
+    if (histTitleText) histTitleText.textContent = isDailyMode ? 'Past Days Audit History' : 'Past Shifts Audit History';
 
-  if (list.length === 0) {
-    const row = document.createElement('tr');
-    row.innerHTML = `<td colspan="7" style="text-align:center; padding:28px 14px; color:var(--text-muted); font-style:italic;">No ${isDailyMode ? 'daily records' : 'shifts'} recorded for ${filter === 'today' ? 'today' : filter === 'week' ? 'this week' : filter === 'month' ? 'this month' : 'this period'}.</td>`;
-    historyTableBody.appendChild(row);
-  } else {
-    list.forEach(h => {
-      const dateObj = h.endedAt ? new Date(h.endedAt) : (h.startedAt ? new Date(h.startedAt) : null);
-      const dateFormatted = dateObj && !isNaN(dateObj.getTime())
-        ? `${dateObj.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: '2-digit' })} ${dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
-        : '--';
+    const histCol1Header = document.getElementById('historyCol1Header');
+    if (histCol1Header) histCol1Header.textContent = isDailyMode ? 'Day' : 'Shift';
 
-      const labelText = isDailyMode || h.isDayClose
-        ? `Day (${dateFormatted.split(' ')[0]})`
-        : `Shift #${h.shiftNumber}`;
+    const histBtnFilterAll = document.getElementById('historyBtnFilterAll');
+    if (histBtnFilterAll) histBtnFilterAll.textContent = isDailyMode ? 'All Days' : 'All Shifts';
 
+    const historyTotalBadge = document.getElementById('historyTotalBadge');
+    if (historyTotalBadge) {
+      historyTotalBadge.textContent = isDailyMode
+        ? `${list.length} Day${list.length === 1 ? '' : 's'}`
+        : `${list.length} Shift${list.length === 1 ? '' : 's'}`;
+    }
+
+    if (list.length === 0) {
       const row = document.createElement('tr');
-      const actCount = h.activationsCount || 0;
-      row.innerHTML = `
+      row.innerHTML = `<td colspan="7" style="text-align:center; padding:28px 14px; color:var(--text-muted); font-style:italic;">No ${isDailyMode ? 'daily records' : 'shifts'} recorded for ${filter === 'today' ? 'today' : filter === 'week' ? 'this week' : filter === 'month' ? 'this month' : 'this period'}.</td>`;
+      historyTableBody.appendChild(row);
+    } else {
+      list.forEach(h => {
+        const dateObj = h.endedAt ? new Date(h.endedAt) : (h.startedAt ? new Date(h.startedAt) : null);
+        const dateFormatted = dateObj && !isNaN(dateObj.getTime())
+          ? `${dateObj.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: '2-digit' })} ${dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+          : '--';
+
+        const labelText = isDailyMode || h.isDayClose
+          ? `Day (${dateFormatted.split(' ')[0]})`
+          : `Shift #${h.shiftNumber}`;
+
+        const row = document.createElement('tr');
+        const actCount = h.activationsCount || 0;
+        row.innerHTML = `
         <td>
           <span class="history-shift-badge">
             ${labelText}
@@ -12588,70 +13303,70 @@ function openHistoryModal(filter = 'all') {
           </button>
         </td>
       `;
-      row.querySelector('.btn-history-view')?.addEventListener('click', () => {
-        openPastShiftReportModal(h);
+        row.querySelector('.btn-history-view')?.addEventListener('click', () => {
+          openPastShiftReportModal(h);
+        });
+        historyTableBody.appendChild(row);
       });
-      historyTableBody.appendChild(row);
-    });
-  }
-  sfx.keypad();
-  historyModal.showModal();
-}
-
-function openPastShiftReportModal(h) {
-  if (!shiftReportModal || !h) return;
-  historyModal?.close();
-  voice.speakReport();
-
-  const isDailyMode = state.settings?.operationMode !== 'SHIFTS';
-
-  const shiftModalTitle = document.getElementById('shiftReportModalTitle');
-  if (shiftModalTitle) shiftModalTitle.textContent = isDailyMode ? 'Day settlement' : `Shift #${h.shiftNumber || 1} settlement`;
-
-  const repShiftNumLabel = document.getElementById('repShiftNumLabel');
-  if (repShiftNumLabel) repShiftNumLabel.textContent = isDailyMode ? 'DAY' : `SHIFT #${h.shiftNumber || 1}`;
-
-  const dateObj = h.endedAt ? new Date(h.endedAt) : (h.startedAt ? new Date(h.startedAt) : new Date());
-  const dateStr = dateObj.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' });
-  const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  const formattedDate = `${monthNames[dateObj.getMonth()]} ${dateObj.getDate()}, ${dateObj.getFullYear()}`;
-  const repShiftNumDate = document.getElementById('repShiftNumDate');
-  if (repShiftNumDate) repShiftNumDate.textContent = formattedDate;
-
-  repShiftNum.innerHTML = isDailyMode
-    ? `${dateStr} <span class="audit-history-badge">HISTORY</span>`
-    : `#${h.shiftNumber} <span class="audit-history-badge">HISTORY</span>`;
-
-  repCashier.textContent = h.cashier || 'Clerk';
-
-  const repTotalSalesLabel = document.getElementById('repTotalSalesLabel');
-  if (repTotalSalesLabel) repTotalSalesLabel.textContent = isDailyMode ? 'TOTAL LOTTO DAY SALES' : 'TOTAL LOTTO SHIFT SALES';
-
-  const reportNewShiftBtn = document.getElementById('reportNewShiftBtn');
-  if (reportNewShiftBtn) {
-    const span = reportNewShiftBtn.querySelector('span');
-    if (span) {
-      span.textContent = isDailyMode ? 'End day' : 'End shift';
     }
+    sfx.keypad();
+    historyModal.showModal();
   }
 
-  reportBodyRows.innerHTML = '';
+  function openPastShiftReportModal(h) {
+    if (!shiftReportModal || !h) return;
+    historyModal?.close();
+    voice.speakReport();
 
-  const rows = buildShiftReportRows(h.slotsSnapshot || [], h.soldOutSnapshot || []);
-  let totalSold = 0;
-  let totalRevenue = 0;
+    const isDailyMode = state.settings?.operationMode !== 'SHIFTS';
 
-  rows.forEach(item => {
-    totalSold += item.sold;
-    totalRevenue += item.amount;
+    const shiftModalTitle = document.getElementById('shiftReportModalTitle');
+    if (shiftModalTitle) shiftModalTitle.textContent = isDailyMode ? 'Day settlement' : `Shift #${h.shiftNumber || 1} settlement`;
 
-    const row = document.createElement('tr');
-    row.className = 'report-row';
-    let tagHtml = '';
-    if (item.statusTag) {
-      tagHtml = `<span class="settle-sold-out-badge">${item.statusTag === 'SOLD OUT' ? 'Sold out' : item.statusTag}</span>`;
+    const repShiftNumLabel = document.getElementById('repShiftNumLabel');
+    if (repShiftNumLabel) repShiftNumLabel.textContent = isDailyMode ? 'DAY' : `SHIFT #${h.shiftNumber || 1}`;
+
+    const dateObj = h.endedAt ? new Date(h.endedAt) : (h.startedAt ? new Date(h.startedAt) : new Date());
+    const dateStr = dateObj.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' });
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const formattedDate = `${monthNames[dateObj.getMonth()]} ${dateObj.getDate()}, ${dateObj.getFullYear()}`;
+    const repShiftNumDate = document.getElementById('repShiftNumDate');
+    if (repShiftNumDate) repShiftNumDate.textContent = formattedDate;
+
+    repShiftNum.innerHTML = isDailyMode
+      ? `${dateStr} <span class="audit-history-badge">HISTORY</span>`
+      : `#${h.shiftNumber} <span class="audit-history-badge">HISTORY</span>`;
+
+    repCashier.textContent = h.cashier || 'Clerk';
+
+    const repTotalSalesLabel = document.getElementById('repTotalSalesLabel');
+    if (repTotalSalesLabel) repTotalSalesLabel.textContent = isDailyMode ? 'TOTAL LOTTO DAY SALES' : 'TOTAL LOTTO SHIFT SALES';
+
+    const reportNewShiftBtn = document.getElementById('reportNewShiftBtn');
+    if (reportNewShiftBtn) {
+      const span = reportNewShiftBtn.querySelector('span');
+      if (span) {
+        span.textContent = isDailyMode ? 'End day' : 'End shift';
+      }
     }
-    row.innerHTML = `
+
+    reportBodyRows.innerHTML = '';
+
+    const rows = buildShiftReportRows(h.slotsSnapshot || [], h.soldOutSnapshot || []);
+    let totalSold = 0;
+    let totalRevenue = 0;
+
+    rows.forEach(item => {
+      totalSold += item.sold;
+      totalRevenue += item.amount;
+
+      const row = document.createElement('tr');
+      row.className = 'report-row';
+      let tagHtml = '';
+      if (item.statusTag) {
+        tagHtml = `<span class="settle-sold-out-badge">${item.statusTag === 'SOLD OUT' ? 'Sold out' : item.statusTag}</span>`;
+      }
+      row.innerHTML = `
       <td class="col-box"><span class="settle-box-badge">${item.boxNumber}</span></td>
       <td class="col-game" title="${item.gameName}">
         <span class="settle-game-name">${cleanGameTitle(item.gameName)}</span>${tagHtml}
@@ -12662,314 +13377,411 @@ function openPastShiftReportModal(h) {
       <td class="col-sold"><span class="settle-sold-num ${item.sold > 0 ? 'has-sales' : 'no-sales'}">${item.sold}</span></td>
       <td class="col-amount" style="text-align: right;"><span class="settle-amt-val ${item.amount > 0 ? 'has-sales' : 'no-sales'}">$${item.amount.toFixed(2)}</span></td>
     `;
-    reportBodyRows.appendChild(row);
-  });
+      reportBodyRows.appendChild(row);
+    });
 
-  if (rows.length === 0) {
-    if ((h.totalTicketsSold || 0) > 0 || (h.totalSalesRevenue || 0) > 0) {
-      totalSold = h.totalTicketsSold || 0;
-      totalRevenue = h.totalSalesRevenue || 0;
-      const row = document.createElement('tr');
-      row.innerHTML = `<td colspan="7" style="text-align:center; padding:20px; color:#94a3b8; font-style:italic;">
+    if (rows.length === 0) {
+      if ((h.totalTicketsSold || 0) > 0 || (h.totalSalesRevenue || 0) > 0) {
+        totalSold = h.totalTicketsSold || 0;
+        totalRevenue = h.totalSalesRevenue || 0;
+        const row = document.createElement('tr');
+        row.innerHTML = `<td colspan="7" style="text-align:center; padding:20px; color:#94a3b8; font-style:italic;">
         Historical ${isDailyMode ? 'Day' : 'Shift'} #${h.shiftNumber} &bull; Total Sold: ${totalSold} tickets &bull; Revenue: $${Number(totalRevenue).toFixed(2)}
       </td>`;
-      reportBodyRows.appendChild(row);
-    } else {
-      const emptyRow = document.createElement('tr');
-      emptyRow.innerHTML = `<td colspan="7" style="text-align:center; padding:24px 14px; color:#94a3b8; font-style:italic; font-family:inherit; font-size:0.88rem;">
+        reportBodyRows.appendChild(row);
+      } else {
+        const emptyRow = document.createElement('tr');
+        emptyRow.innerHTML = `<td colspan="7" style="text-align:center; padding:24px 14px; color:#94a3b8; font-style:italic; font-family:inherit; font-size:0.88rem;">
         🎟️ No ticket sales recorded ${isDailyMode ? 'on this day' : 'in this shift'}.
       </td>`;
-      reportBodyRows.appendChild(emptyRow);
-    }
-  } else {
-    // If calculated totals are higher than historical summary (due to auto-restored sold-out packs), use calculated totals
-    totalSold = Math.max(totalSold, h.totalTicketsSold || 0);
-    totalRevenue = Math.max(totalRevenue, h.totalSalesRevenue || 0);
-  }
-
-  repTicketsSold.textContent = totalSold;
-  repTotalRevenue.textContent = `$${Number(totalRevenue).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  repSumSold.textContent = totalSold;
-  repSumAmount.textContent = `$${Number(totalRevenue).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-
-  // Populate cash reconciliation from historical data
-  const recLottoSales = document.getElementById('recLottoSales');
-  const inputShiftPayouts = document.getElementById('inputShiftPayouts');
-  const inputDrawerFloat = document.getElementById('inputDrawerFloat');
-  const recExpectedCash = document.getElementById('recExpectedCash');
-  const recPayoutNote = document.getElementById('recPayoutNote');
-  const inputActualCash = document.getElementById('inputActualCashCounted');
-  const repDrawerBalance = document.getElementById('repDrawerBalance');
-
-  const histPayouts = Number(h.cashes || 0);
-  const histFloat = Number(h.drawerFloat || 0);
-  const netCash = totalRevenue - histPayouts;
-  const expectedCash = histFloat + netCash;
-
-  if (recLottoSales) recLottoSales.textContent = `$${totalRevenue.toFixed(2)}`;
-  if (inputShiftPayouts) inputShiftPayouts.value = histPayouts.toFixed(2);
-  if (inputDrawerFloat) inputDrawerFloat.value = histFloat.toFixed(2);
-  if (recExpectedCash) {
-    recExpectedCash.textContent = expectedCash < 0 ? `-$${Math.abs(expectedCash).toFixed(2)}` : `$${expectedCash.toFixed(2)}`;
-    recExpectedCash.style.color = expectedCash < 0 ? '#ef4444' : 'var(--text-primary)';
-  }
-  if (recPayoutNote) {
-    recPayoutNote.style.display = (histPayouts > totalRevenue && histFloat === 0) ? 'block' : 'none';
-  }
-  if (inputActualCash) inputActualCash.value = '';
-  if (repDrawerBalance) {
-    repDrawerBalance.textContent = 'Enter Counted Cash';
-    repDrawerBalance.className = 'drawer-balance-pill status-pending';
-  }
-
-  // Populate print slip
-  const prReceiptTitle = document.getElementById('prReceiptTitle');
-  if (prReceiptTitle) prReceiptTitle.textContent = isDailyMode ? 'DAY SETTLEMENT AUDIT' : 'SHIFT SETTLEMENT AUDIT';
-  const prShiftLabel = document.getElementById('prShiftLabel');
-  if (prShiftLabel) prShiftLabel.textContent = isDailyMode ? 'DAY: ' : 'SHIFT: ';
-  const prDateEl = document.getElementById('prDate');
-  if (prDateEl) prDateEl.textContent = dateStr;
-  const prTimeEl = document.getElementById('prTime');
-  if (prTimeEl) prTimeEl.textContent = dateObj.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
-  const prShiftEl = document.getElementById('prShift');
-  if (prShiftEl) prShiftEl.textContent = isDailyMode ? `${dateStr} (${h.cashier || 'Clerk'}) [AUDIT]` : `#${h.shiftNumber} (${h.cashier || 'Clerk'}) [AUDIT]`;
-  const prTotalSalesEl = document.getElementById('prTotalSales');
-  if (prTotalSalesEl) prTotalSalesEl.textContent = `$${Number(totalRevenue).toFixed(2)}`;
-  const prTotalTicketsEl = document.getElementById('prTotalTickets');
-  if (prTotalTicketsEl) prTotalTicketsEl.textContent = totalSold;
-
-  const prActivationLabel = document.getElementById('prActivationLabel');
-  if (prActivationLabel) prActivationLabel.textContent = isDailyMode ? 'DAY ACTIVATIONS:' : 'SHIFT ACTIVATIONS:';
-  const prActivationCount = document.getElementById('prActivationCount');
-  if (prActivationCount) prActivationCount.textContent = h.activationsCount || 0;
-
-  const prBarcodeCodeEl = document.getElementById('prBarcodeCode');
-  if (prBarcodeCodeEl) prBarcodeCodeEl.textContent = isDailyMode ? `*DAY-402-${String(h.shiftNumber).padStart(4, '0')}-REC*` : `*SHFT-402-${String(h.shiftNumber).padStart(4, '0')}-REC*`;
-
-  // Populate thermal print items
-  const prList = document.getElementById('prItemsList');
-  if (prList) {
-    prList.innerHTML = '';
-    const activeSlotsWithSales = (rows || []).filter(r => r.sold > 0);
-    if (activeSlotsWithSales.length === 0) {
-      const emptyRow = document.createElement('div');
-      emptyRow.className = 'receipt-row';
-      emptyRow.style.cssText = 'text-align:center; padding:4px 0; color:#444; font-style:italic; display:block !important; font-size:9.5px;';
-      emptyRow.textContent = isDailyMode ? '-- NO LOTTERY SALES RECORDED ON THIS DAY --' : '-- NO LOTTERY SALES RECORDED IN THIS SHIFT --';
-      prList.appendChild(emptyRow);
+        reportBodyRows.appendChild(emptyRow);
+      }
     } else {
-      activeSlotsWithSales.forEach(s => {
-        const row = document.createElement('div');
-        row.className = 'receipt-row has-sales';
-        const boxStr = `#${String(s.boxNumber).padStart(2, '0')}`;
-        let cleanName = (s.gameName || 'SCRATCH').trim();
-        if (cleanName.length > 13) cleanName = cleanName.substring(0, 13);
-        row.innerHTML = `
+      // If calculated totals are higher than historical summary (due to auto-restored sold-out packs), use calculated totals
+      totalSold = Math.max(totalSold, h.totalTicketsSold || 0);
+      totalRevenue = Math.max(totalRevenue, h.totalSalesRevenue || 0);
+    }
+
+    repTicketsSold.textContent = totalSold;
+    repTotalRevenue.textContent = `$${Number(totalRevenue).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    repSumSold.textContent = totalSold;
+    repSumAmount.textContent = `$${Number(totalRevenue).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+    // Populate cash reconciliation from historical data
+    const recLottoSales = document.getElementById('recLottoSales');
+    const inputShiftPayouts = document.getElementById('inputShiftPayouts');
+    const inputDrawerFloat = document.getElementById('inputDrawerFloat');
+    const recExpectedCash = document.getElementById('recExpectedCash');
+    const recPayoutNote = document.getElementById('recPayoutNote');
+    const inputActualCash = document.getElementById('inputActualCashCounted');
+    const repDrawerBalance = document.getElementById('repDrawerBalance');
+
+    const histPayouts = Number(h.cashes || 0);
+    const histFloat = Number(h.drawerFloat || 0);
+    const netCash = totalRevenue - histPayouts;
+    const expectedCash = histFloat + netCash;
+
+    if (recLottoSales) recLottoSales.textContent = `$${totalRevenue.toFixed(2)}`;
+    if (inputShiftPayouts) inputShiftPayouts.value = histPayouts.toFixed(2);
+    if (inputDrawerFloat) inputDrawerFloat.value = histFloat.toFixed(2);
+    if (recExpectedCash) {
+      recExpectedCash.textContent = expectedCash < 0 ? `-$${Math.abs(expectedCash).toFixed(2)}` : `$${expectedCash.toFixed(2)}`;
+      recExpectedCash.style.color = expectedCash < 0 ? '#ef4444' : 'var(--text-primary)';
+    }
+    if (recPayoutNote) {
+      recPayoutNote.style.display = (histPayouts > totalRevenue && histFloat === 0) ? 'block' : 'none';
+    }
+    if (inputActualCash) inputActualCash.value = '';
+    if (repDrawerBalance) {
+      repDrawerBalance.textContent = 'Enter Counted Cash';
+      repDrawerBalance.className = 'drawer-balance-pill status-pending';
+    }
+
+    // Populate print slip
+    const prReceiptTitle = document.getElementById('prReceiptTitle');
+    if (prReceiptTitle) prReceiptTitle.textContent = isDailyMode ? 'DAY SETTLEMENT AUDIT' : 'SHIFT SETTLEMENT AUDIT';
+    const prShiftLabel = document.getElementById('prShiftLabel');
+    if (prShiftLabel) prShiftLabel.textContent = isDailyMode ? 'DAY: ' : 'SHIFT: ';
+    const prDateEl = document.getElementById('prDate');
+    if (prDateEl) prDateEl.textContent = dateStr;
+    const prTimeEl = document.getElementById('prTime');
+    if (prTimeEl) prTimeEl.textContent = dateObj.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+    const prShiftEl = document.getElementById('prShift');
+    if (prShiftEl) prShiftEl.textContent = isDailyMode ? `${dateStr} (${h.cashier || 'Clerk'}) [AUDIT]` : `#${h.shiftNumber} (${h.cashier || 'Clerk'}) [AUDIT]`;
+    const prTotalSalesEl = document.getElementById('prTotalSales');
+    if (prTotalSalesEl) prTotalSalesEl.textContent = `$${Number(totalRevenue).toFixed(2)}`;
+    const prTotalTicketsEl = document.getElementById('prTotalTickets');
+    if (prTotalTicketsEl) prTotalTicketsEl.textContent = totalSold;
+
+    const prActivationLabel = document.getElementById('prActivationLabel');
+    if (prActivationLabel) prActivationLabel.textContent = isDailyMode ? 'DAY ACTIVATIONS:' : 'SHIFT ACTIVATIONS:';
+    const prActivationCount = document.getElementById('prActivationCount');
+    if (prActivationCount) prActivationCount.textContent = h.activationsCount || 0;
+
+    const prBarcodeCodeEl = document.getElementById('prBarcodeCode');
+    if (prBarcodeCodeEl) prBarcodeCodeEl.textContent = isDailyMode ? `*DAY-402-${String(h.shiftNumber).padStart(4, '0')}-REC*` : `*SHFT-402-${String(h.shiftNumber).padStart(4, '0')}-REC*`;
+
+    // Populate thermal print items
+    const prList = document.getElementById('prItemsList');
+    if (prList) {
+      prList.innerHTML = '';
+      const activeSlotsWithSales = (rows || []).filter(r => r.sold > 0);
+      if (activeSlotsWithSales.length === 0) {
+        const emptyRow = document.createElement('div');
+        emptyRow.className = 'receipt-row';
+        emptyRow.style.cssText = 'text-align:center; padding:4px 0; color:#444; font-style:italic; display:block !important; font-size:9.5px;';
+        emptyRow.textContent = isDailyMode ? '-- NO LOTTERY SALES RECORDED ON THIS DAY --' : '-- NO LOTTERY SALES RECORDED IN THIS SHIFT --';
+        prList.appendChild(emptyRow);
+      } else {
+        activeSlotsWithSales.forEach(s => {
+          const row = document.createElement('div');
+          row.className = 'receipt-row has-sales';
+          const boxStr = `#${String(s.boxNumber).padStart(2, '0')}`;
+          let cleanName = (s.gameName || 'SCRATCH').trim();
+          if (cleanName.length > 13) cleanName = cleanName.substring(0, 13);
+          row.innerHTML = `
           <span class="col-box">${boxStr}</span>
           <span class="col-game">${cleanName}</span>
           <span class="col-qty">${s.sold}x</span>
           <span class="col-amt">$${Number(s.amount || 0).toFixed(2)}</span>
         `;
-        prList.appendChild(row);
-      });
+          prList.appendChild(row);
+        });
+      }
     }
+
+    sfx.chime();
+    shiftReportModal.showModal();
+    showToast(`Viewing Audit Report for ${isDailyMode ? `Day ${dateStr}` : `Shift #${h.shiftNumber}`}`, 'info');
   }
 
-  sfx.chime();
-  shiftReportModal.showModal();
-  showToast(`Viewing Audit Report for ${isDailyMode ? `Day ${dateStr}` : `Shift #${h.shiftNumber}`}`, 'info');
-}
+  // -------------------------------------------------------------
+  // Toast Messages & Dedicated Upper-Right Message Hub
+  // -------------------------------------------------------------
 
-// -------------------------------------------------------------
-// Toast Messages & Dedicated Upper-Right Message Hub
-// -------------------------------------------------------------
+  let activeGetReportNotice = null;
+  let getReportPanelTimer = null;
 
-export function displayUpperRightMessage(message, type = 'info') {
-  const container = document.getElementById('lastScanReadoutContainer');
-  const titleEl = document.getElementById('scanActionTitle');
-  const displayEl = document.getElementById('lastScanDisplay');
-  const badgeEl = document.getElementById('largeStatReadout');
-  if (!container || !titleEl) return;
+  export function showGetReportPanelMessage(message, type = 'info', detailText = null) {
+    const container = document.getElementById('lastScanReadoutContainer');
+    const titleEl = document.getElementById('scanActionTitle');
+    const displayEl = document.getElementById('lastScanDisplay');
+    const badgeEl = document.getElementById('largeStatReadout');
+    const microLabel = document.querySelector('.last-scan-micro-label');
+    if (!container || !titleEl) return;
 
-  // Clean raw icon symbols or prefixes
-  const cleanMsg = String(message || '')
-    .replace(/^[\s✓✔⚠ℹ🚨📦🏷️🔄❌]+/, '')
-    .trim();
+    // Clean raw icon symbols or prefixes
+    const cleanMsg = String(message || '')
+      .replace(/^[\s✓✔⚠ℹ🚨📦🏷️🔄❌]+/, '')
+      .trim();
 
-  let mainTitle = cleanMsg;
-  let subDetail = '';
+    let mainTitle = cleanMsg;
+    let subDetail = detailText || '';
 
-  // Split on exclamation mark, period, colon, or bullet if present for clean 2-line layout
-  const splitMatch = cleanMsg.match(/^([^!.:·\n]+[!.:·])\s*(.*)$/);
-  if (splitMatch) {
-    mainTitle = splitMatch[1].trim();
-    subDetail = splitMatch[2].trim();
-  }
+    // If no explicit detailText, attempt clean split on punctuation if message has 2 sentences
+    if (!subDetail) {
+      const splitMatch = cleanMsg.match(/^([^!.:·\n]+[!.:·])\s*(.+)$/);
+      if (splitMatch) {
+        mainTitle = splitMatch[1].trim();
+        subDetail = splitMatch[2].trim();
+      }
+    }
 
-  titleEl.textContent = mainTitle;
-  if (displayEl) {
-    displayEl.textContent = subDetail || (type === 'error' ? 'Attention required' : 'System status');
-  }
+    const activeCount = (state.slots || []).filter(isBoxActive).length;
+    const verifiedCount = (state.slots || []).filter(s => isBoxActive(s) && s.scannedInEndShift).length;
 
-  if (badgeEl) {
-    if (type === 'error') {
-      badgeEl.textContent = '!';
-      badgeEl.style.color = '#dc2626';
-    } else if (type === 'success') {
-      badgeEl.textContent = '✓';
-      badgeEl.style.color = '#059669';
+    activeGetReportNotice = {
+      message: mainTitle,
+      detail: subDetail,
+      type,
+      timestamp: Date.now()
+    };
+
+    // Reset any previous alert classes
+    container.classList.remove('card-msg-success', 'card-msg-error', 'card-msg-warning', 'card-msg-info', 'alert-yellow');
+
+    if (type === 'success') {
+      container.classList.add('card-msg-success');
+      if (badgeEl) {
+        badgeEl.textContent = `${verifiedCount}/${activeCount}`;
+        badgeEl.style.color = '#16a34a';
+      }
+    } else if (type === 'error') {
+      container.classList.add('card-msg-error');
+      if (badgeEl) {
+        badgeEl.textContent = '!';
+        badgeEl.style.color = '#dc2626';
+      }
+    } else if (type === 'warning') {
+      container.classList.add('card-msg-warning');
+      if (badgeEl) {
+        badgeEl.textContent = `${verifiedCount}/${activeCount}`;
+        badgeEl.style.color = '#d97706';
+      }
     } else {
-      badgeEl.textContent = 'ℹ';
-      badgeEl.style.color = '#2563eb';
+      container.classList.add('card-msg-info');
+      if (badgeEl) {
+        badgeEl.textContent = `${verifiedCount}/${activeCount}`;
+        badgeEl.style.color = '#2563eb';
+      }
     }
-  }
 
-  if (type === 'error' || type === 'warning') {
-    container.classList.add('alert-yellow');
-  } else {
-    container.classList.remove('alert-yellow');
-  }
-
-  clearTimeout(scanAlertTimeout);
-  scanAlertTimeout = setTimeout(() => {
-    if (badgeEl) badgeEl.style.color = '';
-    container.classList.remove('alert-yellow');
-    renderHeaderAndMetrics();
-  }, 6000);
-}
-window.displayUpperRightMessage = displayUpperRightMessage;
-
-function showToast(message, type = 'info') {
-  // If an active modal dialog is open, show toast inside the dialog
-  // so the browser's top-layer backdrop never obscures it in the background!
-  const openModal = document.querySelector('dialog[open]');
-  if (openModal) {
-    let modalToastContainer = openModal.querySelector('.modal-toast-container');
-    if (!modalToastContainer) {
-      modalToastContainer = document.createElement('div');
-      modalToastContainer.className = 'modal-toast-container';
-      openModal.appendChild(modalToastContainer);
+    const shiftNumStr = String(state.shiftNumber || 1);
+    if (microLabel) {
+      microLabel.textContent = `SHIFT #${shiftNumStr}`;
     }
+
+    titleEl.textContent = mainTitle;
+    if (displayEl) {
+      displayEl.textContent = subDetail || (type === 'error' ? 'Attention required' : (state.lastScanData?.boxNumber ? `Box ${state.lastScanData.boxNumber}` : 'End Shift Scan'));
+    }
+
+    clearTimeout(getReportPanelTimer);
+    getReportPanelTimer = setTimeout(() => {
+      activeGetReportNotice = null;
+      container.classList.remove('card-msg-success', 'card-msg-error', 'card-msg-warning', 'card-msg-info', 'alert-yellow');
+      if (badgeEl) badgeEl.style.color = '';
+      renderHeaderAndMetrics();
+    }, 4500);
+  }
+  window.showGetReportPanelMessage = showGetReportPanelMessage;
+
+  export function displayUpperRightMessage(message, type = 'info') {
+    const container = document.getElementById('lastScanReadoutContainer');
+    const titleEl = document.getElementById('scanActionTitle');
+    const displayEl = document.getElementById('lastScanDisplay');
+    const badgeEl = document.getElementById('largeStatReadout');
+    if (!container || !titleEl) return;
+
+    // Clean raw icon symbols or prefixes
+    const cleanMsg = String(message || '')
+      .replace(/^[\s✓✔⚠ℹ🚨📦🏷️🔄❌]+/, '')
+      .trim();
+
+    let mainTitle = cleanMsg;
+    let subDetail = '';
+
+    if (/already\s*scanned/i.test(cleanMsg)) {
+      mainTitle = 'Already Scanned';
+      subDetail = cleanMsg.replace(/^Already\s*Scanned[:\s-]*/i, '').trim();
+    } else {
+      // Split on exclamation mark, period, colon, or bullet if present for clean 2-line layout
+      const splitMatch = cleanMsg.match(/^([^!.:·\n]+[!.:·])\s*(.*)$/);
+      if (splitMatch) {
+        mainTitle = splitMatch[1].trim();
+        subDetail = splitMatch[2].trim();
+      }
+    }
+
+    titleEl.textContent = mainTitle;
+    if (displayEl) {
+      displayEl.textContent = subDetail || (type === 'error' ? 'Attention required' : 'System status');
+    }
+
+    if (badgeEl) {
+      if (type === 'error') {
+        badgeEl.textContent = '!';
+        badgeEl.style.color = '#dc2626';
+      } else if (type === 'success') {
+        badgeEl.textContent = '✓';
+        badgeEl.style.color = '#059669';
+      } else {
+        badgeEl.textContent = 'ℹ';
+        badgeEl.style.color = '#2563eb';
+      }
+    }
+
+    if (type === 'error' || type === 'warning') {
+      container.classList.add('alert-yellow');
+    } else {
+      container.classList.remove('alert-yellow');
+    }
+
+    clearTimeout(scanAlertTimeout);
+    scanAlertTimeout = setTimeout(() => {
+      if (badgeEl) badgeEl.style.color = '';
+      container.classList.remove('alert-yellow');
+      renderHeaderAndMetrics();
+    }, 6000);
+  }
+  window.displayUpperRightMessage = displayUpperRightMessage;
+
+  function showToast(message, type = 'info', detailText = null) {
+    window.__lastToast = message;
+    // If Get Report / End Shift scanning is active, route all notifications ONLY to the red-marked panel!
+    // Strict rule: "The existing red-marked panel is the ONLY notification destination for this Get Report screen. Do not display the same message elsewhere."
+    if (state.shiftStatus === 'SCANNING_END_SHIFT') {
+      showGetReportPanelMessage(message, type, detailText);
+      return;
+    }
+    let tc = document.getElementById('toastContainer');
+    if (!tc) {
+      tc = document.createElement('div');
+      tc.id = 'toastContainer';
+      tc.className = 'toast-container';
+      if ('popover' in HTMLElement.prototype) {
+        tc.setAttribute('popover', 'manual');
+      }
+      document.body.appendChild(tc);
+    } else if ('popover' in HTMLElement.prototype && !tc.hasAttribute('popover')) {
+      tc.setAttribute('popover', 'manual');
+    }
+
+    if (tc.showPopover) {
+      try { tc.showPopover(); } catch (_) {}
+    }
+
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
-    toast.innerHTML = `<span>${type === 'success' ? '✓' : (type === 'error' ? '⚠' : 'ℹ')}</span> <div>${message}</div>`;
-    modalToastContainer.appendChild(toast);
+    const icon = type === 'success' ? '✓' : (type === 'error' ? '⚠' : (type === 'warning' ? '⚠️' : 'ℹ'));
+    toast.innerHTML = `<span class="toast-icon">${icon}</span> <div class="toast-body">${message}</div>`;
+    tc.appendChild(toast);
 
     setTimeout(() => {
       toast.style.opacity = '0';
-      toast.style.transform = 'translateY(10px)';
+      toast.style.transform = 'translateY(-10px)';
       setTimeout(() => {
         if (typeof toast.remove === 'function') toast.remove();
         else toast.parentNode?.removeChild(toast);
+        if (tc && tc.children.length === 0 && tc.hidePopover) {
+          try { tc.hidePopover(); } catch (_) {}
+        }
       }, 300);
-    }, 3200);
-    return;
-  }
-
-  // Hidden DOM node for backwards compatibility with test query assertions
-  if (toastContainer) {
-    const hiddenToast = document.createElement('div');
-    hiddenToast.className = `toast toast-${type}`;
-    hiddenToast.style.display = 'none';
-    hiddenToast.textContent = message;
-    toastContainer.appendChild(hiddenToast);
-    setTimeout(() => {
-      hiddenToast.remove();
     }, 3500);
-  }
 
-  // Dashboard View: user explicitly requested NO bottom popup messages!
-  // "it should pass all message there only i don't want any message from below understand"
-  // Route message into the upper-right LAST SCAN box (#lastScanReadoutContainer)!
-  displayUpperRightMessage(message, type);
-}
-
-// -------------------------------------------------------------
-// System Refresh & State Synchronization
-// -------------------------------------------------------------
-
-export function refreshSystem() {
-  const badgeBox = document.getElementById('shiftBadgeBox');
-  const refreshBtn = document.getElementById('systemRefreshBtn');
-  if (badgeBox) badgeBox.classList.add('refreshing');
-  if (refreshBtn) refreshBtn.classList.add('refreshing');
-  setTimeout(() => {
-    badgeBox?.classList.remove('refreshing');
-    refreshBtn?.classList.remove('refreshing');
-  }, 780);
-
-  sfx.chime();
-
-  // Clear any active alert banners (e.g. "This Ticket was sold out in previous shift" or duplicate warnings)
-  clearScanAlertBanner();
-
-  // 1. Reload the latest persisted state
-  state = loadState();
-
-  // 2. Sanitize and migrate slots and pack numbers
-  sanitizeStatePacks(state);
-  sanitizeAndMigrateSlots();
-
-  // 3. Clear scanner input and deselect active box
-  if (barcodeInput) {
-    barcodeInput.value = '';
-    barcodeInput.focus();
-  }
-  state.lastScannedSlot = null;
-
-  // 4. Calculate current status for informative feedback
-  let activeBoxes = 0;
-  let shiftSales = 0;
-  (state.slots || []).forEach(slot => {
-    if (slot.status === 'ACTIVE') {
-      activeBoxes++;
-      const sold = Math.max(0, (slot.currentTicket || 0) - (slot.startTicket || 0));
-      shiftSales += sold * (slot.ticketPrice || 0);
+    // Also route message into the upper-right LAST SCAN box unless updating inventory live count
+    if (!(state.isUpdatingInventory && type === 'success')) {
+      displayUpperRightMessage(message, type);
     }
-  });
+  }
+  window.showToast = showToast;
 
-  // 5. Re-render all views and metrics
-  renderHeaderAndMetrics();
-  renderDispenserRack();
-  renderSlotsRibbon();
+  // -------------------------------------------------------------
+  // System Refresh & State Synchronization
+  // -------------------------------------------------------------
 
-  // 6. User feedback
-  showToast(`🔄 Shift #${state.shiftNumber} Refreshed & Synced! (${activeBoxes} Active Boxes · $${shiftSales.toFixed(2)} Sales)`, 'success');
-}
+  export function refreshSystem() {
+    const badgeBox = document.getElementById('shiftBadgeBox');
+    const refreshBtn = document.getElementById('systemRefreshBtn');
+    if (badgeBox) badgeBox.classList.add('refreshing');
+    if (refreshBtn) refreshBtn.classList.add('refreshing');
+    setTimeout(() => {
+      badgeBox?.classList.remove('refreshing');
+      refreshBtn?.classList.remove('refreshing');
+    }, 780);
 
-// -------------------------------------------------------------
-// Event Listeners Wire-up
-// -------------------------------------------------------------
+    sfx.chime();
 
-function setupEventListeners() {
-  if (_setupEventListenersDone) return;
-  _setupEventListenersDone = true;
+    // Clear any active alert banners (e.g. "This Ticket was sold out in previous shift" or duplicate warnings)
+    clearScanAlertBanner();
 
-  // Shared view state variables (declared at top to prevent TDZ ReferenceErrors on refresh)
-  let hasSyncedHistory = false;
-  let currentReceivePackPrice = 10;
-  let stagedDeliveryPacks = [];
-  let currentInventoryTab = 'in_stock';
-  let selectedHistoryDayId = 'day_14';
-  let selectedHandoverCashier = 'Carlos';
-  let currentSettingsTab = 'store_email';
-  let currentDailyReportDate = 'Today';
-  let currentRecordingMovement = 'Received from Lottery';
-  let selectedPersonForPinReset = null;
+    // 1. Reload the latest persisted state
+    state = loadState();
 
-  // MySQL Database Status & Diagnostics Wiring
-  const mysqlStatusBadge = document.getElementById('mysqlStatusBadge');
-  const mysqlStatusText = document.getElementById('mysqlStatusText');
-  const mysqlStatusModal = document.getElementById('mysqlStatusModal');
-  const closeMysqlModalBtn = document.getElementById('closeMysqlModalBtn');
-  const btnOkMysqlModal = document.getElementById('btnOkMysqlModal');
-  const btnTestMysqlConn = document.getElementById('btnTestMysqlConn');
-  const mysqlModalContent = document.getElementById('mysqlModalContent');
+    // 2. Sanitize and migrate slots and pack numbers
+    sanitizeStatePacks(state);
+    sanitizeAndMigrateSlots();
 
-  function updateMysqlModalUI(connected, info) {
-    if (!mysqlModalContent) return;
-    if (connected) {
-      mysqlModalContent.innerHTML = `
+    // 3. Clear scanner input and deselect active box
+    if (barcodeInput) {
+      barcodeInput.value = '';
+      barcodeInput.focus();
+    }
+    state.lastScannedSlot = null;
+
+    // 4. Calculate current status for informative feedback
+    let activeBoxes = 0;
+    let shiftSales = 0;
+    (state.slots || []).forEach(slot => {
+      if (slot.status === 'ACTIVE') {
+        activeBoxes++;
+        const sold = Math.max(0, (slot.currentTicket || 0) - (slot.startTicket || 0));
+        shiftSales += sold * (slot.ticketPrice || 0);
+      }
+    });
+
+    // 5. Re-render all views and metrics
+    renderHeaderAndMetrics();
+    renderDispenserRack();
+    renderSlotsRibbon();
+
+    // 6. User feedback
+    showToast(`🔄 Shift #${state.shiftNumber} Refreshed & Synced! (${activeBoxes} Active Boxes · $${shiftSales.toFixed(2)} Sales)`, 'success');
+  }
+
+  // -------------------------------------------------------------
+  // Event Listeners Wire-up
+  // -------------------------------------------------------------
+
+  function setupEventListeners() {
+    if (_setupEventListenersDone) return;
+    _setupEventListenersDone = true;
+
+    // Shared view state variables (declared at top to prevent TDZ ReferenceErrors on refresh)
+    let hasSyncedHistory = false;
+    let currentReceivePackPrice = 10;
+    let stagedDeliveryPacks = [];
+    currentInventoryTab = 'in_stock';
+    let selectedHistoryDayId = 'day_14';
+    let selectedHandoverCashier = '';
+    let currentSettingsTab = 'store_email';
+    let currentDailyReportDate = 'Today';
+    let currentRecordingMovement = 'Received from Lottery';
+    let selectedPersonForPinReset = null;
+
+    // MySQL Database Status & Diagnostics Wiring
+    const mysqlStatusBadge = document.getElementById('mysqlStatusBadge');
+    const mysqlStatusText = document.getElementById('mysqlStatusText');
+    const mysqlStatusModal = document.getElementById('mysqlStatusModal');
+    const closeMysqlModalBtn = document.getElementById('closeMysqlModalBtn');
+    const btnOkMysqlModal = document.getElementById('btnOkMysqlModal');
+    const btnTestMysqlConn = document.getElementById('btnTestMysqlConn');
+    const mysqlModalContent = document.getElementById('mysqlModalContent');
+
+    function updateMysqlModalUI(connected, info) {
+      if (!mysqlModalContent) return;
+      if (connected) {
+        mysqlModalContent.innerHTML = `
         <div style="display:flex; align-items:center; gap:12px; padding:14px; background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.3); border-radius:10px; margin-bottom:14px;">
           <span style="font-size:1.8rem;">🟢</span>
           <div>
@@ -12983,8 +13795,8 @@ function setupEventListeners() {
           <span style="color:var(--text-muted);">Status:</span> <strong style="color:#10b981;">Active & Ready</strong>
         </div>
       `;
-    } else {
-      mysqlModalContent.innerHTML = `
+      } else {
+        mysqlModalContent.innerHTML = `
         <div style="display:flex; align-items:center; gap:12px; padding:14px; background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.25); border-radius:10px; margin-bottom:14px;">
           <span style="font-size:1.8rem;">🔴</span>
           <div>
@@ -12998,2931 +13810,3274 @@ function setupEventListeners() {
           Don't worry! Your sales and tickets are <strong>100% safely saved in local storage</strong> right now. Once MySQL is started in XAMPP, it will connect automatically.
         </div>
       `;
-    }
-  }
-
-  hasSyncedHistory = false;
-  initDatabaseSync((connected, info) => {
-    if (mysqlStatusBadge && mysqlStatusText) {
-      if (connected) {
-        mysqlStatusBadge.className = 'mysql-status-badge connected';
-        mysqlStatusText.textContent = 'MySQL Online';
-        mysqlStatusBadge.title = `MySQL Connected: ${info.database} at ${info.host}:${info.port}`;
-        if (!hasSyncedHistory && Array.isArray(state.shiftHistory) && state.shiftHistory.length > 0) {
-          hasSyncedHistory = true;
-          syncHistoricalShiftsToDB(state.shiftHistory);
-        }
-      } else {
-        mysqlStatusBadge.className = 'mysql-status-badge offline';
-        mysqlStatusText.textContent = 'MySQL Offline';
-        mysqlStatusBadge.title = 'MySQL not running. Click to view instructions.';
       }
     }
-    updateMysqlModalUI(connected, info);
-  });
 
-  mysqlStatusBadge?.addEventListener('click', () => {
-    sfx.keypad();
-    mysqlStatusModal?.showModal();
-  });
-  closeMysqlModalBtn?.addEventListener('click', () => mysqlStatusModal?.close());
-  btnOkMysqlModal?.addEventListener('click', () => mysqlStatusModal?.close());
-  btnTestMysqlConn?.addEventListener('click', async () => {
-    btnTestMysqlConn.textContent = '⏳ Testing...';
-    btnTestMysqlConn.disabled = true;
-    const isConn = await checkMySQLStatus();
-    btnTestMysqlConn.textContent = '🔄 Test Connection Now';
-    btnTestMysqlConn.disabled = false;
-    if (isConn) {
-      sfx.success();
-      showToast('✓ MySQL Connected Successfully!', 'success');
-    } else {
-      sfx.alert();
-      showToast('⚠️ MySQL Connection Failed. Ensure MySQL / XAMPP is running.', 'warning');
-    }
-  });
-
-  mainShiftActionBtn?.addEventListener('click', handleMainShiftAction);
-
-  const onCancelAction = () => {
-    sfx.keypad();
-    clearScanAlertBanner();
-
-    // 1. Clear main barcode scanner input
-    if (barcodeInput) {
-      barcodeInput.value = '';
-      barcodeInput.focus();
-    }
-
-    // 2. Close any open modal dialogs
-    const openModals = document.querySelectorAll('dialog[open]');
-    let closedAnyModal = false;
-    openModals.forEach(dialog => {
-      dialog.close();
-      closedAnyModal = true;
+    hasSyncedHistory = false;
+    initDatabaseSync((connected, info) => {
+      if (mysqlStatusBadge && mysqlStatusText) {
+        if (connected) {
+          mysqlStatusBadge.className = 'mysql-status-badge connected';
+          mysqlStatusText.textContent = 'MySQL Online';
+          mysqlStatusBadge.title = `MySQL Connected: ${info.database} at ${info.host}:${info.port}`;
+          if (!hasSyncedHistory && Array.isArray(state.shiftHistory) && state.shiftHistory.length > 0) {
+            hasSyncedHistory = true;
+            syncHistoricalShiftsToDB(state.shiftHistory);
+          }
+        } else {
+          mysqlStatusBadge.className = 'mysql-status-badge offline';
+          mysqlStatusText.textContent = 'MySQL Offline';
+          mysqlStatusBadge.title = 'MySQL not running. Click to view instructions.';
+        }
+      }
+      updateMysqlModalUI(connected, info);
     });
 
-    // 3. Clear pending scan variables
-    pendingActivationPack = null;
-    pendingSetBoxBarcode = null;
-    pendingSetBoxGame = null;
-    pendingSetBoxSecurityCode = null;
-    pendingSetBoxDisplayBarcode = null;
-    pendingRestorePack = null;
-    pendingNewTicketBarcode = null;
-    pendingSoldOutBarcode = null;
-    pendingSoldOutPack = null;
+    mysqlStatusBadge?.addEventListener('click', () => {
+      sfx.keypad();
+      mysqlStatusModal?.showModal();
+    });
+    closeMysqlModalBtn?.addEventListener('click', () => mysqlStatusModal?.close());
+    btnOkMysqlModal?.addEventListener('click', () => mysqlStatusModal?.close());
+    btnTestMysqlConn?.addEventListener('click', async () => {
+      btnTestMysqlConn.textContent = '⏳ Testing...';
+      btnTestMysqlConn.disabled = true;
+      const isConn = await checkMySQLStatus();
+      btnTestMysqlConn.textContent = '🔄 Test Connection Now';
+      btnTestMysqlConn.disabled = false;
+      if (isConn) {
+        sfx.success();
+        showToast('✓ MySQL Connected Successfully!', 'success');
+      } else {
+        sfx.alert();
+        showToast('⚠️ MySQL Connection Failed. Ensure MySQL / XAMPP is running.', 'warning');
+      }
+    });
 
-    // 4. Deselect highlighted box card
-    if (state.lastScannedSlot) {
-      state.lastScannedSlot = null;
-      renderDispenserRack();
-      renderSlotsRibbon();
-    }
+    mainShiftActionBtn?.addEventListener('click', handleMainShiftAction);
 
-    // 5. If in End Shift scanning mode, cancel and revert to in-progress
-    if (state.shiftStatus === 'SCANNING_END_SHIFT') {
-      state.shiftStatus = 'IN_PROGRESS';
-      saveState(state);
+    const onCancelAction = () => {
+      sfx.keypad();
+      clearScanAlertBanner();
+
+      // 1. Clear main barcode scanner input
+      if (barcodeInput) {
+        barcodeInput.value = '';
+        barcodeInput.focus();
+      }
+
+      // 2. Close any open modal dialogs
+      const openModals = document.querySelectorAll('dialog[open]');
+      let closedAnyModal = false;
+      openModals.forEach(dialog => {
+        dialog.close();
+        closedAnyModal = true;
+      });
+
+      // 3. Clear pending scan variables
+      pendingActivationPack = null;
+      pendingSetBoxBarcode = null;
+      pendingSetBoxGame = null;
+      pendingSetBoxSecurityCode = null;
+      pendingSetBoxDisplayBarcode = null;
+      pendingRestorePack = null;
+      pendingNewTicketBarcode = null;
+      pendingSoldOutBarcode = null;
+      pendingSoldOutPack = null;
+
+      // 4. Deselect highlighted box card
+      if (state.lastScannedSlot) {
+        state.lastScannedSlot = null;
+        renderDispenserRack();
+        renderSlotsRibbon();
+      }
+
+      // 5. If in End Shift scanning mode, cancel and revert to in-progress
+      if (state.shiftStatus === 'SCANNING_END_SHIFT') {
+        state.shiftStatus = 'IN_PROGRESS';
+        if (Array.isArray(state.slots)) {
+          state.slots.forEach(s => { s.scannedInEndShift = false; });
+        }
+        saveState(state);
+        renderHeaderAndMetrics();
+        renderDispenserRack();
+        renderSlotsRibbon();
+        const isDaily = state.settings?.operationMode !== 'SHIFTS';
+        showToast(isDaily ? 'End Day cancelled. Resuming day in progress.' : 'End Shift cancelled. Resuming shift in progress.', 'info');
+        return;
+      }
+
+      if (closedAnyModal) {
+        showToast('Dialog cancelled and closed.', 'info');
+      } else {
+        showToast('✓ Cancelled. Scanner cleared and ready.', 'info');
+      }
+    };
+
+    cancelActionBtn?.addEventListener('click', onCancelAction);
+    document.getElementById('btnHeaderCancel')?.addEventListener('click', onCancelAction);
+
+    undoActionBtn?.addEventListener('click', handleUndoAction);
+
+    document.getElementById('btnHeaderRefresh')?.addEventListener('click', () => {
+      sfx.keypad();
+      clearScanAlertBanner();
+      if (barcodeInput) barcodeInput.value = '';
+      sanitizeStatePacks(state);
+      sanitizeAndMigrateSlots();
       renderHeaderAndMetrics();
       renderDispenserRack();
-      const isDaily = state.settings?.operationMode !== 'SHIFTS';
-      showToast(isDaily ? 'End Day cancelled. Resuming day in progress.' : 'End Shift cancelled. Resuming shift in progress.', 'info');
-      return;
-    }
-
-    if (closedAnyModal) {
-      showToast('Dialog cancelled and closed.', 'info');
-    } else {
-      showToast('✓ Cancelled. Scanner cleared and ready.', 'info');
-    }
-  };
-
-  cancelActionBtn?.addEventListener('click', onCancelAction);
-  document.getElementById('btnHeaderCancel')?.addEventListener('click', onCancelAction);
-
-  undoActionBtn?.addEventListener('click', handleUndoAction);
-
-  document.getElementById('btnHeaderRefresh')?.addEventListener('click', () => {
-    sfx.keypad();
-    if (state.shiftStatus === 'SHIFT_ENDED') {
-      triggerShiftReportPrint();
-      return;
-    }
-    renderHeaderAndMetrics();
-    renderDispenserRack();
-    const headerRefreshSub = document.getElementById('headerRefreshSub');
-    if (headerRefreshSub) {
-      const timeStr = new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-      headerRefreshSub.textContent = `Updated ${timeStr}`;
-    }
-    showToast('Screen refreshed', 'info');
-  });
-
-  document.getElementById('btnDismissEndShiftToast')?.addEventListener('click', () => {
-    const toast = document.getElementById('endShiftScanningToast');
-    if (toast) toast.style.display = 'none';
-  });
-
-  document.getElementById('btnShiftRepDone')?.addEventListener('click', () => {
-    state.__viewingShiftReport = false;
-    const sec = document.getElementById('shiftClosedReportSection');
-    if (sec) sec.style.display = 'none';
-    executeStartNewShift();
-  });
-
-  document.getElementById('btnShiftRepPrint')?.addEventListener('click', () => {
-    triggerShiftReportPrint();
-  });
-
-  document.getElementById('btnShiftRepDownloadPdf')?.addEventListener('click', () => {
-    showToast(`Downloading Shift-Report-${state.shiftNumber || 14}.pdf...`, 'info');
-    triggerShiftReportPrint();
-  });
-
-  document.getElementById('btnShiftRepRetryEmail')?.addEventListener('click', (e) => {
-    const btn = e.currentTarget;
-    btn.textContent = 'Sending...';
-    setTimeout(() => {
-      btn.style.display = 'none';
-      const badge = btn.closest('.shift-rep-email-badge')?.querySelector('.badge-status-failed');
-      if (badge) {
-        badge.className = 'badge-status-sent';
-        badge.textContent = 'Sent';
+      renderSlotsRibbon();
+      const headerRefreshSub = document.getElementById('headerRefreshSub');
+      if (headerRefreshSub) {
+        const timeStr = new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+        headerRefreshSub.textContent = `Updated ${timeStr}`;
       }
-      fetch('/api/reports/send-email', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          storeId: state.storeId || 'store_amigo',
-          storeName: state.storeName || 'AMIGO FOOD MART',
-          reportType: 'SHIFT_REPORT',
-          reportDate: new Date().toISOString(),
-          shiftNumber: state.shiftNumber || 1,
-          targetEmail: 'amigofoodmart2300@gmail.com'
-        })
-      }).catch(() => { });
-      showToast('✓ Shift report sent to amigofoodmart2300@gmail.com!', 'success');
-    }, 600);
-  });
+      showToast('Screen refreshed', 'info');
+    });
 
-  document.getElementById('btnHeaderReport')?.addEventListener('click', () => {
-    sfx.keypad();
-    showDayReportView();
-    window.location.hash = 'day-report';
-  });
+    document.getElementById('btnDismissEndShiftToast')?.addEventListener('click', () => {
+      const toast = document.getElementById('endShiftScanningToast');
+      if (toast) toast.style.display = 'none';
+    });
 
-  /* ----------------------------------------------------------------
-     UPDATING INVENTORY MODE (Image 2 Specification)
-     ---------------------------------------------------------------- */
-  state.isUpdatingInventory = false;
-  state.scannedInventoryPacks = [];
+    document.getElementById('btnShiftRepDone')?.addEventListener('click', () => {
+      state.__viewingShiftReport = false;
+      const sec = document.getElementById('shiftClosedReportSection');
+      if (sec) sec.style.display = 'none';
+      executeStartNewShift();
+    });
 
-  function renderUpdatingInventoryTerminal() {
-    const terminalScreen = document.getElementById('invTerminalScreen');
-    const footer = document.getElementById('invTermFooter');
-    const count = (state.scannedInventoryPacks || []).length;
+    document.getElementById('btnShiftRepPrint')?.addEventListener('click', () => {
+      triggerShiftReportPrint();
+    });
 
-    const codeEl = document.getElementById('invTermLatestCode');
-    const titleEl = document.getElementById('invTermLatestTitle');
-    const countEl = document.getElementById('invTermRunningCount');
-    const logEl = document.getElementById('invTerminalLog');
+    document.getElementById('btnShiftRepDownloadPdf')?.addEventListener('click', () => {
+      showToast(`Downloading Shift-Report-${state.shiftNumber || 14}.pdf...`, 'info');
+      triggerShiftReportPrint();
+    });
 
-    if (countEl) countEl.textContent = `Count = ${count}`;
+    document.getElementById('btnShiftRepRetryEmail')?.addEventListener('click', (e) => {
+      const btn = e.currentTarget;
+      btn.textContent = 'Sending...';
+      setTimeout(() => {
+        btn.style.display = 'none';
+        const badge = btn.closest('.shift-rep-email-badge')?.querySelector('.badge-status-failed');
+        if (badge) {
+          badge.className = 'badge-status-sent';
+          badge.textContent = 'Sent';
+        }
+        fetch('/api/reports/send-email', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            storeId: state.storeId || 'store_amigo',
+            storeName: state.storeName || 'AMIGO FOOD MART',
+            reportType: 'SHIFT_REPORT',
+            reportDate: new Date().toISOString(),
+            shiftNumber: state.shiftNumber || 1,
+            targetEmail: 'amigofoodmart2300@gmail.com'
+          })
+        }).catch(() => { });
+        showToast('✓ Shift report sent to amigofoodmart2300@gmail.com!', 'success');
+      }, 600);
+    });
 
-    if (count === 0) {
-      if (codeEl) codeEl.textContent = '';
-      if (titleEl) titleEl.textContent = '';
-      if (logEl) {
-        logEl.innerHTML = `
+    document.getElementById('btnHeaderReport')?.addEventListener('click', () => {
+      sfx.keypad();
+      showDayReportView();
+      window.location.hash = 'day-report';
+    });
+
+    /* ----------------------------------------------------------------
+       UPDATING INVENTORY MODE (Image 2 Specification)
+       ---------------------------------------------------------------- */
+    state.isUpdatingInventory = false;
+    state.scannedInventoryPacks = [];
+
+    function getUpdatingInventoryTotals(packs = state.scannedInventoryPacks) {
+      const list = Array.isArray(packs) ? packs : [];
+      let totalTickets = 0;
+      let totalValue = 0;
+      for (const item of list) {
+        const price = Number(item?.price) || 0;
+        const tix = Number(item?.packSize) || (price > 0 ? getStandardPackDetails(price).packSize : 0);
+        totalTickets += tix;
+        totalValue += Number(item?.packValue) || (tix * price);
+      }
+      return { count: list.length, totalTickets, totalValue };
+    }
+
+    function renderUpdatingInventoryTerminal() {
+      const totals = getUpdatingInventoryTotals();
+      const { count, totalTickets, totalValue } = totals;
+
+      const codeEl = document.getElementById('invTermLatestCode');
+      const titleEl = document.getElementById('invTermLatestTitle');
+      const countEl = document.getElementById('invTermRunningCount');
+      const logEl = document.getElementById('invTerminalLog');
+      const bottomMetricsEl = document.getElementById('invTermBottomMetrics');
+      const bottomCountEl = document.getElementById('invTermBottomCount');
+      const bannerSummaryEl = document.getElementById('inventoryAddedTicketsSummary');
+
+      if (countEl) countEl.textContent = `Count = ${count}`;
+      if (bottomMetricsEl) {
+        bottomMetricsEl.textContent = `${count} pack${count === 1 ? '' : 's'} · ${totalTickets} tickets · $${totalValue}`;
+      }
+      if (bottomCountEl) {
+        bottomCountEl.textContent = count > 0 ? `Total Count = ${count} (${totalTickets} tix)` : 'Total Count = 0';
+      }
+      if (bannerSummaryEl) {
+        bannerSummaryEl.textContent = count > 0 ? ` · ${totalTickets} tickets ($${totalValue})` : '';
+      }
+
+      if (count === 0) {
+        if (codeEl) codeEl.textContent = '';
+        if (titleEl) titleEl.textContent = '';
+        if (logEl) {
+          logEl.innerHTML = `
           <div class="inv-term-log-line latest-scanned">
             <span class="inv-term-prompt inv-term-cursor">_</span>
           </div>
         `;
+        }
+        return;
       }
-      return;
-    }
 
-    const latest = state.scannedInventoryPacks[state.scannedInventoryPacks.length - 1];
-    if (codeEl) codeEl.textContent = latest.code;
-    if (titleEl) titleEl.textContent = latest.displayTitle;
+      const latest = state.scannedInventoryPacks[state.scannedInventoryPacks.length - 1];
+      if (codeEl) codeEl.textContent = latest.code;
+      if (titleEl) titleEl.textContent = latest.displayTitle;
 
-    if (logEl) {
-      const reversed = state.scannedInventoryPacks.slice().reverse();
-      logEl.innerHTML = reversed.map((item, idx) => `
+      if (logEl) {
+        const reversed = state.scannedInventoryPacks.slice().reverse();
+        logEl.innerHTML = reversed.map((item, idx) => {
+          const rowNum = count - idx;
+          const tix = Number(item.packSize) || getStandardPackDetails(item.price || 10).packSize;
+          const packVal = Number(item.packValue) || (tix * (Number(item.price) || 0));
+          return `
         <div class="inv-term-log-line ${idx === 0 ? 'latest-scanned' : ''}">
           <span class="inv-term-prompt">${idx === 0 ? '_' : '&nbsp;'}</span>
           <span class="inv-term-code">${item.code}</span>
-          <span class="inv-term-sep">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>
-          <span class="inv-term-title">${item.displayTitle}</span>
+          <span class="inv-term-title-col">${item.displayTitle}</span>
+          <span class="inv-term-row-count">#${rowNum} &middot; ${tix} tix ($${packVal})</span>
         </div>
-      `).join('');
+      `;
+        }).join('');
+      }
     }
-  }
 
-  function handleUpdatingInventoryScan(rawBarcode) {
-    if (!rawBarcode) return;
-    const raw = String(rawBarcode).trim();
-    if (!raw) return;
+    function handleUpdatingInventoryScan(rawBarcode) {
+      if (!rawBarcode) return;
+      const raw = String(rawBarcode).trim();
+      if (!raw) return;
 
-    const parsed = parseLotteryBarcode(raw, state.customGames);
-    let gameNumber = parsed?.gameNumber;
-    let packNumber = parsed?.packCombined || parsed?.packNumber;
-    let ticketNumber = (parsed?.ticketNumber !== null && parsed?.ticketNumber !== undefined) ? parsed.ticketNumber : 0;
+      const parsed = parseLotteryBarcode(raw, state.customGames, state.lotteryJurisdiction);
+      if (parsed?.isAmbiguous) {
+        sfx.alert();
+        showToast(parsed.error || `⚠️ Ambiguous GA/SC game #${parsed.gameNumber}. Set store jurisdiction in Settings.`, 'error');
+        return;
+      }
+      if (parsed?.isUncatalogued) {
+        sfx.alert();
+        showToast(parsed.error || `⚠️ Unknown SCEL game #${parsed.gameNumber}. Cannot infer price or pack size.`, 'error');
+        return;
+      }
+      let gameNumber = parsed?.gameNumber;
+      let packNumber = parsed?.packCombined || parsed?.packNumber;
+      let ticketNumber = (parsed?.ticketNumber !== null && parsed?.ticketNumber !== undefined) ? parsed.ticketNumber : 0;
 
-    // Fallback if raw is formatted as "1465-0093468", "1465-0093468-000", or raw digits
-    if (!gameNumber || !packNumber) {
-      const parts = raw.split(/[-_\s]+/);
-      if (parts.length >= 2) {
-        gameNumber = parts[0];
-        packNumber = parts[1];
-        if (parts[2]) ticketNumber = parseInt(parts[2], 10) || 0;
-      } else {
-        const digits = raw.replace(/\D/g, '');
-        if (digits.length >= 10) {
-          const p = parseLotteryBarcode(digits, state.customGames);
-          if (p && p.isValid) {
-            gameNumber = p.gameNumber;
-            packNumber = p.packNumber;
-            ticketNumber = (p.ticketNumber !== null && p.ticketNumber !== undefined) ? p.ticketNumber : 0;
-          } else {
-            gameNumber = digits.slice(0, 4);
-            packNumber = digits.slice(4, 10);
-            ticketNumber = digits.length >= 13 ? (parseInt(digits.slice(10, 13), 10) || 0) : 0;
+      // Fallback if raw is formatted as "1465-0093468", "1465-0093468-000", or raw digits
+      if (!gameNumber || !packNumber) {
+        const cleanRaw = stripScannerPrefix(raw) || raw;
+        const parts = cleanRaw.split(/[-_\s]+/);
+        if (parts.length >= 2) {
+          gameNumber = parts[0];
+          packNumber = parts[1];
+          if (parts[2]) ticketNumber = parseInt(parts[2], 10) || 0;
+        } else {
+          const digits = cleanRaw.replace(/\D/g, '');
+          if (digits.length >= 10) {
+            const p = parseLotteryBarcode(digits, state.customGames, state.lotteryJurisdiction);
+            if (p && p.isValid) {
+              gameNumber = p.gameNumber;
+              packNumber = p.packCombined || p.packNumber;
+              ticketNumber = (p.ticketNumber !== null && p.ticketNumber !== undefined) ? p.ticketNumber : 0;
+            } else {
+              gameNumber = digits.slice(0, 4);
+              packNumber = digits.slice(4, 10);
+              ticketNumber = digits.length >= 13 ? (parseInt(digits.slice(10, 13), 10) || 0) : 0;
+            }
           }
         }
       }
-    }
 
-    if (!gameNumber || !packNumber) {
-      sfx.alert();
-      showToast(`❌ [${raw}] could not be recognized as a valid pack barcode.`, 'error');
-      return;
-    }
+      if (!gameNumber || !packNumber) {
+        sfx.alert();
+        showToast(`❌ [${raw}] could not be recognized as a valid pack barcode.`, 'error');
+        return;
+      }
 
-    // Match game from catalog, SAMPLE_GAMES, or custom games
-    const matchedGame = findGameByBarcode(raw, state.customGames) ||
-      findGameByBarcode(gameNumber, state.customGames) ||
-      SAMPLE_GAMES.find(g => g.barcodePrefix === gameNumber);
+      // Match game from catalog, SAMPLE_GAMES (GA), or custom games
+      const jur = parsed?.jurisdiction || state.lotteryJurisdiction;
+      const matchedGame = findGameByBarcode(raw, state.customGames, parsed?.jurisdiction || state.lotteryJurisdiction) ||
+        findGameByBarcode(gameNumber, state.customGames, parsed?.jurisdiction || state.lotteryJurisdiction) ||
+        (jur !== 'SC' ? SAMPLE_GAMES.find(g => g.barcodePrefix === gameNumber) : null);
+      if (jur === 'SC' && !matchedGame) {
+        sfx.alert();
+        showToast(`⚠️ Unknown SCEL game #${gameNumber}. Cannot infer price or pack size.`, 'error');
+        return;
+      }
 
-    const price = Number(matchedGame?.price || 10);
-    const cleanName = matchedGame?.name
-      ? cleanGameTitle(matchedGame.name)
-      : (parsed?.gameName ? cleanGameTitle(parsed.gameName) : `Scratch Game ${gameNumber}`);
-    const displayTitle = `$${price} ${cleanName}.`;
-    const packSize = matchedGame?.packSize || getStandardPackDetails(price).packSize;
-    const displayCode = `${gameNumber}-${packNumber}`;
+      const price = Number(matchedGame?.price || parsed?.price || parsed?.inferredDetails?.price || 10);
+      const cleanName = matchedGame?.name
+        ? cleanGameTitle(matchedGame.name)
+        : (parsed?.gameName ? cleanGameTitle(parsed.gameName) : `Scratch Game ${gameNumber}`);
+      const displayTitle = `$${price} ${cleanName}.`;
+      const packSize = Number(matchedGame?.packSize || parsed?.packSize || parsed?.inferredDetails?.packSize || getStandardPackDetails(price).packSize);
+      const packValue = packSize * price;
+      const displayPack6 = formatDisplayPackNumber(parsed?.basePackNumber || packNumber);
+      const displayCode = parsed?.displayBarcode || `${gameNumber}-${displayPack6}`;
 
-    // 1. Update In-Stock Inventory (state.inStockInventory)
-    if (!Array.isArray(state.inStockInventory)) {
-      state.inStockInventory = [];
-    }
+      // 1. Update In-Stock Inventory (state.inStockInventory)
+      if (!Array.isArray(state.inStockInventory)) {
+        state.inStockInventory = [];
+      }
 
-    let inStockItem = state.inStockInventory.find(p => isPackNumberMatch(p.packNumber, packNumber));
-    if (!inStockItem) {
-      inStockItem = {
-        id: `stock_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      let inStockItem = state.inStockInventory.find(p => {
+        if (!isPackNumberMatch(p.packNumber, packNumber)) return false;
+        const existingGame = String(p.gameId || p.barcodePrefix || p.gameNumber || '').replace(/\D/g, '');
+        return !existingGame || !gameNumber || existingGame === String(gameNumber);
+      });
+      if (!inStockItem) {
+        inStockItem = {
+          id: `stock_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+          gameName: cleanName,
+          gameNumber: `Game ${gameNumber}`,
+          gameId: gameNumber,
+          packNumber: packNumber,
+          price: price,
+          packSize: `${packSize} tickets`,
+          packSizeNum: packSize,
+          status: 'IN_STOCK',
+          statusLabel: 'In stock',
+          boxNumber: null,
+          position: String(ticketNumber).padStart(3, '0'),
+          receivedDate: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+          receivedAt: new Date().toISOString(),
+          barcode: (parsed && parsed.standardBarcode) ? parsed.standardBarcode : raw
+        };
+        state.inStockInventory.push(inStockItem);
+      }
+
+      if (Array.isArray(state.inventory)) {
+        const invExists = state.inventory.find(p => {
+          if (!isPackNumberMatch(p.packNumber, packNumber)) return false;
+          const existingGame = String(p.gameId || p.barcodePrefix || p.gameNumber || '').replace(/\D/g, '');
+          return !existingGame || !gameNumber || existingGame === String(gameNumber);
+        });
+        if (!invExists) {
+          state.inventory.push({ ...inStockItem });
+        }
+      }
+
+      // 2. Track in current scanning session
+      if (!Array.isArray(state.scannedInventoryPacks)) {
+        state.scannedInventoryPacks = [];
+      }
+      const scanRecord = {
+        code: displayCode,
+        gameNumber,
+        packNumber,
         gameName: cleanName,
-        gameNumber: `Game ${gameNumber}`,
-        gameId: gameNumber,
-        packNumber: packNumber,
-        price: price,
-        packSize: `${packSize} tickets`,
-        packSizeNum: packSize,
-        status: 'IN_STOCK',
-        statusLabel: 'In stock',
-        boxNumber: null,
-        position: String(ticketNumber).padStart(3, '0'),
-        receivedDate: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-        receivedAt: new Date().toISOString(),
-        barcode: (parsed && parsed.standardBarcode) ? parsed.standardBarcode : raw
+        price,
+        packSize,
+        packValue,
+        displayTitle,
+        scannedAt: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
       };
-      state.inStockInventory.push(inStockItem);
-    }
+      state.scannedInventoryPacks.push(scanRecord);
 
-    if (Array.isArray(state.inventory)) {
-      const invExists = state.inventory.find(p => isPackNumberMatch(p.packNumber, packNumber));
-      if (!invExists) {
-        state.inventory.push({ ...inStockItem });
-      }
-    }
+      sfx.beep();
 
-    // 2. Track in current scanning session
-    if (!Array.isArray(state.scannedInventoryPacks)) {
-      state.scannedInventoryPacks = [];
-    }
-    const scanRecord = {
-      code: displayCode,
-      gameNumber,
-      packNumber,
-      gameName: cleanName,
-      price,
-      displayTitle,
-      scannedAt: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
-    };
-    state.scannedInventoryPacks.push(scanRecord);
+      // 3. Update Metrics & Headers
+      const { count, totalTickets, totalValue } = getUpdatingInventoryTotals();
+      const inStockTotal = state.inStockInventory.filter(p => !p.boxNumber).length;
 
-    sfx.beep();
+      const metricInactiveEl = document.getElementById('metricInactive');
+      if (metricInactiveEl) metricInactiveEl.textContent = String(inStockTotal);
 
-    // 3. Update Metrics & Headers
-    const count = state.scannedInventoryPacks.length;
-    const inStockTotal = state.inStockInventory.filter(p => !p.boxNumber).length;
-
-    const metricInactiveEl = document.getElementById('metricInactive');
-    if (metricInactiveEl) metricInactiveEl.textContent = String(inStockTotal);
-
-    const bannerCount = document.getElementById('inventoryAddedCount');
-    if (bannerCount) bannerCount.textContent = String(count);
-
-    const lastScanDisplay = document.getElementById('lastScanDisplay');
-    if (lastScanDisplay) lastScanDisplay.textContent = `Packs scanned so far: ${count}`;
-
-    const largeNumber = document.getElementById('largeStatReadout');
-    if (largeNumber) largeNumber.textContent = String(count);
-
-    const scanTitle = document.getElementById('scanActionTitle');
-    if (scanTitle) scanTitle.textContent = `${displayTitle} (Pack ${packNumber})`;
-
-    // 4. Update Terminal Screen Display (Matching User Reference Image 1)
-    renderUpdatingInventoryTerminal();
-
-    saveState(state);
-    showToast(`✓ Scanned ${displayCode} - ${displayTitle}`, 'success');
-  }
-  window.handleUpdatingInventoryScan = handleUpdatingInventoryScan;
-  window.handleTicketBarcodeScan = handleTicketBarcodeScan;
-  window.getState = () => state;
-  window.state = state;
-  window.saveState = saveState;
-
-  function setUpdatingInventoryMode(active) {
-    state.isUpdatingInventory = Boolean(active);
-    const btnUpdateInventory = document.getElementById('btnUpdateInventoryCard');
-    const updateInventoryLabel = btnUpdateInventory?.querySelector('.kpi-card-single-label');
-    const banner = document.getElementById('inventoryUpdatingBanner');
-    const workspace = document.getElementById('inventoryScanWorkspace');
-    const rackContainer = document.getElementById('dispenserRackContainer') || document.querySelector('.dispenser-rack-container');
-    const cancelBtn = document.getElementById('btnHeaderCancel');
-    const scannerWrap = document.querySelector('.dashboard-scanner-input-wrap');
-    const barcodeInputField = document.getElementById('barcodeInput');
-    const lastScanMicro = document.querySelector('.last-scan-micro-label');
-    const scanTitle = document.getElementById('scanActionTitle');
-    const lastScanDisplay = document.getElementById('lastScanDisplay');
-    const largeNumber = document.getElementById('largeStatReadout');
-
-    if (state.isUpdatingInventory) {
-      document.body.classList.add('updating-inventory-mode');
-      btnUpdateInventory?.classList.add('active-updating');
-      if (updateInventoryLabel) updateInventoryLabel.textContent = 'Updating Inventory';
-
-      // 2. Banner -> Show
-      if (banner) {
-        banner.style.display = 'flex';
-        banner.classList.add('active-banner');
-      }
-
-      // 3. Hide dispenser rack boxes & 65-box mini-map completely (as user requested: no need of boxes there)
-      if (rackContainer) rackContainer.style.display = 'none';
-      const allBoxesMap = document.getElementById('cardAllBoxesMap');
-      if (allBoxesMap) allBoxesMap.style.display = 'none';
-
-      // Show terminal screen workspace
-      if (workspace) {
-        workspace.style.display = 'block';
-        workspace.classList.add('active-workspace');
-      }
-
-      // 4. Cancel button -> Soft salmon/peach active cancel
-      cancelBtn?.classList.add('active-inventory-cancel');
-
-      // 5. Scanner input -> Green border & icon, updated placeholder
-      scannerWrap?.classList.add('green-mode');
-      if (barcodeInputField) {
-        barcodeInputField.placeholder = 'Scan one ticket from each pack...';
-        barcodeInputField.value = '';
-        barcodeInputField.focus();
-      }
-
-      // 6. Right Card -> UPDATING INVENTORY / Start scanning packs / Packs scanned so far
-      if (lastScanMicro) lastScanMicro.textContent = 'UPDATING INVENTORY';
-      const count = (state.scannedInventoryPacks || []).length;
-      if (scanTitle) scanTitle.textContent = count > 0 ? 'Scanning packs in progress' : 'Start scanning packs';
-      if (lastScanDisplay) lastScanDisplay.textContent = `Packs scanned so far: ${count}`;
-      if (largeNumber) largeNumber.textContent = `${count}`;
       const bannerCount = document.getElementById('inventoryAddedCount');
-      if (bannerCount) bannerCount.textContent = `${count}`;
+      if (bannerCount) bannerCount.textContent = String(count);
 
-      // 7. Render Terminal State
+      const lastScanMicro = document.querySelector('.last-scan-micro-label');
+      if (lastScanMicro) lastScanMicro.textContent = 'UPDATING INVENTORY';
+
+      const lastScanDisplay = document.getElementById('lastScanDisplay');
+      if (lastScanDisplay) {
+        lastScanDisplay.textContent = `Scanned: ${count} pack${count === 1 ? '' : 's'} · ${totalTickets} tickets ($${totalValue})`;
+      }
+
+      const largeNumber = document.getElementById('largeStatReadout');
+      if (largeNumber) {
+        largeNumber.textContent = String(count);
+        largeNumber.style.color = '';
+      }
+
+      const scanTitle = document.getElementById('scanActionTitle');
+      if (scanTitle) scanTitle.textContent = `${displayTitle} (Pack ${displayPack6})`;
+
+      // 4. Update Terminal Screen Display (Matching User Reference Image 1)
       renderUpdatingInventoryTerminal();
-    } else {
-      document.body.classList.remove('updating-inventory-mode');
-      btnUpdateInventory?.classList.remove('active-updating');
-      if (updateInventoryLabel) updateInventoryLabel.textContent = 'Update Inventory';
 
-      if (banner) {
-        banner.style.display = 'none';
-        banner.classList.remove('active-banner');
-      }
-      if (workspace) {
-        workspace.style.display = 'none';
-        workspace.classList.remove('active-workspace');
-      }
-
-      // Restore dispenser rack boxes & 65-box mini-map
-      if (rackContainer) rackContainer.style.display = 'block';
-      const allBoxesMap = document.getElementById('cardAllBoxesMap');
-      if (allBoxesMap) allBoxesMap.style.display = 'block';
-
-      cancelBtn?.classList.remove('active-inventory-cancel');
-
-      scannerWrap?.classList.remove('green-mode');
-      if (barcodeInputField) {
-        barcodeInputField.placeholder = 'Scan a ticket';
-      }
-
-      if (lastScanMicro) lastScanMicro.textContent = 'LAST SCAN';
-      if (scanTitle) scanTitle.textContent = '$2 Hit 100';
-      if (lastScanDisplay) lastScanDisplay.innerHTML = 'Box 4 &middot; ticket 011';
-      if (largeNumber) largeNumber.textContent = '4';
+      saveState(state);
+      showToast(`✓ Scanned ${displayCode} - ${displayTitle} (#${count}, ${packSize} tix)`, 'success');
     }
-  }
-  window.setUpdatingInventoryMode = setUpdatingInventoryMode;
+    window.handleUpdatingInventoryScan = handleUpdatingInventoryScan;
+    window.handleTicketBarcodeScan = handleTicketBarcodeScan;
+    window.getState = () => state;
+    window.state = state;
+    window.saveState = saveState;
 
-  // Toggle Updating Inventory mode from KPI Bar Card
-  document.getElementById('btnUpdateInventoryCard')?.addEventListener('click', () => {
-    sfx.keypad();
-    setUpdatingInventoryMode(!state.isUpdatingInventory);
-  });
+    function setUpdatingInventoryMode(active) {
+      state.isUpdatingInventory = Boolean(active);
+      const btnUpdateInventory = document.getElementById('btnUpdateInventoryCard');
+      const updateInventoryLabel = btnUpdateInventory?.querySelector('.kpi-card-single-label');
+      const banner = document.getElementById('inventoryUpdatingBanner');
+      const workspace = document.getElementById('inventoryScanWorkspace');
+      const rackContainer = document.getElementById('dispenserRackContainer') || document.querySelector('.dispenser-rack-container');
+      const cancelBtn = document.getElementById('btnHeaderCancel');
+      const scannerWrap = document.querySelector('.dashboard-scanner-input-wrap');
+      const barcodeInputField = document.getElementById('barcodeInput');
+      const lastScanMicro = document.querySelector('.last-scan-micro-label');
+      const scanTitle = document.getElementById('scanActionTitle');
+      const lastScanDisplay = document.getElementById('lastScanDisplay');
+      const largeNumber = document.getElementById('largeStatReadout');
 
-  // Finish button in banner
-  document.getElementById('btnFinishInventory')?.addEventListener('click', () => {
-    sfx.keypad();
-    const count = (state.scannedInventoryPacks || []).length;
-    if (count > 0) {
-      showToast(`✓ Updated inventory with ${count} new pack${count > 1 ? 's' : ''}!`, 'success');
-      state.scannedInventoryPacks = [];
-    } else {
-      showToast('Inventory updating complete', 'info');
+      if (state.isUpdatingInventory) {
+        document.body.classList.add('updating-inventory-mode');
+        btnUpdateInventory?.classList.add('active-updating');
+        if (updateInventoryLabel) updateInventoryLabel.textContent = 'Updating Inventory';
+
+        // 2. Banner -> Show
+        if (banner) {
+          banner.style.display = 'flex';
+          banner.classList.add('active-banner');
+        }
+
+        // 3. Hide dispenser rack boxes & 65-box mini-map completely (as user requested: no need of boxes there)
+        if (rackContainer) rackContainer.style.display = 'none';
+        const allBoxesMap = document.getElementById('cardAllBoxesMap');
+        if (allBoxesMap) allBoxesMap.style.display = 'none';
+
+        // Show terminal screen workspace
+        if (workspace) {
+          workspace.style.display = 'block';
+          workspace.classList.add('active-workspace');
+        }
+
+        // 4. Cancel button -> Soft salmon/peach active cancel
+        cancelBtn?.classList.add('active-inventory-cancel');
+
+        // 5. Scanner input -> Green border & icon, updated placeholder
+        scannerWrap?.classList.add('green-mode');
+        if (barcodeInputField) {
+          barcodeInputField.placeholder = 'Scan one ticket from each pack...';
+          barcodeInputField.value = '';
+          barcodeInputField.focus();
+        }
+
+        // 6. Right Card -> UPDATING INVENTORY / Start scanning packs / Packs & tickets scanned so far
+        if (lastScanMicro) lastScanMicro.textContent = 'UPDATING INVENTORY';
+        const { count, totalTickets, totalValue } = getUpdatingInventoryTotals();
+        if (scanTitle) scanTitle.textContent = count > 0 ? 'Scanning packs in progress' : 'Start scanning packs';
+        if (lastScanDisplay) {
+          lastScanDisplay.textContent = count > 0
+            ? `Scanned: ${count} pack${count === 1 ? '' : 's'} · ${totalTickets} tickets ($${totalValue})`
+            : 'Packs scanned so far: 0';
+        }
+        if (largeNumber) {
+          largeNumber.textContent = `${count}`;
+          largeNumber.style.color = '';
+        }
+        const bannerCount = document.getElementById('inventoryAddedCount');
+        if (bannerCount) bannerCount.textContent = `${count}`;
+
+        // 7. Render Terminal State
+        renderUpdatingInventoryTerminal();
+      } else {
+        document.body.classList.remove('updating-inventory-mode');
+        btnUpdateInventory?.classList.remove('active-updating');
+        if (updateInventoryLabel) updateInventoryLabel.textContent = 'Update Inventory';
+
+        if (banner) {
+          banner.style.display = 'none';
+          banner.classList.remove('active-banner');
+        }
+        if (workspace) {
+          workspace.style.display = 'none';
+          workspace.classList.remove('active-workspace');
+        }
+
+        // Restore dispenser rack boxes & 65-box mini-map
+        if (rackContainer) rackContainer.style.display = 'block';
+        const allBoxesMap = document.getElementById('cardAllBoxesMap');
+        if (allBoxesMap) allBoxesMap.style.display = 'block';
+
+        cancelBtn?.classList.remove('active-inventory-cancel');
+
+        scannerWrap?.classList.remove('green-mode');
+        if (barcodeInputField) {
+          barcodeInputField.placeholder = 'Scan a ticket';
+        }
+
+        renderHeaderAndMetrics();
+      }
     }
-    setUpdatingInventoryMode(false);
-    renderHeaderAndMetrics();
-    renderDispenserRack();
-    if (typeof window.renderInventoryTable === 'function') {
-      window.renderInventoryTable();
-    }
-  });
+    window.setUpdatingInventoryMode = setUpdatingInventoryMode;
 
-  // Cancel button in header controls
-  document.getElementById('btnHeaderCancel')?.addEventListener('click', () => {
-    sfx.keypad();
-    if (state.shiftStatus === 'SCANNING_END_SHIFT') {
-      state.shiftStatus = 'IN_PROGRESS';
-      if (Array.isArray(state.slots)) {
-        state.slots.forEach(s => { s.scannedInEndShift = false; });
+    // Toggle Updating Inventory mode from KPI Bar Card
+    document.getElementById('btnUpdateInventoryCard')?.addEventListener('click', () => {
+      sfx.keypad();
+      setUpdatingInventoryMode(!state.isUpdatingInventory);
+    });
+
+    // Finish button in banner
+    document.getElementById('btnFinishInventory')?.addEventListener('click', () => {
+      sfx.keypad();
+      const totals = getUpdatingInventoryTotals();
+      if (totals.count > 0) {
+        state.scannedInventoryPacks = [];
+      }
+      setUpdatingInventoryMode(false);
+      renderDispenserRack();
+      if (typeof window.renderInventoryTable === 'function') {
+        window.renderInventoryTable();
+      }
+      if (totals.count > 0) {
+        showToast(`✓ Updated inventory: ${totals.count} pack${totals.count === 1 ? '' : 's'} · ${totals.totalTickets} tickets ($${totals.totalValue})`, 'success');
+        const lastScanMicro = document.querySelector('.last-scan-micro-label');
+        const scanTitle = document.getElementById('scanActionTitle');
+        const lastScanDisplay = document.getElementById('lastScanDisplay');
+        const largeNumber = document.getElementById('largeStatReadout');
+        if (lastScanMicro) lastScanMicro.textContent = 'INVENTORY UPDATED';
+        if (scanTitle) scanTitle.textContent = `${totals.count} Pack${totals.count === 1 ? '' : 's'} Added`;
+        if (lastScanDisplay) lastScanDisplay.textContent = `${totals.totalTickets} tickets total · $${totals.totalValue}`;
+        if (largeNumber) {
+          largeNumber.textContent = String(totals.count);
+          largeNumber.style.color = '#059669';
+        }
+      } else {
+        showToast('Inventory updating complete', 'info');
+      }
+    });
+
+    // Cancel button in header controls
+    document.getElementById('btnHeaderCancel')?.addEventListener('click', () => {
+      sfx.keypad();
+      if (state.shiftStatus === 'SCANNING_END_SHIFT') {
+        state.shiftStatus = 'IN_PROGRESS';
+        if (Array.isArray(state.slots)) {
+          state.slots.forEach(s => { s.scannedInEndShift = false; });
+        }
+        saveState(state);
+        renderHeaderAndMetrics();
+        renderDispenserRack();
+        renderSlotsRibbon();
+        return;
+      }
+      if (state.isUpdatingInventory) {
+        state.scannedInventoryPacks = [];
+        setUpdatingInventoryMode(false);
+        renderHeaderAndMetrics();
+        renderDispenserRack();
+        showToast('Inventory updating canceled', 'info');
+      }
+    });
+
+    // Intercept and limit barcode scanner / manual entry
+    const barcodeInputField = document.getElementById('barcodeInput');
+    if (barcodeInputField) {
+      barcodeInputField.setAttribute('maxlength', '36');
+      barcodeInputField.addEventListener('input', () => {
+        let val = barcodeInputField.value;
+        const isBox = /^box/i.test(val);
+        const isAim = /^\]/.test(val);
+        const isUrl = /^(https?:\/\/|www\.|scel\.net|sceducationlottery\.com|galottery\.com)/i.test(val);
+        const hasFormatting = /[-()\[\]\s/.:*]/.test(val);
+
+        if (isBox) {
+          barcodeInputField.setAttribute('maxlength', '10');
+          const sanitized = val.replace(/[^0-9\-\(\)\[\]\sboxBOX]/g, '').slice(0, 10);
+          if (barcodeInputField.value !== sanitized) {
+            barcodeInputField.value = sanitized;
+          }
+        } else if (isUrl) {
+          barcodeInputField.setAttribute('maxlength', '256');
+          const sanitized = val.replace(/\s+/g, '').slice(0, 256);
+          if (barcodeInputField.value !== sanitized) {
+            barcodeInputField.value = sanitized;
+          }
+        } else if (isAim) {
+          barcodeInputField.setAttribute('maxlength', '36');
+          const aimMatch = val.match(/^(\][a-zA-Z0-9]{0,3})(.*)$/);
+          const prefix = aimMatch ? aimMatch[1] : '';
+          const body = (aimMatch ? aimMatch[2] : val).replace(/[^0-9\-\(\)\[\]\s/.:*]/g, '');
+          const sanitized = (prefix + body).slice(0, 36);
+          if (barcodeInputField.value !== sanitized) {
+            barcodeInputField.value = sanitized;
+          }
+        } else if (hasFormatting) {
+          barcodeInputField.setAttribute('maxlength', '36');
+          let sanitized = val.replace(/[^0-9\-\(\)\[\]\s/.:*]/g, '').slice(0, 36);
+          let digitCount = 0;
+          sanitized = sanitized.split('').filter(c => {
+            if (/[0-9]/.test(c)) {
+              digitCount++;
+              return digitCount <= 30;
+            }
+            return true;
+          }).join('');
+          if (barcodeInputField.value !== sanitized) {
+            barcodeInputField.value = sanitized;
+          }
+        } else {
+          barcodeInputField.setAttribute('maxlength', '30');
+          const sanitized = val.replace(/[^0-9]/g, '').slice(0, 30);
+          if (barcodeInputField.value !== sanitized) {
+            barcodeInputField.value = sanitized;
+          }
+        }
+      });
+
+      barcodeInputField.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && state.isUpdatingInventory) {
+          e.preventDefault();
+          e.stopPropagation();
+          const rawVal = barcodeInputField.value.trim();
+          if (!rawVal) return;
+          barcodeInputField.value = '';
+          handleUpdatingInventoryScan(rawVal);
+        }
+      }, true);
+    }
+
+    const sidebarCollapseBtn = document.getElementById('sidebarCollapseBtn');
+    if (sidebarCollapseBtn && !sidebarCollapseBtn._hasToggleListener) {
+      sidebarCollapseBtn._hasToggleListener = true;
+      sidebarCollapseBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        if (typeof window.toggleSidebar === 'function') {
+          window.toggleSidebar();
+        } else {
+          const sidebar = document.querySelector('.pos-sidebar');
+          if (!sidebar) return;
+          const isCollapsed = sidebar.classList.toggle('collapsed');
+          localStorage.setItem('lottotrack_sidebar_collapsed', isCollapsed ? 'true' : 'false');
+          sidebarCollapseBtn.setAttribute('title', isCollapsed ? 'Expand Sidebar' : 'Collapse Sidebar');
+          try { sfx.keypad(); } catch (err) { }
+        }
+      });
+    }
+
+    /* ----------------------------------------------------------------
+       MOBILE SIDEBAR HAMBURGER TOGGLE
+       ---------------------------------------------------------------- */
+    const mobileHamburgerBtn = document.getElementById('mobileHamburgerBtn');
+    const sidebarMobileOverlay = document.getElementById('sidebarMobileOverlay');
+    const mobileSidebar = document.querySelector('.pos-sidebar');
+
+    function openMobileSidebar() {
+      if (!mobileSidebar) return;
+      mobileSidebar.classList.add('mobile-open');
+      sidebarMobileOverlay?.classList.add('active');
+      document.body.style.overflow = 'hidden';
+    }
+
+    function closeMobileSidebar() {
+      if (!mobileSidebar) return;
+      mobileSidebar.classList.remove('mobile-open');
+      sidebarMobileOverlay?.classList.remove('active');
+      document.body.style.overflow = '';
+    }
+
+    if (mobileHamburgerBtn) {
+      mobileHamburgerBtn.addEventListener('click', () => {
+        if (mobileSidebar?.classList.contains('mobile-open')) {
+          closeMobileSidebar();
+        } else {
+          openMobileSidebar();
+        }
+      });
+    }
+
+    if (sidebarMobileOverlay) {
+      sidebarMobileOverlay.addEventListener('click', closeMobileSidebar);
+    }
+
+    // Auto-close mobile sidebar when a nav item is clicked
+    document.querySelectorAll('.sidebar-nav-item').forEach(btn => {
+      btn.addEventListener('click', () => {
+        if (window.innerWidth <= 768 && mobileSidebar?.classList.contains('mobile-open')) {
+          closeMobileSidebar();
+        }
+      });
+    });
+
+    // Close mobile sidebar on window resize to desktop
+    window.addEventListener('resize', () => {
+      if (window.innerWidth > 768) {
+        closeMobileSidebar();
+      }
+    });
+
+
+    const btnTrimRackBtn = document.getElementById('btnTrimRackBtn');
+    if (btnTrimRackBtn) {
+      btnTrimRackBtn.addEventListener('click', openResetOptionsModal);
+    }
+
+    // Reset Modal Action Listeners
+    const resetOptionsModal = document.getElementById('resetOptionsModal');
+    const closeResetOptionsBtn = document.getElementById('closeResetOptionsBtn');
+    const cancelResetOptionsBtn = document.getElementById('cancelResetOptionsBtn');
+    const btnResetOptionTrim = document.getElementById('btnResetOptionTrim');
+    const btnResetOptionSales = document.getElementById('btnResetOptionSales');
+    const btnResetOptionScanner = document.getElementById('btnResetOptionScanner');
+    const btnResetOptionWipe = document.getElementById('btnResetOptionWipe');
+
+    closeResetOptionsBtn?.addEventListener('click', () => resetOptionsModal?.close());
+    cancelResetOptionsBtn?.addEventListener('click', () => resetOptionsModal?.close());
+
+    btnResetOptionTrim?.addEventListener('click', () => {
+      resetOptionsModal?.close();
+      executeTrimRack();
+    });
+
+    btnResetOptionSales?.addEventListener('click', () => {
+      resetOptionsModal?.close();
+      executeResetShiftSales();
+    });
+
+    btnResetOptionScanner?.addEventListener('click', () => {
+      resetOptionsModal?.close();
+      executeResetScanner();
+    });
+
+    btnResetOptionWipe?.addEventListener('click', () => {
+      resetOptionsModal?.close();
+      executeWipeAllData();
+    });
+
+    const btnAddDispenserBoxBtn = document.getElementById('btnAddDispenserBoxBtn');
+    if (btnAddDispenserBoxBtn) {
+      btnAddDispenserBoxBtn.addEventListener('click', () => {
+        openActivationForBox(findFirstEmptyBox());
+      });
+    }
+
+
+
+    // Settings Modal controls
+    const settingsModal = document.getElementById('settingsModal');
+    const closeSettingsBtn = document.getElementById('closeSettingsBtn');
+    const cancelSettingsBtn = document.getElementById('cancelSettingsBtn');
+    const saveSettingsBtn = document.getElementById('saveSettingsBtn');
+    const settingStoreName = document.getElementById('settingStoreName');
+    const settingCashierName = document.getElementById('settingCashierName');
+    const settingTargetEmail = document.getElementById('settingTargetEmail');
+    const settingOperationMode = document.getElementById('settingOperationMode');
+    const settingSoundToggle = document.getElementById('settingSoundToggle');
+
+    function openSettingsModal() {
+      if (!settingsModal) return;
+      settingStoreName.value = state.storeName || 'LOTTO EXPRESS POS';
+      settingCashierName.value = state.cashierName || 'CLERK';
+      settingTargetEmail.value = state.settings?.targetEmails || 'manager@eltesystemsoftware.com';
+      if (settingOperationMode) {
+        settingOperationMode.value = state.settings?.operationMode || 'DAILY';
+      }
+      settingSoundToggle.checked = state.settings?.soundEnabled !== false;
+      sfx.keypad();
+      settingsModal.showModal();
+    }
+
+    function saveSettings() {
+      state.storeName = settingStoreName.value.trim() || 'LOTTO EXPRESS POS';
+      state.cashierName = settingCashierName.value.trim() || 'CLERK';
+      if (!state.settings) state.settings = {};
+      state.settings.targetEmails = settingTargetEmail.value.trim() || '';
+      if (settingOperationMode) {
+        state.settings.operationMode = settingOperationMode.value;
+      }
+      state.settings.soundEnabled = settingSoundToggle.checked;
+      sfx.muted = !state.settings.soundEnabled;
+
+      saveState(state);
+      settingsModal.close();
+      sfx.success();
+      renderHeaderAndMetrics();
+      renderDispenserRack();
+      renderSlotsRibbon();
+      if (inventoryStatusModal && inventoryStatusModal.open) {
+        renderInventoryStatusModal();
+      }
+      if (inventoryModal && inventoryModal.open) {
+        renderInventoryTable();
+      }
+      const isDaily = state.settings?.operationMode !== 'SHIFTS';
+      showToast(`✓ Workflow Mode set to: ${isDaily ? 'Daily Mode' : 'Shift Mode'}!`, 'success');
+    }
+
+    closeSettingsBtn?.addEventListener('click', () => settingsModal.close());
+    cancelSettingsBtn?.addEventListener('click', () => settingsModal.close());
+    saveSettingsBtn?.addEventListener('click', saveSettings);
+
+    function exportHistoryToCSV() {
+      if (!state.shiftHistory || state.shiftHistory.length === 0) {
+        showToast('No history to export yet!', 'info');
+        return;
+      }
+
+      const isDaily = state.settings?.operationMode !== 'SHIFTS';
+      const headers = [isDaily ? 'Day / Shift' : 'Shift #', 'Cashier', 'Started At', 'Ended At', 'Tickets Sold', 'Revenue ($)', 'Activations'];
+      const rows = state.shiftHistory.map(h => [
+        h.shiftNumber,
+        `"${h.cashier || ''}"`,
+        `"${h.startedAt || ''}"`,
+        `"${h.endedAt || ''}"`,
+        h.totalTicketsSold || 0,
+        Number(h.totalSalesRevenue || 0).toFixed(2),
+        h.activationsCount || 0
+      ]);
+
+      const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map(e => e.join(','))].join('\n');
+      const encodedUri = encodeURI(csvContent);
+      const link = document.createElement('a');
+      link.setAttribute('href', encodedUri);
+      link.setAttribute('download', `lotto_${isDaily ? 'day' : 'shift'}_history_${new Date().toISOString().split('T')[0]}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      sfx.chime();
+      showToast(isDaily ? '✓ Daily history exported to CSV!' : '✓ Shift history exported to CSV!', 'success');
+    }
+
+    const exportHistoryCsvBtn = document.getElementById('exportHistoryCsvBtn');
+    if (exportHistoryCsvBtn) {
+      exportHistoryCsvBtn.addEventListener('click', exportHistoryToCSV);
+    }
+
+    // End Shift Confirm Modal 2-Step Navigation & Keypad
+    const btnEndShiftStep1Next = document.getElementById('btnEndShiftStep1Next');
+    const btnEndShiftStep2Back = document.getElementById('btnEndShiftStep2Back');
+    const endShiftStep1View = document.getElementById('endShiftStep1View');
+    const endShiftStep2View = document.getElementById('endShiftStep2View');
+
+    btnEndShiftStep1Next?.addEventListener('click', () => {
+      const inputAct = document.getElementById('inputManualActivations');
+      const inputEmpty = document.getElementById('inputManualEmptySlots');
+      if (inputAct && inputAct.value !== '') state.manualActivations = parseInt(inputAct.value, 10);
+      if (inputEmpty && inputEmpty.value !== '') state.manualEmptySlots = parseInt(inputEmpty.value, 10);
+      saveState(state);
+      if (endShiftStep1View) endShiftStep1View.style.display = 'none';
+      if (endShiftStep2View) endShiftStep2View.style.display = 'block';
+      updateManualTotalSalesPreview();
+      sfx.keypad?.();
+    });
+
+    btnEndShiftStep2Back?.addEventListener('click', () => {
+      const inputOnline = document.getElementById('inputManualOnlineSales');
+      const inputScratch = document.getElementById('inputManualScratchSales');
+      if (inputOnline && inputOnline.value !== '') state.manualOnlineSales = parseFloat(inputOnline.value);
+      if (inputScratch && inputScratch.value !== '') state.manualScratchOffSales = parseFloat(inputScratch.value);
+      saveState(state);
+      if (endShiftStep2View) endShiftStep2View.style.display = 'none';
+      if (endShiftStep1View) endShiftStep1View.style.display = 'block';
+      sfx.keypad?.();
+    });
+
+    // Step 2 Numeric Keypad
+    let activeStep2InputId = 'inputManualOnlineSales';
+    document.querySelectorAll('.terminal-input-card[data-target]').forEach(card => {
+      card.addEventListener('click', () => {
+        const targetId = card.getAttribute('data-target');
+        const input = document.getElementById(targetId);
+        if (input) {
+          input.focus();
+          activeStep2InputId = targetId;
+        }
+      });
+    });
+
+    ['inputManualOnlineSales', 'confTerminalOnlineCashes', 'confTerminalCashes'].forEach(id => {
+      const inp = document.getElementById(id);
+      if (inp) {
+        inp.addEventListener('focus', () => {
+          activeStep2InputId = id;
+          document.querySelectorAll('.terminal-input-card').forEach(c => {
+            if (c.getAttribute('data-target') === id) {
+              c.style.outline = '2px solid #2563eb';
+            } else {
+              c.style.outline = 'none';
+            }
+          });
+        });
+        inp.addEventListener('blur', () => {
+          document.querySelectorAll('.terminal-input-card').forEach(c => {
+            c.style.outline = 'none';
+          });
+        });
+        inp.addEventListener('input', () => {
+          updateManualTotalSalesPreview();
+        });
+      }
+    });
+
+    const step2Keypad = document.getElementById('terminalStep2Keypad');
+    if (step2Keypad) {
+      step2Keypad.addEventListener('click', (e) => {
+        const btn = e.target.closest('.term-key-btn');
+        if (!btn) return;
+        const key = btn.getAttribute('data-key');
+        const currentInp = document.getElementById(activeStep2InputId) || document.getElementById('inputManualOnlineSales');
+        if (!currentInp) return;
+
+        if (key === 'clear') {
+          currentInp.value = '';
+        } else if (key === 'backspace') {
+          currentInp.value = currentInp.value.slice(0, -1);
+        } else if (key === 'next') {
+          if (activeStep2InputId === 'inputManualOnlineSales') {
+            document.getElementById('confTerminalOnlineCashes')?.focus();
+          } else if (activeStep2InputId === 'confTerminalOnlineCashes') {
+            document.getElementById('confTerminalCashes')?.focus();
+          } else {
+            document.getElementById('confConfirmBtn')?.focus();
+          }
+        } else if (key) {
+          if (key === '.' && currentInp.value.includes('.')) return;
+          currentInp.value += key;
+        }
+        currentInp.dispatchEvent(new Event('input', { bubbles: true }));
+        updateManualTotalSalesPreview();
+        sfx.keypad?.();
+      });
+    }
+
+    // End Shift Confirm Modal buttons
+    closeEndShiftConfirmBtn?.addEventListener('click', () => endShiftConfirmModal.close());
+    confCancelBtn?.addEventListener('click', () => endShiftConfirmModal.close());
+    confConfirmBtn?.addEventListener('click', executeEndShiftFinalReportWorkflow);
+    endShiftConfirmModal?.addEventListener('close', () => {
+      if (state.shiftStatus === 'SCANNING_END_SHIFT') {
+        const toast = document.getElementById('endShiftScanningToast');
+        if (toast) toast.style.display = 'none';
+      }
+    });
+
+    // End Shift Box Review Modal Action Buttons
+    document.getElementById('btnEsrMarkSoldOut')?.addEventListener('click', () => {
+      if (!currentEndShiftReviewSlot) return;
+      const slot = currentEndShiftReviewSlot;
+      const std = getStandardPackDetails(slot.price || 2);
+      const packSize = slot.packSize || std.packSize || 100;
+      slot.currentTicket = packSize;
+      slot.status = 'SOLD_OUT';
+      slot.scannedInEndShift = false;
+      slot.declaredOutThere = false;
+      clearPendingEndShiftActivation(slot);
+      recordSoldOutPack(slot, packSize);
+      saveState(state);
+      renderHeaderAndMetrics();
+      renderDispenserRack();
+      renderSlotsRibbon();
+      document.getElementById('endShiftTicketReviewModal')?.close();
+      showToast(`🚨 Box #${slot.boxNumber} (${cleanGameTitle(slot.gameName)}) marked as SOLD OUT.`, 'warning');
+    });
+
+    document.getElementById('btnEsrReturnSafe')?.addEventListener('click', () => {
+      if (!currentEndShiftReviewSlot) return;
+      const slot = currentEndShiftReviewSlot;
+      const std = getStandardPackDetails(slot.price || 2);
+      const packSize = slot.packSize || std.packSize || 100;
+      const start = (slot.startTicket !== undefined && slot.startTicket !== null) ? slot.startTicket : 0;
+      let curr = (slot.currentTicket !== undefined && slot.currentTicket !== null) ? slot.currentTicket : 0;
+      if (curr > packSize) curr = packSize;
+      if (curr < 0) curr = 0;
+
+      const sold = calculateSlotSoldTickets({ ...slot, startTicket: start, currentTicket: curr, packSize });
+      const remaining = Math.max(0, packSize - sold);
+      const price = slot.price || 0;
+      const soldAmt = sold * price;
+      const returnedAmt = remaining * price;
+
+      if (sold > 0) {
+        if (!state.soldOutThisShift) state.soldOutThisShift = [];
+        state.soldOutThisShift.push({
+          boxNumber: slot.boxNumber,
+          gameName: slot.gameName,
+          price: price,
+          packNumber: slot.packNumber,
+          packSize: packSize,
+          startTicket: start,
+          closeTicket: curr,
+          ticketsSold: sold,
+          salesAmount: soldAmt,
+          ticketsReturned: remaining,
+          returnedAmount: returnedAmt,
+          isReturned: true,
+          soldAt: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
+        });
+      }
+
+      if (!Array.isArray(state.inStockInventory)) state.inStockInventory = [];
+      const existingStock = state.inStockInventory.find(p => isPackNumberMatch(p.packNumber, slot.packNumber));
+      if (existingStock) {
+        existingStock.boxNumber = null;
+        existingStock.currentTicket = curr;
+        existingStock.status = 'IN_STOCK';
+        if (slot.jurisdiction) existingStock.jurisdiction = slot.jurisdiction;
+        if (slot.barcodePrefix) existingStock.barcodePrefix = slot.barcodePrefix;
+        if (slot.checkDigit) existingStock.checkDigit = slot.checkDigit;
+        if (slot.basePackNumber) existingStock.basePackNumber = slot.basePackNumber;
+        if (slot.packCombined) existingStock.packCombined = slot.packCombined;
+      } else {
+        state.inStockInventory.unshift({
+          packNumber: String(slot.packNumber),
+          gameName: slot.gameName,
+          gameId: slot.gameId,
+          barcodePrefix: slot.barcodePrefix || '',
+          basePackNumber: slot.basePackNumber || String(slot.packNumber),
+          checkDigit: slot.checkDigit || null,
+          packCombined: slot.packCombined || String(slot.packNumber),
+          jurisdiction: slot.jurisdiction || null,
+          price: price,
+          packSize: packSize,
+          currentTicket: curr,
+          boxNumber: null,
+          status: 'IN_STOCK',
+          receivedDate: 'Today'
+        });
+      }
+
+      resetSlotToEmpty(slot);
+
+      saveState(state);
+      renderHeaderAndMetrics();
+      renderDispenserRack();
+      renderSlotsRibbon();
+      renderInventoryTable();
+      document.getElementById('endShiftTicketReviewModal')?.close();
+      showToast(`↩️ Box #${slot.boxNumber} returned to Safe Inventory.`, 'info');
+    });
+
+    document.getElementById('btnEsrDeclareOutThere')?.addEventListener('click', () => {
+      if (!currentEndShiftReviewSlot) return;
+      const slot = currentEndShiftReviewSlot;
+      slot.declaredOutThere = true;
+      slot.scannedInEndShift = false;
+      if (slot.needsActivation) {
+        // Pending-activation boxes must NOT remain marked ACTIVE when declared Out There
+        slot.status = 'PENDING_ACTIVATION';
+        slot.needsActivation = true;
+        slot.activatedThisShift = false;
+      } else {
+        clearPendingEndShiftActivation(slot);
       }
       saveState(state);
       renderHeaderAndMetrics();
       renderDispenserRack();
       renderSlotsRibbon();
-      return;
-    }
-    if (state.isUpdatingInventory) {
-      state.scannedInventoryPacks = [];
-      setUpdatingInventoryMode(false);
-      renderHeaderAndMetrics();
-      renderDispenserRack();
-      showToast('Inventory updating canceled', 'info');
-    }
-  });
-
-  // Intercept and limit barcode scanner / manual entry
-  const barcodeInputField = document.getElementById('barcodeInput');
-  if (barcodeInputField) {
-    barcodeInputField.setAttribute('maxlength', '36');
-    barcodeInputField.addEventListener('input', () => {
-      let val = barcodeInputField.value;
-      const isBox = /^box/i.test(val);
-      const hasFormatting = /[-()\[\]\s]/.test(val);
-
-      if (isBox) {
-        barcodeInputField.setAttribute('maxlength', '10');
-        const sanitized = val.replace(/[^0-9\-\(\)\[\]\sboxBOX]/g, '').slice(0, 10);
-        if (barcodeInputField.value !== sanitized) {
-          barcodeInputField.value = sanitized;
-        }
-      } else if (hasFormatting) {
-        barcodeInputField.setAttribute('maxlength', '36');
-        let sanitized = val.replace(/[^0-9\-\(\)\[\]\s]/g, '').slice(0, 36);
-        let digitCount = 0;
-        sanitized = sanitized.split('').filter(c => {
-          if (/[0-9]/.test(c)) {
-            digitCount++;
-            return digitCount <= 30;
-          }
-          return true;
-        }).join('');
-        if (barcodeInputField.value !== sanitized) {
-          barcodeInputField.value = sanitized;
-        }
-      } else {
-        barcodeInputField.setAttribute('maxlength', '30');
-        const sanitized = val.replace(/[^0-9]/g, '').slice(0, 30);
-        if (barcodeInputField.value !== sanitized) {
-          barcodeInputField.value = sanitized;
-        }
-      }
+      document.getElementById('endShiftTicketReviewModal')?.close();
+      showToast(`Box #${slot.boxNumber} declared Out There (Not Scanned).`, 'info');
     });
 
-    barcodeInputField.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && state.isUpdatingInventory) {
-        e.preventDefault();
-        e.stopPropagation();
-        const rawVal = barcodeInputField.value.trim();
-        if (!rawVal) return;
-        barcodeInputField.value = '';
-        handleUpdatingInventoryScan(rawVal);
-      }
-    }, true);
-  }
-
-  const sidebarCollapseBtn = document.getElementById('sidebarCollapseBtn');
-  if (sidebarCollapseBtn && !sidebarCollapseBtn._hasToggleListener) {
-    sidebarCollapseBtn._hasToggleListener = true;
-    sidebarCollapseBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      e.preventDefault();
-      if (typeof window.toggleSidebar === 'function') {
-        window.toggleSidebar();
-      } else {
-        const sidebar = document.querySelector('.pos-sidebar');
-        if (!sidebar) return;
-        const isCollapsed = sidebar.classList.toggle('collapsed');
-        localStorage.setItem('lottotrack_sidebar_collapsed', isCollapsed ? 'true' : 'false');
-        sidebarCollapseBtn.setAttribute('title', isCollapsed ? 'Expand Sidebar' : 'Collapse Sidebar');
-        try { sfx.keypad(); } catch (err) { }
-      }
+    document.getElementById('btnEsrCloseNoAction')?.addEventListener('click', () => {
+      document.getElementById('endShiftTicketReviewModal')?.close();
     });
-  }
+    document.getElementById('btnEsrCloseVerified')?.addEventListener('click', () => {
+      document.getElementById('endShiftTicketReviewModal')?.close();
+    });
+    document.getElementById('closeEndShiftReviewBtn')?.addEventListener('click', () => {
+      document.getElementById('endShiftTicketReviewModal')?.close();
+    });
 
-  /* ----------------------------------------------------------------
-     MOBILE SIDEBAR HAMBURGER TOGGLE
-     ---------------------------------------------------------------- */
-  const mobileHamburgerBtn = document.getElementById('mobileHamburgerBtn');
-  const sidebarMobileOverlay = document.getElementById('sidebarMobileOverlay');
-  const mobileSidebar = document.querySelector('.pos-sidebar');
-
-  function openMobileSidebar() {
-    if (!mobileSidebar) return;
-    mobileSidebar.classList.add('mobile-open');
-    sidebarMobileOverlay?.classList.add('active');
-    document.body.style.overflow = 'hidden';
-  }
-
-  function closeMobileSidebar() {
-    if (!mobileSidebar) return;
-    mobileSidebar.classList.remove('mobile-open');
-    sidebarMobileOverlay?.classList.remove('active');
-    document.body.style.overflow = '';
-  }
-
-  if (mobileHamburgerBtn) {
-    mobileHamburgerBtn.addEventListener('click', () => {
-      if (mobileSidebar?.classList.contains('mobile-open')) {
-        closeMobileSidebar();
-      } else {
-        openMobileSidebar();
+    // -------------------------------------------------------------
+    // Thermal Slip (80mm) and Full-Page Report Printing Engine
+    // -------------------------------------------------------------
+    function setDynamicPrintPageSize(cssText) {
+      let styleEl = document.getElementById('dynamicPrintPageStyle');
+      if (!styleEl) {
+        styleEl = document.createElement('style');
+        styleEl.id = 'dynamicPrintPageStyle';
+        document.head.appendChild(styleEl);
       }
-    });
-  }
-
-  if (sidebarMobileOverlay) {
-    sidebarMobileOverlay.addEventListener('click', closeMobileSidebar);
-  }
-
-  // Auto-close mobile sidebar when a nav item is clicked
-  document.querySelectorAll('.sidebar-nav-item').forEach(btn => {
-    btn.addEventListener('click', () => {
-      if (window.innerWidth <= 768 && mobileSidebar?.classList.contains('mobile-open')) {
-        closeMobileSidebar();
-      }
-    });
-  });
-
-  // Close mobile sidebar on window resize to desktop
-  window.addEventListener('resize', () => {
-    if (window.innerWidth > 768) {
-      closeMobileSidebar();
-    }
-  });
-
-
-  const btnTrimRackBtn = document.getElementById('btnTrimRackBtn');
-  if (btnTrimRackBtn) {
-    btnTrimRackBtn.addEventListener('click', openResetOptionsModal);
-  }
-
-  // Reset Modal Action Listeners
-  const resetOptionsModal = document.getElementById('resetOptionsModal');
-  const closeResetOptionsBtn = document.getElementById('closeResetOptionsBtn');
-  const cancelResetOptionsBtn = document.getElementById('cancelResetOptionsBtn');
-  const btnResetOptionTrim = document.getElementById('btnResetOptionTrim');
-  const btnResetOptionSales = document.getElementById('btnResetOptionSales');
-  const btnResetOptionScanner = document.getElementById('btnResetOptionScanner');
-  const btnResetOptionWipe = document.getElementById('btnResetOptionWipe');
-
-  closeResetOptionsBtn?.addEventListener('click', () => resetOptionsModal?.close());
-  cancelResetOptionsBtn?.addEventListener('click', () => resetOptionsModal?.close());
-
-  btnResetOptionTrim?.addEventListener('click', () => {
-    resetOptionsModal?.close();
-    executeTrimRack();
-  });
-
-  btnResetOptionSales?.addEventListener('click', () => {
-    resetOptionsModal?.close();
-    executeResetShiftSales();
-  });
-
-  btnResetOptionScanner?.addEventListener('click', () => {
-    resetOptionsModal?.close();
-    executeResetScanner();
-  });
-
-  btnResetOptionWipe?.addEventListener('click', () => {
-    resetOptionsModal?.close();
-    executeWipeAllData();
-  });
-
-  const btnAddDispenserBoxBtn = document.getElementById('btnAddDispenserBoxBtn');
-  if (btnAddDispenserBoxBtn) {
-    btnAddDispenserBoxBtn.addEventListener('click', () => {
-      openActivationForBox(findFirstEmptyBox());
-    });
-  }
-
-
-
-  // Settings Modal controls
-  const settingsModal = document.getElementById('settingsModal');
-  const closeSettingsBtn = document.getElementById('closeSettingsBtn');
-  const cancelSettingsBtn = document.getElementById('cancelSettingsBtn');
-  const saveSettingsBtn = document.getElementById('saveSettingsBtn');
-  const settingStoreName = document.getElementById('settingStoreName');
-  const settingCashierName = document.getElementById('settingCashierName');
-  const settingTargetEmail = document.getElementById('settingTargetEmail');
-  const settingOperationMode = document.getElementById('settingOperationMode');
-  const settingSoundToggle = document.getElementById('settingSoundToggle');
-
-  function openSettingsModal() {
-    if (!settingsModal) return;
-    settingStoreName.value = state.storeName || 'LOTTO EXPRESS POS';
-    settingCashierName.value = state.cashierName || 'CLERK';
-    settingTargetEmail.value = state.settings?.targetEmails || 'manager@eltesystemsoftware.com';
-    if (settingOperationMode) {
-      settingOperationMode.value = state.settings?.operationMode || 'DAILY';
-    }
-    settingSoundToggle.checked = state.settings?.soundEnabled !== false;
-    sfx.keypad();
-    settingsModal.showModal();
-  }
-
-  function saveSettings() {
-    state.storeName = settingStoreName.value.trim() || 'LOTTO EXPRESS POS';
-    state.cashierName = settingCashierName.value.trim() || 'CLERK';
-    if (!state.settings) state.settings = {};
-    state.settings.targetEmails = settingTargetEmail.value.trim() || '';
-    if (settingOperationMode) {
-      state.settings.operationMode = settingOperationMode.value;
-    }
-    state.settings.soundEnabled = settingSoundToggle.checked;
-    sfx.muted = !state.settings.soundEnabled;
-
-    saveState(state);
-    settingsModal.close();
-    sfx.success();
-    renderHeaderAndMetrics();
-    renderDispenserRack();
-    renderSlotsRibbon();
-    if (inventoryStatusModal && inventoryStatusModal.open) {
-      renderInventoryStatusModal();
-    }
-    if (inventoryModal && inventoryModal.open) {
-      renderInventoryTable();
-    }
-    const isDaily = state.settings?.operationMode !== 'SHIFTS';
-    showToast(`✓ Workflow Mode set to: ${isDaily ? 'Daily Mode' : 'Shift Mode'}!`, 'success');
-  }
-
-  closeSettingsBtn?.addEventListener('click', () => settingsModal.close());
-  cancelSettingsBtn?.addEventListener('click', () => settingsModal.close());
-  saveSettingsBtn?.addEventListener('click', saveSettings);
-
-  function exportHistoryToCSV() {
-    if (!state.shiftHistory || state.shiftHistory.length === 0) {
-      showToast('No history to export yet!', 'info');
-      return;
+      styleEl.textContent = cssText;
     }
 
-    const isDaily = state.settings?.operationMode !== 'SHIFTS';
-    const headers = [isDaily ? 'Day / Shift' : 'Shift #', 'Cashier', 'Started At', 'Ended At', 'Tickets Sold', 'Revenue ($)', 'Activations'];
-    const rows = state.shiftHistory.map(h => [
-      h.shiftNumber,
-      `"${h.cashier || ''}"`,
-      `"${h.startedAt || ''}"`,
-      `"${h.endedAt || ''}"`,
-      h.totalTicketsSold || 0,
-      Number(h.totalSalesRevenue || 0).toFixed(2),
-      h.activationsCount || 0
-    ]);
-
-    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map(e => e.join(','))].join('\n');
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `lotto_${isDaily ? 'day' : 'shift'}_history_${new Date().toISOString().split('T')[0]}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    sfx.chime();
-    showToast(isDaily ? '✓ Daily history exported to CSV!' : '✓ Shift history exported to CSV!', 'success');
-  }
-
-  const exportHistoryCsvBtn = document.getElementById('exportHistoryCsvBtn');
-  if (exportHistoryCsvBtn) {
-    exportHistoryCsvBtn.addEventListener('click', exportHistoryToCSV);
-  }
-
-  // End Shift Confirm Modal buttons
-  closeEndShiftConfirmBtn?.addEventListener('click', () => endShiftConfirmModal.close());
-  confCancelBtn?.addEventListener('click', () => endShiftConfirmModal.close());
-  confConfirmBtn?.addEventListener('click', executeGetReportWithLoading);
-  endShiftConfirmModal?.addEventListener('close', () => {
-    if (state.shiftStatus === 'SCANNING_END_SHIFT') {
-      const toast = document.getElementById('endShiftScanningToast');
-      if (toast) toast.style.display = 'none';
-    }
-  });
-
-  // -------------------------------------------------------------
-  // Thermal Slip (80mm) and Full-Page Report Printing Engine
-  // -------------------------------------------------------------
-  function setDynamicPrintPageSize(cssText) {
-    let styleEl = document.getElementById('dynamicPrintPageStyle');
-    if (!styleEl) {
-      styleEl = document.createElement('style');
-      styleEl.id = 'dynamicPrintPageStyle';
-      document.head.appendChild(styleEl);
-    }
-    styleEl.textContent = cssText;
-  }
-
-  function printReceiptSlip() {
-    document.body.classList.remove('print-fullpage-report');
-    document.body.classList.remove('print-day-report');
-    setDynamicPrintPageSize(`
+    function printReceiptSlip() {
+      document.body.classList.remove('print-fullpage-report');
+      document.body.classList.remove('print-day-report');
+      setDynamicPrintPageSize(`
       @page {
         size: 80mm auto !important;
         margin: 0mm !important;
       }
     `);
-    sfx.chime();
-    window.print();
-  }
+      sfx.chime();
+      window.print();
+    }
 
-  function printFullPageReport() {
-    document.body.classList.remove('print-day-report');
-    document.body.classList.add('print-fullpage-report');
-    setDynamicPrintPageSize(`
+    function printFullPageReport() {
+      document.body.classList.remove('print-day-report');
+      document.body.classList.add('print-fullpage-report');
+      setDynamicPrintPageSize(`
       @page {
         size: letter portrait !important;
         margin: 10mm !important;
       }
     `);
-    sfx.chime();
-    window.print();
-  }
+      sfx.chime();
+      window.print();
+    }
 
-  window.addEventListener('beforeprint', () => {
-    const viewReport = document.getElementById('viewDayReport');
-    if (viewReport && viewReport.style.display !== 'none' && !document.body.classList.contains('print-fullpage-report') && !document.body.classList.contains('print-day-report')) {
-      document.body.classList.add('print-day-report-sheet');
-      setDynamicPrintPageSize(`
+    window.addEventListener('beforeprint', () => {
+      const viewReport = document.getElementById('viewDayReport');
+      if (viewReport && viewReport.style.display !== 'none' && !document.body.classList.contains('print-fullpage-report') && !document.body.classList.contains('print-day-report')) {
+        document.body.classList.add('print-day-report-sheet');
+        setDynamicPrintPageSize(`
         @page {
           size: letter portrait !important;
           margin: 8mm 10mm !important;
         }
       `);
-    }
-  });
+      }
+    });
 
-  window.addEventListener('afterprint', () => {
-    document.body.classList.remove('print-fullpage-report');
-    document.body.classList.remove('print-day-report');
-    document.body.classList.remove('print-day-report-sheet');
-  });
+    window.addEventListener('afterprint', () => {
+      document.body.classList.remove('print-fullpage-report');
+      document.body.classList.remove('print-day-report');
+      document.body.classList.remove('print-day-report-sheet');
+    });
 
-  // Shift Report Modal buttons
-  closeReportBtn.addEventListener('click', () => shiftReportModal.close());
-  reportPrintBtn.addEventListener('click', () => {
-    printReceiptSlip();
-  });
-  if (reportPrintFullBtn) {
-    reportPrintFullBtn.addEventListener('click', () => {
-      openTerminalReconcileModal(() => {
-        openDayReportModal(() => state, sfx);
+    // Shift Report Modal buttons
+    closeReportBtn.addEventListener('click', () => shiftReportModal.close());
+    reportPrintBtn.addEventListener('click', () => {
+      printReceiptSlip();
+    });
+    if (reportPrintFullBtn) {
+      reportPrintFullBtn.addEventListener('click', () => {
+        openTerminalReconcileModal(() => {
+          openDayReportModal(() => state, sfx);
+        });
       });
+    }
+    reportEmailBtn.addEventListener('click', () => {
+      sfx.success();
+      showToast(`✓ Shift Report emailed to: ${state.settings.targetEmails}`, 'success');
     });
-  }
-  reportEmailBtn.addEventListener('click', () => {
-    sfx.success();
-    showToast(`✓ Shift Report emailed to: ${state.settings.targetEmails}`, 'success');
-  });
-  reportNewShiftBtn.addEventListener('click', startNewShift);
+    reportNewShiftBtn.addEventListener('click', startNewShift);
 
-  // Inventory Modal buttons
-  tabUpdateInventory?.addEventListener('click', () => {
-    sfx.keypad();
-    openInventoryModal('all');
-    setTimeout(() => {
-      document.getElementById('invSearchInput')?.focus();
-    }, 120);
-    voice.speak('Update inventory');
-    showToast('📋 Search or audit dispenser boxes and stored inventory.', 'info');
-  });
-  document.getElementById('tabInventoryStatus')?.addEventListener('click', () => {
-    sfx.keypad();
-    openInventoryStatusModal('active');
-  });
-  closeInventoryBtn?.addEventListener('click', () => inventoryModal.close());
-  inventoryDoneBtn?.addEventListener('click', () => inventoryModal.close());
-  setupInventoryModalLogic();
-
-  // -------------------------------------------------------------
-  // Modern Settlement & List Quick-View Modals (Main.dc.html)
-  // -------------------------------------------------------------
-  function openModernSettlementModal() {
-    const modal = document.getElementById('settlementModernModal');
-    if (!modal) return;
-    const isShift = state.shiftStatus === 'IN_PROGRESS' || state.shiftStatus === 'SCANNING_END_SHIFT';
-    const ownerName = state.currentUser?.name || 'Maulik';
-    const subtitle = isShift ? `Shift #${state.shiftNumber || 13} · ${ownerName} · started ${state.shiftStartTime || '7:02 AM'}` : 'No shift open';
-    const stSubtitle = document.getElementById('stSubtitle');
-    if (stSubtitle) stSubtitle.textContent = subtitle;
-
-    const totalBoxes = state.slots.length || 65;
-    const scannedCount = state.slots.filter(s => s.scannedInEndShift).length;
-    const stScannedCount = document.getElementById('stScannedCount');
-    if (stScannedCount) stScannedCount.textContent = `${scannedCount} / ${totalBoxes}`;
-
-    const stScannedNote = document.getElementById('stScannedNote');
-    if (stScannedNote) {
-      stScannedNote.textContent = state.shiftStatus === 'SCANNING_END_SHIFT'
-        ? `${totalBoxes - scannedCount} left to scan`
-        : 'Tap End Shift to start scanning';
-    }
-
-    let tickets = 0;
-    let sales = 0;
-    state.slots.forEach(s => {
-      if (s.status === 'ACTIVE' && s.packNumber) {
-        const sold = Math.max(0, (s.currentTicket || 0) - (s.startTicket || 0));
-        tickets += sold;
-        sales += sold * (s.price || 0);
-      }
+    // Inventory Modal buttons
+    tabUpdateInventory?.addEventListener('click', () => {
+      sfx.keypad();
+      openInventoryModal('all');
+      setTimeout(() => {
+        document.getElementById('invSearchInput')?.focus();
+      }, 120);
+      voice.speak('Update inventory');
+      showToast('📋 Search or audit dispenser boxes and stored inventory.', 'info');
     });
+    document.getElementById('tabInventoryStatus')?.addEventListener('click', () => {
+      sfx.keypad();
+      openInventoryStatusModal('active');
+    });
+    closeInventoryBtn?.addEventListener('click', () => inventoryModal.close());
+    inventoryDoneBtn?.addEventListener('click', () => inventoryModal.close());
+    setupInventoryModalLogic();
 
-    const stTicketsSold = document.getElementById('stTicketsSold');
-    if (stTicketsSold) stTicketsSold.textContent = tickets;
-    const stTicketSales = document.getElementById('stTicketSales');
-    if (stTicketSales) stTicketSales.textContent = `$${sales.toFixed(2)}`;
+    // -------------------------------------------------------------
+    // Modern Settlement & List Quick-View Modals (Main.dc.html)
+    // -------------------------------------------------------------
+    function openModernSettlementModal() {
+      const modal = document.getElementById('settlementModernModal');
+      if (!modal) return;
+      const isShift = state.shiftStatus === 'IN_PROGRESS' || state.shiftStatus === 'SCANNING_END_SHIFT';
+      const ownerName = state.cashierName || state.currentUser?.name || '—';
+      const startedTimeStr = state.shiftStartedAt
+        ? new Date(state.shiftStartedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+        : (state.shiftStartTime || '—');
+      const subtitle = isShift ? `Shift #${state.shiftNumber || 1} · ${ownerName} · started ${startedTimeStr}` : 'No shift open';
+      const stSubtitle = document.getElementById('stSubtitle');
+      if (stSubtitle) stSubtitle.textContent = subtitle;
 
-    // Last closed shift (most recent is at index 0 of shiftHistory)
-    const lastHistory = (state.shiftHistory || [])[0];
-    const stLastShiftNo = document.getElementById('stLastShiftNo');
-    const stLastShiftBy = document.getElementById('stLastShiftBy');
-    const stLastShiftTickets = document.getElementById('stLastShiftTickets');
-    const stLastShiftSales = document.getElementById('stLastShiftSales');
-    const stLastShiftBoxes = document.getElementById('stLastShiftBoxes');
-    const stLastShiftMail = document.getElementById('stLastShiftMail');
+      const totalBoxes = state.slots.length || state.totalSlots || 65;
+      const scannedCount = state.slots.filter(s => s.scannedInEndShift).length;
+      const stScannedCount = document.getElementById('stScannedCount');
+      if (stScannedCount) stScannedCount.textContent = `${scannedCount} / ${totalBoxes}`;
 
-    if (lastHistory && !state.dataCleared) {
-      if (stLastShiftNo) stLastShiftNo.textContent = `#${lastHistory.shiftNumber || 1}`;
-      if (stLastShiftBy) stLastShiftBy.textContent = `${lastHistory.cashier || 'Cashier'} · closed ${lastHistory.closedAt || lastHistory.endedAt ? new Date(lastHistory.endedAt || lastHistory.closedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }) : 'Earlier'}`;
-      if (stLastShiftTickets) stLastShiftTickets.textContent = lastHistory.totalTicketsSold ?? 0;
-      const actBoxes = Array.isArray(lastHistory.slotsSnapshot)
-        ? lastHistory.slotsSnapshot.filter(s => s && s.status === 'ACTIVE' && s.packNumber).length
-        : (lastHistory.activeBoxesCount || 0);
-      if (stLastShiftBoxes) stLastShiftBoxes.textContent = `${actBoxes} boxes`;
-      const rev = lastHistory.totalSalesRevenue !== undefined ? lastHistory.totalSalesRevenue : (lastHistory.totalSalesAmount || 0);
-      if (stLastShiftSales) stLastShiftSales.textContent = `$${Number(rev || 0).toFixed(2)}`;
-      if (stLastShiftMail) stLastShiftMail.textContent = lastHistory.emailStatus === 'sent' ? 'Email sent' : 'Report saved';
-    } else {
-      if (stLastShiftNo) stLastShiftNo.textContent = 'None';
-      if (stLastShiftBy) stLastShiftBy.textContent = 'No closed shifts yet';
-      if (stLastShiftTickets) stLastShiftTickets.textContent = '0';
-      if (stLastShiftBoxes) stLastShiftBoxes.textContent = '0 boxes';
-      if (stLastShiftSales) stLastShiftSales.textContent = '$0.00';
-      if (stLastShiftMail) stLastShiftMail.textContent = '—';
-    }
-
-    const endShiftBtn = document.getElementById('stEndShiftBtn');
-    if (endShiftBtn) {
-      if (state.shiftStatus === 'SHIFT_ENDED') {
-        endShiftBtn.textContent = 'Start Shift';
-        endShiftBtn.style.cssText = 'background: #15803d !important; color: #ffffff !important; border: 1px solid #15803d !important; cursor: pointer !important; font-weight: 700 !important;';
-      } else if (state.shiftStatus === 'SCANNING_END_SHIFT') {
-        endShiftBtn.textContent = 'Get Report';
-        endShiftBtn.style.cssText = 'background: #2563eb !important; color: #ffffff !important; border: 1px solid #2563eb !important; cursor: pointer !important; font-weight: 700 !important;';
-      } else {
-        endShiftBtn.textContent = 'End Shift';
-        endShiftBtn.style.cssText = 'background: #0f172a !important; color: #ffffff !important; border: 1px solid #0f172a !important; cursor: pointer !important; font-weight: 700 !important;';
+      const stScannedNote = document.getElementById('stScannedNote');
+      if (stScannedNote) {
+        stScannedNote.textContent = state.shiftStatus === 'SCANNING_END_SHIFT'
+          ? `${totalBoxes - scannedCount} left to scan`
+          : 'Tap End Shift to start scanning';
       }
-      endShiftBtn.onclick = () => {
-        modal.close();
-        handleMainShiftAction();
-      };
-    }
 
-    const viewReportsBtn = document.getElementById('stViewAllReportsBtn');
-    if (viewReportsBtn) {
-      viewReportsBtn.onclick = () => {
-        modal.close();
-        showHistoryView();
-      };
-    }
+      let tickets = 0;
+      let sales = 0;
+      state.slots.forEach(s => {
+        if (isBoxActive(s)) {
+          const sold = calculateSlotSoldTickets(s);
+          tickets += sold;
+          sales += sold * (s.price || 0);
+        }
+      });
 
-    const closeBtn = document.getElementById('closeSettlementModalBtn');
-    if (closeBtn) closeBtn.onclick = () => modal.close();
+      const stTicketsSold = document.getElementById('stTicketsSold');
+      if (stTicketsSold) stTicketsSold.textContent = tickets;
+      const stTicketSales = document.getElementById('stTicketSales');
+      if (stTicketSales) stTicketSales.textContent = `$${sales.toFixed(2)}`;
 
-    sfx.keypad();
-    modal.showModal();
-  }
+      // Last closed shift (most recent is at index 0 of shiftHistory)
+      const lastHistory = (state.shiftHistory || [])[0];
+      const stLastShiftNo = document.getElementById('stLastShiftNo');
+      const stLastShiftBy = document.getElementById('stLastShiftBy');
+      const stLastShiftTickets = document.getElementById('stLastShiftTickets');
+      const stLastShiftSales = document.getElementById('stLastShiftSales');
+      const stLastShiftBoxes = document.getElementById('stLastShiftBoxes');
+      const stLastShiftMail = document.getElementById('stLastShiftMail');
 
-  function openModernListQuickView(type) {
-    const modal = document.getElementById('listQuickViewModal');
-    if (!modal) return;
-
-    const LIST_INFO = {
-      month: ['Activated this month', 'Books put in a box since Oct 1', 'Activated'],
-      week: ['Activated this week', 'Books put in a box in the last 7 days', 'Activated'],
-      today: ['Activated today', 'Books put in a box today', 'Activated'],
-      idle: ['Inactive books', 'Books in safe / stock not yet loaded into a dispenser box', 'Location']
-    };
-
-    const info = LIST_INFO[type] || LIST_INFO.month;
-    const plH = document.getElementById('pl-h');
-    if (plH) plH.textContent = info[0];
-    const plSubtitle = document.getElementById('plSubtitle');
-    if (plSubtitle) plSubtitle.textContent = info[1];
-    const plColHeader = document.getElementById('plColHeader');
-    if (plColHeader) plColHeader.textContent = info[2];
-
-    let itemsToRender = [];
-    if (type === 'idle') {
-      // In-stock inventory packs not assigned to any dispenser box (Safe / In Stock)
-      itemsToRender = (state.inStockInventory || []).filter(p => !p.boxNumber).map(p => ({
-        boxDisplay: 'Safe',
-        isSafe: true,
-        gameName: p.gameName || 'Scratch-Off Game',
-        gameId: p.gameId || p.gameNumber || 'Safe',
-        packNumber: p.packNumber,
-        price: p.price || 1,
-        currentTicket: p.currentTicket || 0,
-        extraTagText: 'In Safe (Not in box)',
-        tagCls: 'tag-warn',
-        rawItem: p
-      }));
-    } else {
-      itemsToRender = state.slots.filter(slot => {
-        if (slot.status !== 'ACTIVE' || !slot.packNumber) return false;
-        const days = slot.daysActive || 0;
-        if (type === 'today') return days === 0 || slot.activatedThisShift;
-        if (type === 'week') return days <= 7;
-        if (type === 'month') return days <= 30;
-        return true;
-      }).sort((a, b) => (a.daysActive || 0) - (b.daysActive || 0)).map(s => ({
-        boxDisplay: String(s.boxNumber),
-        boxNumber: s.boxNumber,
-        isSafe: false,
-        gameName: s.gameName,
-        gameId: s.gameId || '1421',
-        packNumber: s.packNumber,
-        price: s.price || 1,
-        currentTicket: s.currentTicket || 0,
-        extraTagText: s.daysActive === 0 ? 'Today' : (s.daysActive === 1 ? 'Yesterday' : `${s.daysActive} days ago`),
-        tagCls: 'tag-muted',
-        rawSlot: s
-      }));
-    }
-
-    const plCountBadge = document.getElementById('plCountBadge');
-    if (plCountBadge) plCountBadge.textContent = itemsToRender.length;
-
-    const tbody = document.getElementById('plTableBody');
-    if (tbody) {
-      if (itemsToRender.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding: 28px; color: var(--ink-3);">No matching books found.</td></tr>`;
+      if (lastHistory && !state.dataCleared) {
+        if (stLastShiftNo) stLastShiftNo.textContent = `#${lastHistory.shiftNumber || 1}`;
+        if (stLastShiftBy) stLastShiftBy.textContent = `${lastHistory.cashier || 'Cashier'} · closed ${lastHistory.closedAt || lastHistory.endedAt ? new Date(lastHistory.endedAt || lastHistory.closedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }) : 'Earlier'}`;
+        if (stLastShiftTickets) stLastShiftTickets.textContent = lastHistory.totalTicketsSold ?? 0;
+        const actBoxes = Array.isArray(lastHistory.slotsSnapshot)
+          ? lastHistory.slotsSnapshot.filter(isBoxActive).length
+          : (lastHistory.activeBoxesCount || 0);
+        if (stLastShiftBoxes) stLastShiftBoxes.textContent = `${actBoxes} boxes`;
+        const rev = lastHistory.totalSalesRevenue !== undefined ? lastHistory.totalSalesRevenue : (lastHistory.totalSalesAmount || 0);
+        if (stLastShiftSales) stLastShiftSales.textContent = `$${Number(rev || 0).toFixed(2)}`;
+        if (stLastShiftMail) stLastShiftMail.textContent = lastHistory.emailStatus === 'sent' ? 'Email sent' : 'Report saved';
       } else {
-        tbody.innerHTML = itemsToRender.map((b, idx) => {
-          const cleanName = cleanGameTitle(b.gameName);
-          const boxBadge = b.isSafe
-            ? `<span class="boxn" style="display:inline-grid;place-items:center;min-width:44px;padding:0 6px;height:28px;border-radius:7px;background:var(--surface-3);font-weight:700;font-size:12px;color:var(--ink-2);">Safe</span>`
-            : `<span class="boxn" style="display:inline-grid;place-items:center;min-width:36px;height:28px;border-radius:7px;background:var(--surface-3);font-weight:800;">${b.boxDisplay}</span>`;
-          return `
+        if (stLastShiftNo) stLastShiftNo.textContent = 'None';
+        if (stLastShiftBy) stLastShiftBy.textContent = 'No closed shifts yet';
+        if (stLastShiftTickets) stLastShiftTickets.textContent = '0';
+        if (stLastShiftBoxes) stLastShiftBoxes.textContent = '0 boxes';
+        if (stLastShiftSales) stLastShiftSales.textContent = '$0.00';
+        if (stLastShiftMail) stLastShiftMail.textContent = '—';
+      }
+
+      const endShiftBtn = document.getElementById('stEndShiftBtn');
+      if (endShiftBtn) {
+        if (state.shiftStatus === 'SHIFT_ENDED') {
+          endShiftBtn.textContent = 'Start Shift';
+          endShiftBtn.style.cssText = 'background: #15803d !important; color: #ffffff !important; border: 1px solid #15803d !important; cursor: pointer !important; font-weight: 700 !important;';
+        } else if (state.shiftStatus === 'SCANNING_END_SHIFT') {
+          endShiftBtn.textContent = 'Get Report';
+          endShiftBtn.style.cssText = 'background: #2563eb !important; color: #ffffff !important; border: 1px solid #2563eb !important; cursor: pointer !important; font-weight: 700 !important;';
+        } else {
+          endShiftBtn.textContent = 'End Shift';
+          endShiftBtn.style.cssText = 'background: #0f172a !important; color: #ffffff !important; border: 1px solid #0f172a !important; cursor: pointer !important; font-weight: 700 !important;';
+        }
+        endShiftBtn.onclick = () => {
+          modal.close();
+          handleMainShiftAction();
+        };
+      }
+
+      const viewReportsBtn = document.getElementById('stViewAllReportsBtn');
+      if (viewReportsBtn) {
+        viewReportsBtn.onclick = () => {
+          modal.close();
+          showHistoryView();
+        };
+      }
+
+      const closeBtn = document.getElementById('closeSettlementModalBtn');
+      if (closeBtn) closeBtn.onclick = () => modal.close();
+
+      sfx.keypad();
+      modal.showModal();
+    }
+
+    function openModernListQuickView(type) {
+      const modal = document.getElementById('listQuickViewModal');
+      if (!modal) return;
+
+      const LIST_INFO = {
+        month: ['Activated this month', 'Books put in a box since Oct 1', 'Activated'],
+        week: ['Activated this week', 'Books put in a box in the last 7 days', 'Activated'],
+        today: ['Activated today', 'Books put in a box today', 'Activated'],
+        idle: ['Inactive books', 'Books in safe / stock not yet loaded into a dispenser box', 'Location']
+      };
+
+      const info = LIST_INFO[type] || LIST_INFO.month;
+      const plH = document.getElementById('pl-h');
+      if (plH) plH.textContent = info[0];
+      const plSubtitle = document.getElementById('plSubtitle');
+      if (plSubtitle) plSubtitle.textContent = info[1];
+      const plColHeader = document.getElementById('plColHeader');
+      if (plColHeader) plColHeader.textContent = info[2];
+
+      let itemsToRender = [];
+      if (type === 'idle') {
+        // In-stock inventory packs not assigned to any dispenser box (Safe / In Stock)
+        itemsToRender = (state.inStockInventory || []).filter(p => !p.boxNumber).map(p => ({
+          boxDisplay: 'Safe',
+          isSafe: true,
+          gameName: p.gameName || 'Scratch-Off Game',
+          gameId: p.gameId || p.gameNumber || 'Safe',
+          packNumber: p.packNumber,
+          price: p.price || 1,
+          currentTicket: p.currentTicket || 0,
+          extraTagText: 'In Safe (Not in box)',
+          tagCls: 'tag-warn',
+          rawItem: p
+        }));
+      } else {
+        itemsToRender = state.slots.filter(slot => {
+          if (slot.status !== 'ACTIVE' || !slot.packNumber) return false;
+          const days = slot.daysActive || 0;
+          if (type === 'today') return days === 0 || slot.activatedThisShift;
+          if (type === 'week') return days <= 7;
+          if (type === 'month') return days <= 30;
+          return true;
+        }).sort((a, b) => (a.daysActive || 0) - (b.daysActive || 0)).map(s => ({
+          boxDisplay: String(s.boxNumber),
+          boxNumber: s.boxNumber,
+          isSafe: false,
+          gameName: s.gameName,
+          gameId: s.gameId || '1421',
+          packNumber: s.packNumber,
+          price: s.price || 1,
+          currentTicket: s.currentTicket || 0,
+          extraTagText: s.daysActive === 0 ? 'Today' : (s.daysActive === 1 ? 'Yesterday' : `${s.daysActive} days ago`),
+          tagCls: 'tag-muted',
+          rawSlot: s
+        }));
+      }
+
+      const plCountBadge = document.getElementById('plCountBadge');
+      if (plCountBadge) plCountBadge.textContent = itemsToRender.length;
+
+      const tbody = document.getElementById('plTableBody');
+      if (tbody) {
+        if (itemsToRender.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding: 28px; color: var(--ink-3);">No matching books found.</td></tr>`;
+        } else {
+          tbody.innerHTML = itemsToRender.map((b, idx) => {
+            const cleanName = cleanGameTitle(b.gameName);
+            const boxBadge = b.isSafe
+              ? `<span class="boxn" style="display:inline-grid;place-items:center;min-width:44px;padding:0 6px;height:28px;border-radius:7px;background:var(--surface-3);font-weight:700;font-size:12px;color:var(--ink-2);">Safe</span>`
+              : `<span class="boxn" style="display:inline-grid;place-items:center;min-width:36px;height:28px;border-radius:7px;background:var(--surface-3);font-weight:800;">${b.boxDisplay}</span>`;
+            return `
             <tr style="cursor: pointer;" data-index="${idx}">
               <td>${boxBadge}</td>
-              <td class="g"><b style="display:block;font-weight:700;">${cleanName}</b><span style="font-size:12px;color:var(--ink-3);font-family:var(--mono);">${b.gameId} · ${b.packNumber}</span></td>
+              <td class="g"><b style="display:block;font-weight:700;">${cleanName}</b><span style="font-size:12px;color:var(--ink-3);font-family:var(--mono);">${b.gameId} · ${formatDisplayPackNumber(b.packNumber)}</span></td>
               <td class="r money" style="text-align:right;font-weight:700;color:var(--money);">$${b.price}</td>
               <td class="r mono" style="text-align:right;font-weight:700;font-size:16px;">#${String(b.currentTicket || 0).padStart(3, '0')}</td>
               <td class="r" style="text-align:right;"><span class="tag ${b.tagCls}">${b.extraTagText}</span></td>
             </tr>
           `;
-        }).join('');
+          }).join('');
 
-        tbody.querySelectorAll('tr[data-index]').forEach(row => {
-          row.addEventListener('click', () => {
-            const idx = Number(row.dataset.index);
-            const item = itemsToRender[idx];
-            modal.close();
-            if (item) {
-              if (item.isSafe && item.rawItem) {
-                openInStockDetailModal(item.rawItem);
-              } else if (item.rawSlot) {
-                openBoxAdjustModal(item.rawSlot);
+          tbody.querySelectorAll('tr[data-index]').forEach(row => {
+            row.addEventListener('click', () => {
+              const idx = Number(row.dataset.index);
+              const item = itemsToRender[idx];
+              modal.close();
+              if (item) {
+                if (item.isSafe && item.rawItem) {
+                  openInStockDetailModal(item.rawItem);
+                } else if (item.rawSlot) {
+                  openBoxAdjustModal(item.rawSlot);
+                }
               }
-            }
+            });
           });
-        });
+        }
       }
+
+      const closeBtn1 = document.getElementById('closeListQuickViewBtn');
+      if (closeBtn1) closeBtn1.onclick = () => modal.close();
+      const closeBtn2 = document.getElementById('closeListQuickViewBtn2');
+      if (closeBtn2) closeBtn2.onclick = () => modal.close();
+
+      sfx.keypad();
+      modal.showModal();
     }
 
-    const closeBtn1 = document.getElementById('closeListQuickViewBtn');
-    if (closeBtn1) closeBtn1.onclick = () => modal.close();
-    const closeBtn2 = document.getElementById('closeListQuickViewBtn2');
-    if (closeBtn2) closeBtn2.onclick = () => modal.close();
+    // Summary Metric Tabs Click Handlers (Opening Modern Main.dc.html Modals)
+    document.getElementById('tabSettlement')?.addEventListener('click', () => {
+      openModernSettlementModal();
+    });
 
-    sfx.keypad();
-    modal.showModal();
-  }
+    document.getElementById('tabToday')?.addEventListener('click', () => {
+      openModernListQuickView('today');
+    });
 
-  // Summary Metric Tabs Click Handlers (Opening Modern Main.dc.html Modals)
-  document.getElementById('tabSettlement')?.addEventListener('click', () => {
-    openModernSettlementModal();
-  });
+    document.getElementById('tabThisWeek')?.addEventListener('click', () => {
+      openModernListQuickView('week');
+    });
 
-  document.getElementById('tabToday')?.addEventListener('click', () => {
-    openModernListQuickView('today');
-  });
+    document.getElementById('tabThisMonth')?.addEventListener('click', () => {
+      openModernListQuickView('month');
+    });
 
-  document.getElementById('tabThisWeek')?.addEventListener('click', () => {
-    openModernListQuickView('week');
-  });
-
-  document.getElementById('tabThisMonth')?.addEventListener('click', () => {
-    openModernListQuickView('month');
-  });
-
-  document.getElementById('tabInactive')?.addEventListener('click', () => {
-    openModernListQuickView('idle');
-  });
+    document.getElementById('tabInactive')?.addEventListener('click', () => {
+      openModernListQuickView('idle');
+    });
 
 
-  // -------------------------------------------------------------
-  // 5-Step Voice-Guided Pack Intake & Shift Workflow (AMIGO FOOD MART)
-  // -------------------------------------------------------------
-  function initGuidedWorkflow() {
-    const modal = document.getElementById('guidedWorkflowModal');
-    const openBtn = document.getElementById('menuVoiceGuideBtn');
-    const closeBtn = document.getElementById('closeGuidedWorkflowBtn');
-    if (!modal) return;
+    // -------------------------------------------------------------
+    // 5-Step Voice-Guided Pack Intake & Shift Workflow (AMIGO FOOD MART)
+    // -------------------------------------------------------------
+    function initGuidedWorkflow() {
+      const modal = document.getElementById('guidedWorkflowModal');
+      const openBtn = document.getElementById('menuVoiceGuideBtn');
+      const closeBtn = document.getElementById('closeGuidedWorkflowBtn');
+      if (!modal) return;
 
-    let currentStep = 1;
+      let currentStep = 1;
 
-    const stepBadges = [
-      document.getElementById('stepBadge1'),
-      document.getElementById('stepBadge2'),
-      document.getElementById('stepBadge3'),
-      document.getElementById('stepBadge4'),
-      document.getElementById('stepBadge5')
-    ];
+      const stepBadges = [
+        document.getElementById('stepBadge1'),
+        document.getElementById('stepBadge2'),
+        document.getElementById('stepBadge3'),
+        document.getElementById('stepBadge4'),
+        document.getElementById('stepBadge5')
+      ];
 
-    const stepPanes = [
-      document.getElementById('stepContainer1'),
-      document.getElementById('stepContainer2'),
-      document.getElementById('stepContainer3'),
-      document.getElementById('stepContainer4'),
-      document.getElementById('stepContainer5')
-    ];
+      const stepPanes = [
+        document.getElementById('stepContainer1'),
+        document.getElementById('stepContainer2'),
+        document.getElementById('stepContainer3'),
+        document.getElementById('stepContainer4'),
+        document.getElementById('stepContainer5')
+      ];
 
-    const voiceTextEl = document.getElementById('guidedVoiceText');
-    const btnReplayVoice = document.getElementById('btnReplayVoice');
+      const voiceTextEl = document.getElementById('guidedVoiceText');
+      const btnReplayVoice = document.getElementById('btnReplayVoice');
 
-    // Step 1 Elements
-    const guidedBarcodeInput = document.getElementById('guidedBarcodeInput');
-    const btnGuidedSimulateScan = document.getElementById('btnGuidedSimulateScan');
-    const yellowTicketsGrid = document.getElementById('yellowTicketsGrid');
-    const btnStep1Next = document.getElementById('btnStep1Next');
+      // Step 1 Elements
+      const guidedBarcodeInput = document.getElementById('guidedBarcodeInput');
+      const btnGuidedSimulateScan = document.getElementById('btnGuidedSimulateScan');
+      const yellowTicketsGrid = document.getElementById('yellowTicketsGrid');
+      const btnStep1Next = document.getElementById('btnStep1Next');
 
-    // Step 2 Elements
-    const btnFeedbackRescan = document.getElementById('btnFeedbackRescan');
-    const btnFeedbackDuplicate = document.getElementById('btnFeedbackDuplicate');
-    const btnFeedbackScanning = document.getElementById('btnFeedbackScanning');
-    const btnFeedbackSuccess = document.getElementById('btnFeedbackSuccess');
-    const guidedFeedbackLog = document.getElementById('guidedFeedbackLog');
-    const btnStep2Back = document.getElementById('btnStep2Back');
-    const btnStep2Next = document.getElementById('btnStep2Next');
+      // Step 2 Elements
+      const btnFeedbackRescan = document.getElementById('btnFeedbackRescan');
+      const btnFeedbackDuplicate = document.getElementById('btnFeedbackDuplicate');
+      const btnFeedbackScanning = document.getElementById('btnFeedbackScanning');
+      const btnFeedbackSuccess = document.getElementById('btnFeedbackSuccess');
+      const guidedFeedbackLog = document.getElementById('guidedFeedbackLog');
+      const btnStep2Back = document.getElementById('btnStep2Back');
+      const btnStep2Next = document.getElementById('btnStep2Next');
 
-    // Step 3 Elements
-    const guidedBoxInput = document.getElementById('guidedBoxInput');
-    const btnConfirmBoxNum = document.getElementById('btnConfirmBoxNum');
-    const boxesMatrix65 = document.getElementById('boxesMatrix65');
-    const btnStep3Back = document.getElementById('btnStep3Back');
-    const btnStep3Next = document.getElementById('btnStep3Next');
+      // Step 3 Elements
+      const guidedBoxInput = document.getElementById('guidedBoxInput');
+      const btnConfirmBoxNum = document.getElementById('btnConfirmBoxNum');
+      const boxesMatrix65 = document.getElementById('boxesMatrix65');
+      const btnStep3Back = document.getElementById('btnStep3Back');
+      const btnStep3Next = document.getElementById('btnStep3Next');
 
-    // Step 4 Elements
-    const guidedEmptySlotsCount = document.getElementById('guidedEmptySlotsCount');
-    const btnStepEmptyDown = document.getElementById('btnStepEmptyDown');
-    const btnStepEmptyUp = document.getElementById('btnStepEmptyUp');
-    const btnStep4Back = document.getElementById('btnStep4Back');
-    const btnProceedActivation = document.getElementById('btnProceedActivation');
+      // Step 4 Elements
+      const guidedEmptySlotsCount = document.getElementById('guidedEmptySlotsCount');
+      const btnStepEmptyDown = document.getElementById('btnStepEmptyDown');
+      const btnStepEmptyUp = document.getElementById('btnStepEmptyUp');
+      const btnStep4Back = document.getElementById('btnStep4Back');
+      const btnProceedActivation = document.getElementById('btnProceedActivation');
 
-    // Step 5 Elements
-    const voiceReportDateTime = document.getElementById('voiceReportDateTime');
-    const btnStep5Back = document.getElementById('btnStep5Back');
-    const btnVoicePrintReport = document.getElementById('btnVoicePrintReport');
-    const btnSaveVoiceReport = document.getElementById('btnSaveVoiceReport');
-    const btnFinishVoiceSession = document.getElementById('btnFinishVoiceSession');
+      // Step 5 Elements
+      const voiceReportDateTime = document.getElementById('voiceReportDateTime');
+      const btnStep5Back = document.getElementById('btnStep5Back');
+      const btnVoicePrintReport = document.getElementById('btnVoicePrintReport');
+      const btnSaveVoiceReport = document.getElementById('btnSaveVoiceReport');
+      const btnFinishVoiceSession = document.getElementById('btnFinishVoiceSession');
 
-    function logFeedback(msg, type = 'system') {
-      if (!guidedFeedbackLog) return;
-      const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-      const entry = document.createElement('div');
-      entry.className = `log-entry ${type}`;
-      entry.innerHTML = `<span class="time">${now}</span> ${msg}`;
-      guidedFeedbackLog.prepend(entry);
-    }
+      function logFeedback(msg, type = 'system') {
+        if (!guidedFeedbackLog) return;
+        const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        const entry = document.createElement('div');
+        entry.className = `log-entry ${type}`;
+        entry.innerHTML = `<span class="time">${now}</span> ${msg}`;
+        guidedFeedbackLog.prepend(entry);
+      }
 
-    function renderYellowTickets() {
-      if (!yellowTicketsGrid) return;
-      yellowTicketsGrid.innerHTML = '';
-      for (let i = 0; i < 30; i++) {
-        const ticketNum = String(i).padStart(3, '0');
-        const card = document.createElement('div');
-        card.className = 'yellow-ticket-card';
-        card.title = `Ticket #${ticketNum} - Game 1898 ($3 Crossword)`;
-        card.innerHTML = `
+      function renderYellowTickets() {
+        if (!yellowTicketsGrid) return;
+        yellowTicketsGrid.innerHTML = '';
+        for (let i = 0; i < 30; i++) {
+          const ticketNum = String(i).padStart(3, '0');
+          const card = document.createElement('div');
+          card.className = 'yellow-ticket-card';
+          card.title = `Ticket #${ticketNum} - Game 1898 ($3 Crossword)`;
+          card.innerHTML = `
           <div class="yellow-ticket-game">GA $3</div>
           <div class="yellow-ticket-num">${ticketNum}</div>
           <div class="yellow-ticket-barcode-sim"></div>
         `;
-        card.addEventListener('click', () => {
-          sfx.beep();
-          showToast(`Selected Yellow Ticket #${ticketNum} in Pack #0019425`, 'info');
-        });
-        yellowTicketsGrid.appendChild(card);
+          card.addEventListener('click', () => {
+            sfx.beep();
+            showToast(`Selected Yellow Ticket #${ticketNum} in Pack #001942`, 'info');
+          });
+          yellowTicketsGrid.appendChild(card);
+        }
       }
-    }
 
-    function render65BoxesMatrix(targetedBox = 62) {
-      if (!boxesMatrix65) return;
-      boxesMatrix65.innerHTML = '';
-      for (let b = 1; b <= 65; b++) {
-        const cell = document.createElement('div');
-        const isTarget = (b === Number(targetedBox));
-        const dispenser = (state.slots || []).find(d => d.boxNumber === b);
-        const isEmpty = !dispenser || dispenser.status === 'EMPTY' || !dispenser.currentTicket;
+      function render65BoxesMatrix(targetedBox = 62) {
+        if (!boxesMatrix65) return;
+        boxesMatrix65.innerHTML = '';
+        for (let b = 1; b <= 65; b++) {
+          const cell = document.createElement('div');
+          const isTarget = (b === Number(targetedBox));
+          const dispenser = (state.slots || []).find(d => d.boxNumber === b);
+          const isEmpty = !dispenser || dispenser.status === 'EMPTY' || !dispenser.currentTicket;
 
-        cell.className = `box-matrix-cell ${isEmpty ? 'empty' : ''} ${isTarget ? 'targeted' : ''}`;
-        cell.dataset.box = b;
-        cell.innerHTML = `
+          cell.className = `box-matrix-cell ${isEmpty ? 'empty' : ''} ${isTarget ? 'targeted' : ''}`;
+          cell.dataset.box = b;
+          cell.innerHTML = `
           <span class="b-num">#${b}</span>
           <span class="b-tag">${isTarget ? 'TARGET' : (isEmpty ? 'EMPTY' : `$${dispenser.price || 2}`)}</span>
         `;
-        cell.addEventListener('click', () => {
+          cell.addEventListener('click', () => {
+            if (guidedBoxInput) guidedBoxInput.value = b;
+            render65BoxesMatrix(b);
+            sfx.keypad();
+            voice.speakBoxNumber(b);
+            if (voiceTextEl) voiceTextEl.textContent = `"Box number ${b}. Select or press enter."`;
+          });
+          boxesMatrix65.appendChild(cell);
+        }
+      }
+
+      function goToStep(stepNum) {
+        currentStep = stepNum;
+        stepBadges.forEach((badge, idx) => {
+          if (!badge) return;
+          const bStep = idx + 1;
+          badge.classList.remove('active', 'completed');
+          if (bStep === stepNum) badge.classList.add('active');
+          else if (bStep < stepNum) badge.classList.add('completed');
+        });
+
+        stepPanes.forEach((pane, idx) => {
+          if (!pane) return;
+          pane.style.display = (idx + 1 === stepNum) ? 'block' : 'none';
+        });
+
+        // Step-specific voice prompts and UI setup
+        if (stepNum === 1) {
+          voice.speakStartScanning();
+          if (voiceTextEl) voiceTextEl.textContent = '"Start scanning barcode"';
+          renderYellowTickets();
+        } else if (stepNum === 2) {
+          voice.speakScanning();
+          if (voiceTextEl) voiceTextEl.textContent = '"Scanning" / Check Result (Rescan, Duplicate, or Inventory Updated)';
+        } else if (stepNum === 3) {
+          voice.speakBoxPrompt();
+          if (voiceTextEl) voiceTextEl.textContent = '"Box number" (Type box number e.g. 62 and press Enter)';
+          const bVal = parseInt(guidedBoxInput?.value || '62', 10);
+          render65BoxesMatrix(bVal);
+        } else if (stepNum === 4) {
+          voice.speakEmptySlot();
+          if (voiceTextEl) voiceTextEl.textContent = '"Empty slot. Please check the number of empty slots to activation"';
+          const emptyCount = (state.slots || []).filter(d => d.status === 'EMPTY' || !d.currentTicket).length;
+          if (guidedEmptySlotsCount) guidedEmptySlotsCount.value = Math.max(1, emptyCount || 5);
+        } else if (stepNum === 5) {
+          voice.speakReport();
+          const { totalSold, totalRevenue } = getShiftSalesTotals();
+          const activeCount = (state.slots || []).filter(s => isBoxActive(s)).length;
+          const totalInv = activeCount + getUnifiedSafeInventory().length;
+          if (voiceTextEl) {
+            voiceTextEl.textContent = `"Report" (Inventory Stats • Total Sale = $${totalRevenue.toFixed(2)})`;
+          }
+          if (voiceReportDateTime) {
+            voiceReportDateTime.textContent = `Shift Reconciliation • ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+          }
+          const repSoldEl = document.getElementById('voiceReportSoldTickets');
+          if (repSoldEl) repSoldEl.textContent = totalSold;
+          const repActiveEl = document.getElementById('voiceReportActiveTickets');
+          if (repActiveEl) repActiveEl.textContent = activeCount;
+          const repInvEl = document.getElementById('voiceReportTotalInv');
+          if (repInvEl) repInvEl.textContent = totalInv;
+        }
+      }
+
+      // Modal Triggers
+      if (openBtn) {
+        openBtn.addEventListener('click', () => {
+          modal.showModal();
+          goToStep(1);
+        });
+      }
+
+      if (closeBtn) {
+        closeBtn.addEventListener('click', () => modal.close());
+      }
+
+      // Replay Voice Button
+      if (btnReplayVoice) {
+        btnReplayVoice.addEventListener('click', () => {
+          if (currentStep === 1) voice.speakStartScanning();
+          else if (currentStep === 2) voice.speak("Rescan barcode, or inventory updated");
+          else if (currentStep === 3) voice.speakBoxNumber(parseInt(guidedBoxInput?.value || '62', 10));
+          else if (currentStep === 4) voice.speakEmptySlot();
+          else if (currentStep === 5) voice.speakReport();
+        });
+      }
+
+      // Stepper Navigation clicks
+      stepBadges.forEach((badge, idx) => {
+        if (badge) {
+          badge.addEventListener('click', () => goToStep(idx + 1));
+        }
+      });
+
+      // Step 1 Events
+      if (btnGuidedSimulateScan) {
+        btnGuidedSimulateScan.addEventListener('click', () => {
+          sfx.beep();
+          const code = guidedBarcodeInput?.value.trim() || '1420-9834105-015';
+          logFeedback(`Scanned pack barcode: ${code}`, 'system');
+          showToast(`✓ Scanned Pack ${code}`, 'success');
+        });
+      }
+      if (btnStep1Next) {
+        btnStep1Next.addEventListener('click', () => goToStep(2));
+      }
+
+      // Step 2 Events
+      if (btnFeedbackRescan) {
+        btnFeedbackRescan.addEventListener('click', () => {
+          voice.speakRescan();
+          if (voiceTextEl) voiceTextEl.textContent = '"Rescan barcode"';
+          logFeedback('Barcode read failure -> Rescan barcode', 'rescan');
+          sfx.alert();
+          showToast('⚠️ Audio: "Rescan barcode" (Operator must rescan same pack)', 'warning');
+        });
+      }
+
+      if (btnFeedbackDuplicate) {
+        btnFeedbackDuplicate.addEventListener('click', () => {
+          voice.speakDuplicateError();
+          if (voiceTextEl) voiceTextEl.textContent = '"Technical error. This pack has been scanned."';
+          logFeedback('Technical Error: Duplicate pack scanned -> Skipped', 'error');
+          sfx.alert();
+          showToast('❌ Technical error: Pack has already been scanned. Skip!', 'error');
+        });
+      }
+
+      if (btnFeedbackScanning) {
+        btnFeedbackScanning.addEventListener('click', () => {
+          voice.speakScanning();
+          if (voiceTextEl) voiceTextEl.textContent = '"Scanning... please wait 2 seconds"';
+          logFeedback('System processing barcode ("Scanning")', 'scanning');
+          sfx.beep();
+          setTimeout(() => {
+            logFeedback('Scanning complete', 'system');
+            if (voiceTextEl) voiceTextEl.textContent = '"Scanning complete. Ready for next action."';
+          }, 2000);
+        });
+      }
+
+      if (btnFeedbackSuccess) {
+        btnFeedbackSuccess.addEventListener('click', () => {
+          voice.speakInventoryUpdated();
+          if (voiceTextEl) voiceTextEl.textContent = '"Inventory updated"';
+          logFeedback('✓ Inventory updated successfully! Advancing to Box Entry...', 'success');
+          sfx.success();
+          showToast('✓ Audio: "Inventory updated" - Success!', 'success');
+          setTimeout(() => goToStep(3), 1200);
+        });
+      }
+
+      if (btnStep2Back) btnStep2Back.addEventListener('click', () => goToStep(1));
+      if (btnStep2Next) btnStep2Next.addEventListener('click', () => goToStep(3));
+
+      // Step 3 Events
+      document.querySelectorAll('.box-chip').forEach(chip => {
+        chip.addEventListener('click', () => {
+          document.querySelectorAll('.box-chip').forEach(c => c.classList.remove('active'));
+          chip.classList.add('active');
+          const b = chip.dataset.box;
           if (guidedBoxInput) guidedBoxInput.value = b;
           render65BoxesMatrix(b);
           sfx.keypad();
           voice.speakBoxNumber(b);
-          if (voiceTextEl) voiceTextEl.textContent = `"Box number ${b}. Select or press enter."`;
         });
-        boxesMatrix65.appendChild(cell);
+      });
+
+      if (guidedBoxInput) {
+        guidedBoxInput.addEventListener('change', () => {
+          const val = parseInt(guidedBoxInput.value, 10) || 62;
+          render65BoxesMatrix(val);
+        });
+        guidedBoxInput.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            btnConfirmBoxNum?.click();
+          }
+        });
       }
-    }
 
-    function goToStep(stepNum) {
-      currentStep = stepNum;
-      stepBadges.forEach((badge, idx) => {
-        if (!badge) return;
-        const bStep = idx + 1;
-        badge.classList.remove('active', 'completed');
-        if (bStep === stepNum) badge.classList.add('active');
-        else if (bStep < stepNum) badge.classList.add('completed');
-      });
-
-      stepPanes.forEach((pane, idx) => {
-        if (!pane) return;
-        pane.style.display = (idx + 1 === stepNum) ? 'block' : 'none';
-      });
-
-      // Step-specific voice prompts and UI setup
-      if (stepNum === 1) {
-        voice.speakStartScanning();
-        if (voiceTextEl) voiceTextEl.textContent = '"Start scanning barcode"';
-        renderYellowTickets();
-      } else if (stepNum === 2) {
-        voice.speakScanning();
-        if (voiceTextEl) voiceTextEl.textContent = '"Scanning" / Check Result (Rescan, Duplicate, or Inventory Updated)';
-      } else if (stepNum === 3) {
-        voice.speakBoxPrompt();
-        if (voiceTextEl) voiceTextEl.textContent = '"Box number" (Type box number e.g. 62 and press Enter)';
-        const bVal = parseInt(guidedBoxInput?.value || '62', 10);
-        render65BoxesMatrix(bVal);
-      } else if (stepNum === 4) {
-        voice.speakEmptySlot();
-        if (voiceTextEl) voiceTextEl.textContent = '"Empty slot. Please check the number of empty slots to activation"';
-        const emptyCount = (state.slots || []).filter(d => d.status === 'EMPTY' || !d.currentTicket).length;
-        if (guidedEmptySlotsCount) guidedEmptySlotsCount.value = Math.max(1, emptyCount || 5);
-      } else if (stepNum === 5) {
-        voice.speakReport();
-        const { totalSold, totalRevenue } = getShiftSalesTotals();
-        const activeCount = (state.slots || []).filter(s => isBoxActive(s)).length;
-        const totalInv = activeCount + (state.inventory || []).length;
-        if (voiceTextEl) {
-          voiceTextEl.textContent = `"Report" (Inventory Stats • Total Sale = $${totalRevenue.toFixed(2)})`;
-        }
-        if (voiceReportDateTime) {
-          voiceReportDateTime.textContent = `Shift Reconciliation • ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
-        }
-        const repSoldEl = document.getElementById('voiceReportSoldTickets');
-        if (repSoldEl) repSoldEl.textContent = totalSold;
-        const repActiveEl = document.getElementById('voiceReportActiveTickets');
-        if (repActiveEl) repActiveEl.textContent = activeCount;
-        const repInvEl = document.getElementById('voiceReportTotalInv');
-        if (repInvEl) repInvEl.textContent = totalInv;
+      if (btnConfirmBoxNum) {
+        btnConfirmBoxNum.addEventListener('click', () => {
+          const val = parseInt(guidedBoxInput?.value || '62', 10);
+          if (isNaN(val) || val < 1 || val > 65) {
+            alert('Please enter a valid box number between 1 and 65.');
+            return;
+          }
+          sfx.success();
+          voice.speakBoxNumber(val);
+          goToStep(4);
+        });
       }
+
+      if (btnStep3Back) btnStep3Back.addEventListener('click', () => goToStep(2));
+      if (btnStep3Next) btnStep3Next.addEventListener('click', () => goToStep(4));
+
+      // Step 4 Events
+      if (btnStepEmptyDown) {
+        btnStepEmptyDown.addEventListener('click', () => {
+          if (!guidedEmptySlotsCount) return;
+          let c = parseInt(guidedEmptySlotsCount.value, 10) || 0;
+          guidedEmptySlotsCount.value = Math.max(0, c - 1);
+          sfx.keypad();
+        });
+      }
+
+      if (btnStepEmptyUp) {
+        btnStepEmptyUp.addEventListener('click', () => {
+          if (!guidedEmptySlotsCount) return;
+          let c = parseInt(guidedEmptySlotsCount.value, 10) || 0;
+          guidedEmptySlotsCount.value = Math.min(65, c + 1);
+          sfx.keypad();
+        });
+      }
+
+      if (btnProceedActivation) {
+        btnProceedActivation.addEventListener('click', () => {
+          const boxNum = parseInt(guidedBoxInput?.value || '62', 10);
+          // Activate Box in live POS state!
+          let target = (state.slots || []).find(d => d.boxNumber === boxNum);
+          if (!target) {
+            target = {
+              boxNumber: boxNum,
+              status: 'ACTIVE',
+              gameId: 'g104',
+              gameName: '$3 CROSS WORD',
+              price: 3,
+              packNumber: '0019425',
+              packSize: 30,
+              startTicket: 0,
+              currentTicket: 1,
+              activatedThisShift: true,
+              daysActive: 1,
+              scannedInEndShift: false
+            };
+            if (!state.slots) state.slots = [];
+            state.slots.push(target);
+            state.slots.sort((a, b) => a.boxNumber - b.boxNumber);
+          } else {
+            target.status = 'ACTIVE';
+            target.gameId = 'g104';
+            target.gameName = '$3 CROSS WORD';
+            target.price = 3;
+            target.packNumber = '0019425';
+            target.packSize = 30;
+            target.startTicket = 0;
+            target.currentTicket = 1;
+            target.activatedThisShift = true;
+          }
+
+          saveState(state);
+          renderDispenserRack();
+          renderSlotsRibbon();
+          renderHeaderAndMetrics();
+
+          sfx.chime();
+          showToast(`✨ Box #${boxNum} Activated with Georgia Lottery $3 Crossword!`, 'success');
+          goToStep(5);
+        });
+      }
+
+      if (btnStep4Back) btnStep4Back.addEventListener('click', () => goToStep(3));
+
+      // Step 5 Events
+      if (btnVoicePrintReport) {
+        btnVoicePrintReport.addEventListener('click', () => {
+          printReceiptSlip();
+        });
+      }
+
+      if (btnSaveVoiceReport) {
+        btnSaveVoiceReport.addEventListener('click', () => {
+          saveState(state);
+          sfx.success();
+          showToast('✓ Shift settlement saved and synced to POS ledger!', 'success');
+        });
+      }
+
+      if (btnFinishVoiceSession) {
+        btnFinishVoiceSession.addEventListener('click', () => {
+          voice.speakBye();
+          if (voiceTextEl) voiceTextEl.textContent = '"Bye"';
+          sfx.chime();
+          setTimeout(() => {
+            modal.close();
+            showToast('🎉 Voice-Guided session successfully finished! Store: AMIGO FOOD MART', 'success');
+          }, 800);
+        });
+      }
+
+      if (btnStep5Back) btnStep5Back.addEventListener('click', () => goToStep(4));
     }
 
-    // Modal Triggers
-    if (openBtn) {
-      openBtn.addEventListener('click', () => {
-        modal.showModal();
-        goToStep(1);
-      });
-    }
+    // Initialize Voice Workflow Handler
+    initGuidedWorkflow();
 
-    if (closeBtn) {
-      closeBtn.addEventListener('click', () => modal.close());
-    }
-
-    // Replay Voice Button
-    if (btnReplayVoice) {
-      btnReplayVoice.addEventListener('click', () => {
-        if (currentStep === 1) voice.speakStartScanning();
-        else if (currentStep === 2) voice.speak("Rescan barcode, or inventory updated");
-        else if (currentStep === 3) voice.speakBoxNumber(parseInt(guidedBoxInput?.value || '62', 10));
-        else if (currentStep === 4) voice.speakEmptySlot();
-        else if (currentStep === 5) voice.speakReport();
-      });
-    }
-
-    // Stepper Navigation clicks
-    stepBadges.forEach((badge, idx) => {
-      if (badge) {
-        badge.addEventListener('click', () => goToStep(idx + 1));
+    // Menu items
+    menuHistoryBtn.addEventListener('click', openHistoryModal);
+    closeHistoryBtn.addEventListener('click', () => historyModal.close());
+    closeHistoryBottomBtn.addEventListener('click', () => historyModal.close());
+    document.getElementById('menuPrintBtn').addEventListener('click', () => {
+      const isDaily = state.settings?.operationMode !== 'SHIFTS';
+      if (isDaily) {
+        openDayReportModal(() => state, sfx);
+      } else {
+        openShiftReportModal();
       }
     });
+    document.getElementById('menuSettingsBtn').addEventListener('click', openSettingsModal);
 
-    // Step 1 Events
-    if (btnGuidedSimulateScan) {
-      btnGuidedSimulateScan.addEventListener('click', () => {
-        sfx.beep();
-        const code = guidedBarcodeInput?.value.trim() || '1420-9834105-015';
-        logFeedback(`Scanned pack barcode: ${code}`, 'system');
-        showToast(`✓ Scanned Pack ${code}`, 'success');
-      });
-    }
-    if (btnStep1Next) {
-      btnStep1Next.addEventListener('click', () => goToStep(2));
-    }
+    function updateStoreBrandDisplay() {
+      const stores = getStoresList();
+      const currentSid = getCurrentStoreId();
+      const cleanId = String(currentSid || '').replace(/^store_/, '').replace(/[^a-zA-Z0-9_]/g, '_');
+      const dispName = cleanId.charAt(0).toUpperCase() + cleanId.slice(1);
+      const fallbackStore = {
+        id: currentSid,
+        name: (currentSid === 'store_amigo') ? 'AMIGO FOOD MART' : `${dispName.toUpperCase()} STORE`,
+        address: (currentSid === 'store_amigo') ? '2300 MOODY RD WARNER ROBINS, GA, 31088' : `${dispName} Location`
+      };
+      const currentStore = stores.find(s => s.id === currentSid) || DEFAULT_STORES.find(s => s.id === currentSid) || fallbackStore;
 
-    // Step 2 Events
-    if (btnFeedbackRescan) {
-      btnFeedbackRescan.addEventListener('click', () => {
-        voice.speakRescan();
-        if (voiceTextEl) voiceTextEl.textContent = '"Rescan barcode"';
-        logFeedback('Barcode read failure -> Rescan barcode', 'rescan');
-        sfx.alert();
-        showToast('⚠️ Audio: "Rescan barcode" (Operator must rescan same pack)', 'warning');
-      });
-    }
-
-    if (btnFeedbackDuplicate) {
-      btnFeedbackDuplicate.addEventListener('click', () => {
-        voice.speakDuplicateError();
-        if (voiceTextEl) voiceTextEl.textContent = '"Technical error. This pack has been scanned."';
-        logFeedback('Technical Error: Duplicate pack scanned -> Skipped', 'error');
-        sfx.alert();
-        showToast('❌ Technical error: Pack has already been scanned. Skip!', 'error');
-      });
-    }
-
-    if (btnFeedbackScanning) {
-      btnFeedbackScanning.addEventListener('click', () => {
-        voice.speakScanning();
-        if (voiceTextEl) voiceTextEl.textContent = '"Scanning... please wait 2 seconds"';
-        logFeedback('System processing barcode ("Scanning")', 'scanning');
-        sfx.beep();
-        setTimeout(() => {
-          logFeedback('Scanning complete', 'system');
-          if (voiceTextEl) voiceTextEl.textContent = '"Scanning complete. Ready for next action."';
-        }, 2000);
-      });
-    }
-
-    if (btnFeedbackSuccess) {
-      btnFeedbackSuccess.addEventListener('click', () => {
-        voice.speakInventoryUpdated();
-        if (voiceTextEl) voiceTextEl.textContent = '"Inventory updated"';
-        logFeedback('✓ Inventory updated successfully! Advancing to Box Entry...', 'success');
-        sfx.success();
-        showToast('✓ Audio: "Inventory updated" - Success!', 'success');
-        setTimeout(() => goToStep(3), 1200);
-      });
-    }
-
-    if (btnStep2Back) btnStep2Back.addEventListener('click', () => goToStep(1));
-    if (btnStep2Next) btnStep2Next.addEventListener('click', () => goToStep(3));
-
-    // Step 3 Events
-    document.querySelectorAll('.box-chip').forEach(chip => {
-      chip.addEventListener('click', () => {
-        document.querySelectorAll('.box-chip').forEach(c => c.classList.remove('active'));
-        chip.classList.add('active');
-        const b = chip.dataset.box;
-        if (guidedBoxInput) guidedBoxInput.value = b;
-        render65BoxesMatrix(b);
-        sfx.keypad();
-        voice.speakBoxNumber(b);
-      });
-    });
-
-    if (guidedBoxInput) {
-      guidedBoxInput.addEventListener('change', () => {
-        const val = parseInt(guidedBoxInput.value, 10) || 62;
-        render65BoxesMatrix(val);
-      });
-      guidedBoxInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-          btnConfirmBoxNum?.click();
+      let storeName = currentStore?.name || ((currentSid === 'store_amigo') ? 'Amigo Food Mart' : `${dispName.toUpperCase()} STORE`);
+      if (state.storeName && state.storeName.trim() && state.storeName.trim().toLowerCase() !== 'store') {
+        const up = state.storeName.trim().toUpperCase();
+        const isLeakedAmigo = currentSid !== 'store_amigo' && up.includes('AMIGO');
+        const isLeakedAnish = currentSid !== 'store_anish' && up.includes('ANISH');
+        if (!isLeakedAmigo && !isLeakedAnish) {
+          storeName = state.storeName.trim();
         }
-      });
-    }
-
-    if (btnConfirmBoxNum) {
-      btnConfirmBoxNum.addEventListener('click', () => {
-        const val = parseInt(guidedBoxInput?.value || '62', 10);
-        if (isNaN(val) || val < 1 || val > 65) {
-          alert('Please enter a valid box number between 1 and 65.');
-          return;
-        }
-        sfx.success();
-        voice.speakBoxNumber(val);
-        goToStep(4);
-      });
-    }
-
-    if (btnStep3Back) btnStep3Back.addEventListener('click', () => goToStep(2));
-    if (btnStep3Next) btnStep3Next.addEventListener('click', () => goToStep(4));
-
-    // Step 4 Events
-    if (btnStepEmptyDown) {
-      btnStepEmptyDown.addEventListener('click', () => {
-        if (!guidedEmptySlotsCount) return;
-        let c = parseInt(guidedEmptySlotsCount.value, 10) || 0;
-        guidedEmptySlotsCount.value = Math.max(0, c - 1);
-        sfx.keypad();
-      });
-    }
-
-    if (btnStepEmptyUp) {
-      btnStepEmptyUp.addEventListener('click', () => {
-        if (!guidedEmptySlotsCount) return;
-        let c = parseInt(guidedEmptySlotsCount.value, 10) || 0;
-        guidedEmptySlotsCount.value = Math.min(65, c + 1);
-        sfx.keypad();
-      });
-    }
-
-    if (btnProceedActivation) {
-      btnProceedActivation.addEventListener('click', () => {
-        const boxNum = parseInt(guidedBoxInput?.value || '62', 10);
-        // Activate Box in live POS state!
-        let target = (state.slots || []).find(d => d.boxNumber === boxNum);
-        if (!target) {
-          target = {
-            boxNumber: boxNum,
-            status: 'ACTIVE',
-            gameId: 'g104',
-            gameName: '$3 CROSS WORD',
-            price: 3,
-            packNumber: '0019425',
-            packSize: 30,
-            startTicket: 0,
-            currentTicket: 1,
-            activatedThisShift: true,
-            daysActive: 1,
-            scannedInEndShift: false
-          };
-          if (!state.slots) state.slots = [];
-          state.slots.push(target);
-          state.slots.sort((a, b) => a.boxNumber - b.boxNumber);
-        } else {
-          target.status = 'ACTIVE';
-          target.gameId = 'g104';
-          target.gameName = '$3 CROSS WORD';
-          target.price = 3;
-          target.packNumber = '0019425';
-          target.packSize = 30;
-          target.startTicket = 0;
-          target.currentTicket = 1;
-          target.activatedThisShift = true;
-        }
-
-        saveState(state);
-        renderDispenserRack();
-        renderSlotsRibbon();
-        renderHeaderAndMetrics();
-
-        sfx.chime();
-        showToast(`✨ Box #${boxNum} Activated with Georgia Lottery $3 Crossword!`, 'success');
-        goToStep(5);
-      });
-    }
-
-    if (btnStep4Back) btnStep4Back.addEventListener('click', () => goToStep(3));
-
-    // Step 5 Events
-    if (btnVoicePrintReport) {
-      btnVoicePrintReport.addEventListener('click', () => {
-        printReceiptSlip();
-      });
-    }
-
-    if (btnSaveVoiceReport) {
-      btnSaveVoiceReport.addEventListener('click', () => {
-        saveState(state);
-        sfx.success();
-        showToast('✓ Shift settlement saved and synced to POS ledger!', 'success');
-      });
-    }
-
-    if (btnFinishVoiceSession) {
-      btnFinishVoiceSession.addEventListener('click', () => {
-        voice.speakBye();
-        if (voiceTextEl) voiceTextEl.textContent = '"Bye"';
-        sfx.chime();
-        setTimeout(() => {
-          modal.close();
-          showToast('🎉 Voice-Guided session successfully finished! Store: AMIGO FOOD MART', 'success');
-        }, 800);
-      });
-    }
-
-    if (btnStep5Back) btnStep5Back.addEventListener('click', () => goToStep(4));
-  }
-
-  // Initialize Voice Workflow Handler
-  initGuidedWorkflow();
-
-  // Menu items
-  menuHistoryBtn.addEventListener('click', openHistoryModal);
-  closeHistoryBtn.addEventListener('click', () => historyModal.close());
-  closeHistoryBottomBtn.addEventListener('click', () => historyModal.close());
-  document.getElementById('menuPrintBtn').addEventListener('click', () => {
-    const isDaily = state.settings?.operationMode !== 'SHIFTS';
-    if (isDaily) {
-      openDayReportModal(() => state, sfx);
-    } else {
-      openShiftReportModal();
-    }
-  });
-  document.getElementById('menuSettingsBtn').addEventListener('click', openSettingsModal);
-
-  function updateStoreBrandDisplay() {
-    const stores = getStoresList();
-    const currentSid = getCurrentStoreId();
-    const cleanId = String(currentSid || '').replace(/^store_/, '').replace(/[^a-zA-Z0-9_]/g, '_');
-    const dispName = cleanId.charAt(0).toUpperCase() + cleanId.slice(1);
-    const fallbackStore = {
-      id: currentSid,
-      name: (currentSid === 'store_amigo') ? 'AMIGO FOOD MART' : `${dispName.toUpperCase()} STORE`,
-      address: (currentSid === 'store_amigo') ? '2300 MOODY RD WARNER ROBINS, GA, 31088' : `${dispName} Location`
-    };
-    const currentStore = stores.find(s => s.id === currentSid) || DEFAULT_STORES.find(s => s.id === currentSid) || fallbackStore;
-
-    let storeName = currentStore?.name || ((currentSid === 'store_amigo') ? 'Amigo Food Mart' : `${dispName.toUpperCase()} STORE`);
-    if (state.storeName && state.storeName.trim() && state.storeName.trim().toLowerCase() !== 'store') {
-      const up = state.storeName.trim().toUpperCase();
-      const isLeakedAmigo = currentSid !== 'store_amigo' && up.includes('AMIGO');
-      const isLeakedAnish = currentSid !== 'store_anish' && up.includes('ANISH');
-      if (!isLeakedAmigo && !isLeakedAnish) {
-        storeName = state.storeName.trim();
       }
-    }
-    let storeAddress = currentStore?.address || ((currentSid === 'store_amigo') ? '2300 MOODY RD WARNER ROBINS, GA, 31088' : fallbackStore.address);
-    if (state.storeAddress && state.storeAddress.trim()) {
-      if (currentSid === 'store_amigo' || !state.storeAddress.includes('MOODY RD')) {
-        storeAddress = state.storeAddress.trim();
+      let storeAddress = currentStore?.address || ((currentSid === 'store_amigo') ? '2300 MOODY RD WARNER ROBINS, GA, 31088' : fallbackStore.address);
+      if (state.storeAddress && state.storeAddress.trim()) {
+        if (currentSid === 'store_amigo' || !state.storeAddress.includes('MOODY RD')) {
+          storeAddress = state.storeAddress.trim();
+        }
       }
-    }
 
-    const sidebarStore = document.getElementById('sidebarStoreName');
-    if (sidebarStore) sidebarStore.textContent = storeName;
+      const sidebarStore = document.getElementById('sidebarStoreName');
+      if (sidebarStore) sidebarStore.textContent = storeName;
 
-    const cashierBrandSub = document.getElementById('cashierBrandSub');
-    if (cashierBrandSub) cashierBrandSub.textContent = `${storeName} · ${state.registerName || 'Register 1'}`;
+      const cashierBrandSub = document.getElementById('cashierBrandSub');
+      if (cashierBrandSub) cashierBrandSub.textContent = `${storeName} · ${state.registerName || 'Register 1'}`;
 
-    const dashboardSubtitle = document.getElementById('dashboardSubtitle');
-    if (dashboardSubtitle) {
-      const dateFormatted = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
-      dashboardSubtitle.textContent = `${storeName} \u00B7 ${dateFormatted}`;
-    }
+      const dashboardSubtitle = document.getElementById('dashboardSubtitle');
+      if (dashboardSubtitle) {
+        const dateFormatted = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+        dashboardSubtitle.textContent = `${storeName} \u00B7 ${dateFormatted}`;
+      }
 
-    // Dynamic report doc store name and address labels across all sections
-    document.querySelectorAll('.rep-doc-store-name').forEach(el => {
-      el.textContent = storeName.toUpperCase();
-    });
-    document.querySelectorAll('.rep-doc-store-addr').forEach(el => {
-      el.textContent = storeAddress.toUpperCase();
-    });
-    document.querySelectorAll('.dr-store-name').forEach(el => {
-      el.textContent = storeName.toUpperCase();
-    });
-    document.querySelectorAll('.dr-store-addr').forEach(el => {
-      el.textContent = storeAddress.toUpperCase();
-    });
+      // Dynamic report doc store name and address labels across all sections
+      document.querySelectorAll('.rep-doc-store-name').forEach(el => {
+        el.textContent = storeName.toUpperCase();
+      });
+      document.querySelectorAll('.rep-doc-store-addr').forEach(el => {
+        el.textContent = storeAddress.toUpperCase();
+      });
+      document.querySelectorAll('.dr-store-name').forEach(el => {
+        el.textContent = storeName.toUpperCase();
+      });
+      document.querySelectorAll('.dr-store-addr').forEach(el => {
+        el.textContent = storeAddress.toUpperCase();
+      });
 
-    const settingsStoreSelect = document.getElementById('settingsStoreSelect');
-    if (settingsStoreSelect) {
-      settingsStoreSelect.innerHTML = stores.map(s => `
+      const settingsStoreSelect = document.getElementById('settingsStoreSelect');
+      if (settingsStoreSelect) {
+        settingsStoreSelect.innerHTML = stores.map(s => `
         <option value="${s.id}" ${s.id === currentSid ? 'selected' : ''}>${s.name} (${s.retailerNumber || 'Store'})</option>
       `).join('');
-    }
+      }
 
-    const selectCashierModalStore = document.getElementById('selectCashierModalStore');
-    if (selectCashierModalStore) {
-      selectCashierModalStore.innerHTML = stores.map(s => `
+      const selectCashierModalStore = document.getElementById('selectCashierModalStore');
+      if (selectCashierModalStore) {
+        selectCashierModalStore.innerHTML = stores.map(s => `
         <option value="${s.id}" ${s.id === currentSid ? 'selected' : ''}>${s.name}</option>
       `).join('');
-    }
-
-    const inputCashierModalStoreName = document.getElementById('inputCashierModalStoreName');
-    if (inputCashierModalStoreName && document.activeElement !== inputCashierModalStoreName) {
-      inputCashierModalStoreName.value = storeName;
-    }
-
-    const setStoreNameInput = document.getElementById('setStoreName');
-    if (setStoreNameInput && document.activeElement !== setStoreNameInput) {
-      setStoreNameInput.value = storeName;
-    }
-  }
-
-  function getActiveLoginSession() {
-    try {
-      const raw = sessionStorage.getItem('lotto_session_user') || localStorage.getItem('lotto_session_user');
-      return raw ? JSON.parse(raw) : null;
-    } catch (_) {
-      return null;
-    }
-  }
-
-  function formatStoreNameFromId(storeId) {
-    if (storeId === 'store_admin') return 'ADMIN STORE';
-    if (storeId === 'store_amigo') return 'AMIGO FOOD MART';
-    const meta = getStoresList().find(s => s.id === storeId) || DEFAULT_STORES.find(s => s.id === storeId);
-    if (meta?.name) return meta.name;
-    const slug = String(storeId || 'store').replace(/^store_/, '').replace(/_/g, ' ').trim();
-    return slug ? `${slug.toUpperCase()} STORE` : 'LOTTERY STORE';
-  }
-
-  function sanitizeAdminStoreState(st) {
-    if (!st) return st;
-    st.storeId = 'store_admin';
-    const up = String(st.storeName || '').toUpperCase();
-    if (!st.storeName || up.includes('AMIGO') || up.includes('ANISH')) {
-      st.storeName = 'ADMIN STORE';
-      st.storeAddress = 'Platform Head Office, Warner Robins, GA, 31088';
-      st.retailerNumber = 'GA-ADM01';
-    }
-    if (!st.cashierName || st.cashierName === 'master') {
-      st.cashierName = 'Platform Administrator';
-    }
-    return st;
-  }
-
-  function switchStore(newStoreId) {
-    if (!newStoreId) return;
-    const activeSess = getActiveLoginSession();
-    const isAdm = Boolean(activeSess && (activeSess.isAdmin || activeSess.role === 'SUPER_ADMIN'));
-    if (activeSess && !isAdm && activeSess.storeId && newStoreId !== activeSess.storeId) {
-      newStoreId = activeSess.storeId;
-    }
-
-    const currentSid = getCurrentStoreId();
-
-    // 1. Save current store state ONLY if switching away and state belongs to currentSid
-    if (state && currentSid && currentSid !== newStoreId && (!state.storeId || state.storeId === currentSid)) {
-      saveState(state, currentSid);
-    }
-
-    // 2. Set current store ID
-    setCurrentStoreId(newStoreId);
-
-    // 3. Load target store state (and heal corrupted admin store metadata if present)
-    state = loadState(newStoreId);
-    state.storeId = newStoreId;
-    if (newStoreId === 'store_admin') {
-      sanitizeAdminStoreState(state);
-    }
-    window.state = state;
-    window.__state = state;
-    window.getState = () => state;
-
-    // 4. Update UI brand
-    updateStoreBrandDisplay();
-
-    // 5. Re-render views
-    renderHeaderAndMetrics();
-    renderDispenserRack();
-    renderSlotsRibbon();
-    renderReceivePacksView();
-    renderDayReportView();
-    renderInventoryView();
-    renderHistoryView();
-    populateSettingsInputs();
-
-    // Asynchronously sync latest authoritative store state from server
-    loadPOSStateFromDB(newStoreId).then(serverState => {
-      if (getCurrentStoreId() !== newStoreId) return;
-      if (serverState && Array.isArray(serverState.slots) && (!serverState.storeId || serverState.storeId === newStoreId)) {
-        state = newStoreId === 'store_admin'
-          ? sanitizeAdminStoreState({ ...serverState, storeId: newStoreId })
-          : { ...serverState, storeId: newStoreId };
-        window.state = state;
-        window.__state = state;
-        state.dataCleared = Boolean(serverState.dataCleared);
-        saveState(state, newStoreId);
-        updateStoreBrandDisplay();
-        renderHeaderAndMetrics();
-        renderDispenserRack();
-        renderSlotsRibbon();
-        if (typeof renderReceivePacksView === 'function') renderReceivePacksView();
-        if (typeof renderDayReportView === 'function') renderDayReportView();
-        if (typeof renderInventoryView === 'function') renderInventoryView();
-        if (typeof renderHistoryView === 'function') renderHistoryView();
-        if (typeof populateSettingsInputs === 'function') populateSettingsInputs();
       }
-    }).catch(() => { });
 
-    sfx.success?.();
-  }
-  window.switchStore = switchStore;
-  window.getStoresList = getStoresList;
-  window.getCurrentStoreId = getCurrentStoreId;
+      const inputCashierModalStoreName = document.getElementById('inputCashierModalStoreName');
+      if (inputCashierModalStoreName && document.activeElement !== inputCashierModalStoreName) {
+        inputCashierModalStoreName.value = storeName;
+      }
 
-  // Fullscreen Sign In Screen Controls (Matching Reference UI Specification)
-  function showSignInScreen() {
-    const viewSignIn = document.getElementById('viewSignIn');
-    const posLayout = document.querySelector('.pos-app-layout');
-    if (!viewSignIn) return;
-
-    if (posLayout) posLayout.setAttribute('aria-hidden', 'true');
-    const adminDash = document.getElementById('viewAdminDashboard');
-    if (adminDash) adminDash.style.display = 'none';
-    viewSignIn.style.display = 'flex';
-
-    // Store subtitle
-    const currentSid = getCurrentStoreId();
-    const stores = getStoresList();
-    const currentStore = stores.find(s => s.id === currentSid);
-    const storeSub = document.getElementById('signInStoreSubtitle');
-    if (storeSub) {
-      storeSub.textContent = currentStore ? currentStore.name : 'Amigo Food Mart';
-    }
-
-    const userInput = document.getElementById('inputSignInUser');
-    const passInput = document.getElementById('inputSignInPass');
-    const errorAlert = document.getElementById('signInErrorAlert');
-    if (errorAlert) {
-      errorAlert.style.display = 'none';
-      errorAlert.textContent = '';
-    }
-    if (passInput) passInput.value = '';
-
-    const remembered = localStorage.getItem('lotto_remembered_user');
-    if (userInput && !userInput.value) {
-      if (remembered) {
-        userInput.value = remembered;
-      } else {
-        userInput.value = '';
+      const setStoreNameInput = document.getElementById('setStoreName');
+      if (setStoreNameInput && document.activeElement !== setStoreNameInput) {
+        setStoreNameInput.value = storeName;
       }
     }
 
-    if (userInput?.value) {
-      const assigned = lookupUserAssignedStore(userInput.value, state);
-      if (assigned && storeSub) {
-        storeSub.textContent = assigned.storeName;
+    function getActiveLoginSession() {
+      try {
+        const raw = sessionStorage.getItem('lotto_session_user') || localStorage.getItem('lotto_session_user');
+        return raw ? JSON.parse(raw) : null;
+      } catch (_) {
+        return null;
       }
     }
 
-    setTimeout(() => {
-      if (userInput && !userInput.value) {
-        userInput.focus();
-      } else if (passInput) {
-        passInput.focus();
+    function formatStoreNameFromId(storeId) {
+      if (storeId === 'store_admin') return 'ADMIN STORE';
+      if (storeId === 'store_amigo') return 'AMIGO FOOD MART';
+      const meta = getStoresList().find(s => s.id === storeId) || DEFAULT_STORES.find(s => s.id === storeId);
+      if (meta?.name) return meta.name;
+      const slug = String(storeId || 'store').replace(/^store_/, '').replace(/_/g, ' ').trim();
+      return slug ? `${slug.toUpperCase()} STORE` : 'LOTTERY STORE';
+    }
+
+    function sanitizeAdminStoreState(st) {
+      if (!st) return st;
+      st.storeId = 'store_admin';
+      const up = String(st.storeName || '').toUpperCase();
+      if (!st.storeName || up.includes('AMIGO') || up.includes('ANISH')) {
+        st.storeName = 'ADMIN STORE';
+        st.storeAddress = 'Platform Head Office, Warner Robins, GA, 31088';
+        st.retailerNumber = 'GA-ADM01';
       }
-    }, 100);
-  }
-
-  function hideSignInScreen() {
-    const viewSignIn = document.getElementById('viewSignIn');
-    const posLayout = document.querySelector('.pos-app-layout');
-    sessionStorage.removeItem('lotto_signed_out');
-    localStorage.removeItem('lotto_signed_out');
-    if (viewSignIn) viewSignIn.style.display = 'none';
-    if (posLayout) {
-      posLayout.removeAttribute('aria-hidden');
-      posLayout.style.display = 'flex';
-      posLayout.classList.remove('hidden-layout');
-    }
-  }
-
-  let storeStatusPollTimer = null;
-  function stopStoreCompliancePolling() {
-    if (storeStatusPollTimer) {
-      clearInterval(storeStatusPollTimer);
-      storeStatusPollTimer = null;
-    }
-  }
-
-  function syncStoreAuthBadgeInManageView(statusPayload) {
-    const statuses = statusPayload?.statuses || statusPayload || {};
-    const retSt = statuses.retailerAuthStatus || 'VALID';
-    const badge = document.getElementById('storeAuthStatusBadge');
-    if (badge && retSt !== 'VALID') {
-      badge.textContent = `Retailer Auth: ${retSt}`;
-      badge.className = 'auth-status-badge pending';
-    }
-  }
-
-  async function refreshStoreComplianceStatus() {
-    const activeSess = getActiveLoginSession();
-    if (!activeSess || activeSess.isAdmin || activeSess.role === 'SUPER_ADMIN') {
-      stopStoreCompliancePolling();
-      return;
-    }
-    const token = sessionStorage.getItem('lotto_store_token') || localStorage.getItem('lotto_store_token');
-    if (!token) return;
-    try {
-      const res = await fetch('/api/store/account-status', {
-        headers: {
-          'x-store-token': token,
-          'Authorization': 'Bearer ' + token,
-          'x-store-id': activeSess.storeId || ''
-        }
-      });
-      const data = await res.json().catch(() => null);
-      if (res.status === 403 && data && (data.code === 'STORE_SUSPENDED' || data.code === 'SESSION_REVOKED' || data.code === 'SUBSCRIPTION_INACTIVE')) {
-        window.dispatchEvent(new CustomEvent('jackpotlo:store-suspended', { detail: data }));
-        return;
+      if (!st.cashierName || st.cashierName === 'master') {
+        st.cashierName = 'Platform Administrator';
       }
-      if (res.ok && data?.success) {
-        const updatedSess = { ...activeSess, ...(data.statuses || {}) };
-        const serialized = JSON.stringify(updatedSess);
-        sessionStorage.setItem('lotto_session_user', serialized);
-        if (localStorage.getItem('lotto_session_user')) localStorage.setItem('lotto_session_user', serialized);
+      return st;
+    }
 
-        // Mirror separated statuses into local admin state so checkStoreCanSell sees live truth
-        const adminSt = getLocalAdminState();
-        const stIdx = (adminSt.stores || []).findIndex(s => s.storeId === data.storeId);
-        if (stIdx >= 0) {
-          adminSt.stores[stIdx] = { ...adminSt.stores[stIdx], ...(data.statuses || {}) };
-          saveLocalAdminState(adminSt);
-        }
-        syncStoreAuthBadgeInManageView(data);
+    function switchStore(newStoreId) {
+      if (!newStoreId) return;
+      const activeSess = getActiveLoginSession();
+      const isAdm = Boolean(activeSess && (activeSess.isAdmin || activeSess.role === 'SUPER_ADMIN'));
+      if (activeSess && !isAdm && activeSess.storeId && newStoreId !== activeSess.storeId) {
+        newStoreId = activeSess.storeId;
       }
-    } catch (_) { }
-  }
-  window.refreshStoreComplianceStatus = refreshStoreComplianceStatus;
 
-  window.addEventListener('jackpotlo:store-suspended', (ev) => {
-    const activeSess = getActiveLoginSession();
-    if (activeSess && (activeSess.isAdmin || activeSess.role === 'SUPER_ADMIN')) return;
-    const detail = ev?.detail || {};
-    window.__lastSuspensionDetail = detail;
-    signOutUser();
+      const currentSid = getCurrentStoreId();
 
-    const errorAlert = document.getElementById('signInErrorAlert');
-    const suspBox = document.getElementById('signInSuspendedActions');
-    const suspReasonEl = document.getElementById('signInSuspendedReasonDetail');
-    const msg = detail.message || 'Access Denied: Your store account has been suspended by administration.';
-    if (errorAlert) {
-      errorAlert.textContent = msg;
-      errorAlert.style.display = 'block';
-    }
-    if (suspBox) suspBox.style.display = 'block';
-    if (suspReasonEl) {
-      suspReasonEl.textContent = detail.suspensionReason
-        ? 'Reason: ' + detail.suspensionReason
-        : 'Your active session was terminated by Lottery Administration. Submit corrected documents for Admin reapproval.';
-    }
-    showToast(msg, 'error');
-  });
-
-  function signOutUser() {
-    stopStoreCompliancePolling();
-    try {
-      fetch('/api/auth/logout', { method: 'POST', headers: getAuthHeaders() }).catch(() => { });
-    } catch (_) { }
-    sessionStorage.setItem('lotto_signed_out', 'true');
-    localStorage.setItem('lotto_signed_out', 'true');
-    ['lotto_session_user', 'lotto_admin_token', 'lotto_store_token', 'lotto_current_store_id'].forEach(k => {
-      sessionStorage.removeItem(k);
-      localStorage.removeItem(k);
-    });
-    const passInp = document.getElementById('inputSignInPass');
-    if (passInp) passInp.value = '';
-    if (window.location.hash) {
-      try { history.replaceState(null, '', '/'); } catch (_) { window.location.hash = ''; }
-    }
-    showSignInScreen();
-  }
-  window.signOutUser = signOutUser;
-
-  function showAdminDashboardView() {
-    const activeSess = getActiveLoginSession();
-    if (activeSess && !activeSess.isAdmin && activeSess.role !== 'SUPER_ADMIN') {
-      showSellCounterView();
-      return;
-    }
-    if (activeSess) {
-      activeSess.activeView = 'admin';
-      const updated = JSON.stringify(activeSess);
-      sessionStorage.setItem('lotto_session_user', updated);
-      localStorage.setItem('lotto_session_user', updated);
-    }
-    hideSignInScreen();
-    const posLayout = document.querySelector('.pos-app-layout');
-    if (posLayout) {
-      posLayout.style.display = 'none';
-      posLayout.classList.add('hidden-layout');
-    }
-    const adminDash = document.getElementById('viewAdminDashboard');
-    if (adminDash) {
-      adminDash.style.display = 'flex';
-      adminDash.classList.remove('hidden-layout');
-    }
-    if (!window.location.hash.startsWith('#admin')) {
-      window.location.hash = '#admin';
-    }
-    if (typeof window.renderActiveAdminPane === 'function') {
-      window.renderActiveAdminPane();
-    }
-  }
-
-  window.showSignInScreen = showSignInScreen;
-  window.hideSignInScreen = hideSignInScreen;
-  window.showAdminDashboardView = showAdminDashboardView;
-  window.lookupUserAssignedStore = (username) => lookupUserAssignedStore(username, state);
-  window.findUserByCredentials = (username, pass) => findUserByCredentials(username, pass, state);
-  window.getAllAuthUsers = () => getAllAuthUsers(state);
-  window.getState = () => state;
-  try {
-    Object.defineProperty(window, 'state', {
-      get: () => state,
-      set: (v) => { state = v; },
-      configurable: true
-    });
-  } catch (_) {
-    window.state = state;
-  }
-
-  function requireAdminAuth(actionDescription = 'this action') {
-    // POS terminal is for store users; all functionality is fully accessible
-    return true;
-  }
-  window.requireAdminAuth = requireAdminAuth;
-  window.isCurrentAdmin = () => true;
-
-  async function handleSignInSubmit(e) {
-    e?.preventDefault?.();
-    const userInput = document.getElementById('inputSignInUser');
-    const passInput = document.getElementById('inputSignInPass');
-    const errorAlert = document.getElementById('signInErrorAlert');
-
-    const email = userInput?.value?.trim();
-    const password = passInput?.value?.trim();
-
-    if (!email) {
-      if (errorAlert) {
-        errorAlert.textContent = 'Please enter your email address.';
-        errorAlert.style.display = 'block';
+      // 1. Save current store state ONLY if switching away and state belongs to currentSid
+      if (state && currentSid && currentSid !== newStoreId && (!state.storeId || state.storeId === currentSid)) {
+        saveState(state, currentSid);
       }
-      userInput?.focus();
-      return;
-    }
 
-    if (!password) {
-      if (errorAlert) {
-        errorAlert.textContent = 'Please enter your password.';
-        errorAlert.style.display = 'block';
+      // 2. Set current store ID
+      setCurrentStoreId(newStoreId);
+
+      // 3. Load target store state (and heal corrupted admin store metadata if present)
+      state = loadState(newStoreId);
+      state.storeId = newStoreId;
+      if (newStoreId === 'store_admin') {
+        sanitizeAdminStoreState(state);
       }
-      passInput?.focus();
-      return;
-    }
-
-    let authRes = null;
-    try {
-      const resp = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ identifier: email, email, username: email, password })
-      });
-      const data = await resp.json().catch(() => null);
-
-      if (resp.ok && data?.success) {
-        const isAdmin = Boolean(data.isAdmin || data.role === 'SUPER_ADMIN' || data.mode === 'ADMIN');
-        const resolvedStoreId = data.storeId || (isAdmin ? 'store_admin' : 'store_amigo');
-        const resolvedStoreName = data.storeName || (isAdmin ? 'ADMIN STORE' : formatStoreNameFromId(resolvedStoreId));
-        authRes = {
-          success: true,
-          mode: data.mode || (isAdmin ? 'ADMIN' : 'STORE'),
-          isAdmin,
-          token: data.token,
-          storeId: resolvedStoreId,
-          storeName: resolvedStoreName,
-          storeAddress: data.storeAddress || data.user?.storeAddress || '',
-          retailerNumber: data.retailerNumber || data.user?.retailerNumber || '',
-          statuses: data.statuses || null,
-          user: {
-            name: data.user?.name || (isAdmin ? 'Platform Administrator' : 'Store User'),
-            signInName: data.user?.username || email,
-            role: data.user?.role || (isAdmin ? 'SUPER_ADMIN' : 'Owner'),
-            isAdmin,
-            storeId: resolvedStoreId,
-            storeName: resolvedStoreName,
-            email: data.user?.email || email,
-            ...(data.statuses || {})
-          }
-        };
-        if (data.token) {
-          if (isAdmin) {
-            sessionStorage.removeItem('lotto_store_token');
-            localStorage.removeItem('lotto_store_token');
-            sessionStorage.setItem('lotto_admin_token', data.token);
-            localStorage.setItem('lotto_admin_token', data.token);
-          } else {
-            sessionStorage.removeItem('lotto_admin_token');
-            localStorage.removeItem('lotto_admin_token');
-            sessionStorage.setItem('lotto_store_token', data.token);
-            localStorage.setItem('lotto_store_token', data.token);
-          }
-        }
-      } else {
-        authRes = {
-          success: false,
-          code: data?.code || '',
-          storeId: data?.storeId || '',
-          storeName: data?.storeName || '',
-          suspensionReason: data?.suspensionReason || '',
-          canSubmitCorrection: Boolean(data?.canSubmitCorrection),
-          message: data?.message || (resp.status === 403 ? 'Access Denied: Account is suspended or pending approval.' : 'Incorrect ID / email or password.')
-        };
-      }
-    } catch (_) { }
-
-    const suspBoxEl = document.getElementById('signInSuspendedActions');
-    const suspReasonEl = document.getElementById('signInSuspendedReasonDetail');
-
-    if (!authRes || !authRes.success) {
-      if (errorAlert) {
-        errorAlert.textContent = authRes?.message || 'Incorrect ID / email or password. Please try again.';
-        errorAlert.style.display = 'block';
-      }
-      if (authRes?.code === 'STORE_SUSPENDED' || authRes?.canSubmitCorrection) {
-        window.__lastSuspensionDetail = authRes;
-        if (suspBoxEl) suspBoxEl.style.display = 'block';
-        if (suspReasonEl) {
-          suspReasonEl.textContent = authRes.suspensionReason
-            ? 'Reason: ' + authRes.suspensionReason
-            : 'Account suspended by administration. Submit corrected documents below for Admin review.';
-        }
-      } else {
-        if (suspBoxEl) suspBoxEl.style.display = 'none';
-      }
-      sfx.buzzer?.();
-      passInput?.focus();
-      passInput?.select();
-      return;
-    }
-
-    // Validated!
-    if (errorAlert) {
-      errorAlert.style.display = 'none';
-      errorAlert.textContent = '';
-    }
-    if (suspBoxEl) suspBoxEl.style.display = 'none';
-    return finalizeAuthLoginSuccess(authRes, { data: { statuses: authRes.statuses } });
-  }
-
-  async function finalizeAuthLoginSuccess(authRes, extraInfo = null) {
-    if (typeof hideSignInScreen === 'function') hideSignInScreen();
-    const user = authRes.user || {};
-    const targetStoreId = user.storeId || authRes.storeId || 'store_amigo';
-    const statuses = authRes.statuses || extraInfo?.data?.statuses || {
-      subscriptionStatus: user.subscriptionStatus || 'ACTIVE',
-      documentStatus: user.documentStatus || 'APPROVED',
-      retailerAuthStatus: user.retailerAuthStatus || 'VALID',
-      softwareAccessStatus: user.softwareAccessStatus || 'ACTIVE',
-      canSellLottery: user.canSellLottery !== false
-    };
-
-    // Keep local store registry synced with backend store metadata
-    if (targetStoreId && authRes.storeName) {
-      const storesList = getStoresList();
-      const existingIdx = storesList.findIndex(s => s.id === targetStoreId);
-      if (existingIdx >= 0) {
-        storesList[existingIdx] = {
-          ...storesList[existingIdx],
-          name: authRes.storeName || storesList[existingIdx].name,
-          address: authRes.storeAddress || storesList[existingIdx].address,
-          retailerNumber: authRes.retailerNumber || storesList[existingIdx].retailerNumber
-        };
-        saveStoresList(storesList);
-      } else {
-        storesList.push({
-          id: targetStoreId,
-          name: authRes.storeName,
-          address: authRes.storeAddress || formatStoreNameFromId(targetStoreId),
-          retailerNumber: authRes.retailerNumber || 'GA-00000',
-          totalBoxes: 65,
-          status: 'ACTIVE'
-        });
-        saveStoresList(storesList);
-      }
-    }
-
-    // Mirror store status into local admin state for instant client-side compliance enforcement
-    if (!authRes.isAdmin && targetStoreId) {
-      const localAdmin = getLocalAdminState();
-      const existingStoreIdx = (localAdmin.stores || []).findIndex(s => s.storeId === targetStoreId);
-      const storeSyncFields = {
-        storeId: targetStoreId,
-        storeName: authRes.storeName || formatStoreNameFromId(targetStoreId),
-        retailerNumber: authRes.retailerNumber || 'GA-00000',
-        address: authRes.storeAddress || '',
-        authorizationStatus: 'APPROVED',
-        operationalStatus: 'ACTIVE',
-        ...statuses
-      };
-      if (existingStoreIdx >= 0) {
-        localAdmin.stores[existingStoreIdx] = { ...localAdmin.stores[existingStoreIdx], ...storeSyncFields };
-      } else {
-        localAdmin.stores.push(storeSyncFields);
-      }
-      saveLocalAdminState(localAdmin);
-    }
-
-    // Persist login session and remembered user
-    const sessionPayload = JSON.stringify({
-      name: user.name,
-      username: user.signInName || user.username,
-      signInName: user.signInName,
-      email: user.email,
-      storeId: targetStoreId,
-      retailerNumber: authRes.retailerNumber || '',
-      activeView: authRes.isAdmin ? 'admin' : 'pos',
-      isAdmin: Boolean(authRes.isAdmin),
-      role: user.role || (authRes.isAdmin ? 'SUPER_ADMIN' : 'Owner'),
-      adminToken: authRes.isAdmin ? (authRes.token || '') : '',
-      storeToken: !authRes.isAdmin ? (authRes.token || '') : '',
-      ...statuses,
-      loginAt: new Date().toISOString()
-    });
-    sessionStorage.setItem('lotto_session_user', sessionPayload);
-    localStorage.setItem('lotto_session_user', sessionPayload);
-    sessionStorage.removeItem('lotto_signed_out');
-    localStorage.removeItem('lotto_signed_out');
-    localStorage.setItem('lotto_remembered_user', user.email || user.signInName || '');
-
-    // Hide sign-in screen
-    hideSignInScreen();
-    sfx.success?.();
-
-    // Platform Administrator -> reset active store context cleanly to store_admin without saving stale store data into it
-    if (authRes.isAdmin) {
-      stopStoreCompliancePolling();
-      setCurrentStoreId('store_admin');
-      state = sanitizeAdminStoreState(loadState('store_admin'));
       window.state = state;
       window.__state = state;
       window.getState = () => state;
-      loadPOSStateFromDB('store_admin').then(serverState => {
-        if (getCurrentStoreId() !== 'store_admin') return;
-        if (serverState && Array.isArray(serverState.slots)) {
-          state = sanitizeAdminStoreState({ ...serverState, storeId: 'store_admin' });
+
+      // 4. Update UI brand
+      updateStoreBrandDisplay();
+
+      // 5. Re-render views
+      renderHeaderAndMetrics();
+      renderDispenserRack();
+      renderSlotsRibbon();
+      renderReceivePacksView();
+      renderDayReportView();
+      renderInventoryView();
+      renderHistoryView();
+      populateSettingsInputs();
+
+      // Asynchronously sync latest authoritative store state from server
+      loadPOSStateFromDB(newStoreId).then(serverState => {
+        if (getCurrentStoreId() !== newStoreId) return;
+        if (serverState && Array.isArray(serverState.slots) && (!serverState.storeId || serverState.storeId === newStoreId)) {
+          state = newStoreId === 'store_admin'
+            ? sanitizeAdminStoreState({ ...serverState, storeId: newStoreId })
+            : { ...serverState, storeId: newStoreId };
           window.state = state;
           window.__state = state;
-          saveState(state, 'store_admin');
-        }
-      }).catch(() => { });
-      showAdminDashboardView();
-      showToast(`✓ Welcome Platform Administrator, ${user.name}!`, 'success');
-      return;
-    }
-
-    // Non-admin store user -> hide Admin Dashboard, reveal POS layout, and load strictly assigned store state
-    const adminDash = document.getElementById('viewAdminDashboard');
-    if (adminDash) adminDash.style.display = 'none';
-    const posLayout = document.querySelector('.pos-app-layout');
-    if (posLayout) {
-      posLayout.style.display = 'flex';
-      posLayout.classList.remove('hidden-layout');
-    }
-    if (window.location.hash.startsWith('#admin')) {
-      try { history.replaceState(null, '', '/'); } catch (_) { window.location.hash = ''; }
-    }
-
-    setCurrentStoreId(targetStoreId);
-
-    let loadedServerState = null;
-    try {
-      loadedServerState = await loadPOSStateFromDB(targetStoreId);
-    } catch (_) { }
-
-    const localState = loadState(targetStoreId);
-    const serverActive = (loadedServerState?.slots || []).filter(s => s && s.status === 'ACTIVE' && s.packNumber).length;
-    const localActive = (localState?.slots || []).filter(s => s && s.status === 'ACTIVE' && s.packNumber).length;
-    const serverTime = loadedServerState?.lastSavedAt ? new Date(loadedServerState.lastSavedAt).getTime() : 0;
-    const localTime = localState?.lastSavedAt ? new Date(localState.lastSavedAt).getTime() : 0;
-
-    if (loadedServerState && Array.isArray(loadedServerState.slots) && (serverTime >= localTime || serverActive >= localActive)) {
-      state = loadedServerState;
-    } else {
-      state = localState;
-    }
-    state.storeId = targetStoreId;
-    state.cashierName = user.name || user.email || 'Owner';
-    const storeMeta = getStoresList().find(s => s.id === targetStoreId) || DEFAULT_STORES.find(s => s.id === targetStoreId);
-    state.storeName = authRes.storeName || storeMeta?.name || formatStoreNameFromId(targetStoreId);
-    if (authRes.storeAddress || storeMeta?.address) state.storeAddress = authRes.storeAddress || storeMeta.address;
-    if (authRes.retailerNumber || storeMeta?.retailerNumber) state.retailerNumber = authRes.retailerNumber || storeMeta.retailerNumber;
-    if (serverActive > 0 || localActive > 0) {
-      state.dataCleared = false;
-    }
-    window.state = state;
-    window.__state = state;
-    window.getState = () => state;
-    saveState(state, targetStoreId);
-
-    // Update UI headers, roles, avatar, and store brand
-    if (typeof showSellCounterView === 'function') showSellCounterView();
-    updateStoreBrandDisplay();
-    renderHeaderAndMetrics();
-    renderDispenserRack();
-    renderSlotsRibbon();
-    if (typeof renderReceivePacksView === 'function') renderReceivePacksView();
-    if (typeof renderDayReportView === 'function') renderDayReportView();
-    if (typeof renderInventoryView === 'function') renderInventoryView();
-    if (typeof renderHistoryView === 'function') renderHistoryView();
-    if (typeof populateSettingsInputs === 'function') populateSettingsInputs();
-
-    stopStoreCompliancePolling();
-    syncStoreAuthBadgeInManageView({ statuses });
-    if (statuses.retailerAuthStatus && statuses.retailerAuthStatus !== 'VALID') {
-      showToast(`Software active — Retailer Authorization is ${statuses.retailerAuthStatus} (ticket selling unlocks after verification).`, 'warning');
-    }
-    storeStatusPollTimer = setInterval(refreshStoreComplianceStatus, 12000);
-
-    const stores = getStoresList();
-    const activeStore = stores.find(s => s.id === getCurrentStoreId());
-    const storeLabel = activeStore ? activeStore.name : (authRes.storeName || formatStoreNameFromId(targetStoreId));
-    showToast(`✓ Welcome back, ${user.name}! Opened ${storeLabel}.`, 'success');
-  }
-
-  window.completeStoreLoginSession = async function completeStoreLoginSession(checkoutData) {
-    if (!checkoutData || !checkoutData.token) return;
-    sessionStorage.removeItem('lotto_signed_out');
-    localStorage.removeItem('lotto_signed_out');
-    sessionStorage.removeItem('lotto_admin_token');
-    localStorage.removeItem('lotto_admin_token');
-    sessionStorage.setItem('lotto_store_token', checkoutData.token);
-    localStorage.setItem('lotto_store_token', checkoutData.token);
-
-    const authRes = {
-      success: true,
-      mode: 'STORE',
-      isAdmin: false,
-      token: checkoutData.token,
-      storeId: checkoutData.storeId,
-      storeName: checkoutData.storeName,
-      storeAddress: checkoutData.storeAddress || '',
-      retailerNumber: checkoutData.retailerNumber || '',
-      statuses: checkoutData.statuses || null,
-      user: {
-        name: checkoutData.user?.name || 'Store Owner',
-        signInName: checkoutData.user?.username || checkoutData.user?.email || '',
-        username: checkoutData.user?.username || '',
-        email: checkoutData.user?.email || '',
-        role: checkoutData.user?.role || 'Owner',
-        isAdmin: false,
-        storeId: checkoutData.storeId,
-        storeName: checkoutData.storeName,
-        ...(checkoutData.statuses || {})
-      }
-    };
-
-    await finalizeAuthLoginSuccess(authRes);
-    if (checkoutData.message) {
-      showToast(checkoutData.message, 'success');
-    }
-  };
-
-  // Real-time store subtitle update when typing sign-in name
-  function updateSignInStoreSubtitle(val) {
-    const storeSub = document.getElementById('signInStoreSubtitle');
-    if (!storeSub) return;
-    const cleanVal = (val || '').trim().toLowerCase();
-    if (!cleanVal) {
-      storeSub.textContent = 'Sign In to LottoTrack';
-      return;
-    }
-    const assigned = lookupUserAssignedStore(cleanVal, state);
-    if (assigned && assigned.storeName) {
-      storeSub.textContent = assigned.storeName;
-    } else {
-      const disp = cleanVal.charAt(0).toUpperCase() + cleanVal.slice(1);
-      storeSub.textContent = 'Jackpotlo Portal';
-    }
-  }
-  window.updateSignInStoreSubtitle = updateSignInStoreSubtitle;
-
-  const inputSignInUser = document.getElementById('inputSignInUser');
-  if (inputSignInUser) {
-    const handleUserChange = (e) => updateSignInStoreSubtitle(e?.target?.value ?? inputSignInUser.value);
-    inputSignInUser.addEventListener('input', handleUserChange);
-    inputSignInUser.addEventListener('change', handleUserChange);
-    inputSignInUser.addEventListener('keyup', handleUserChange);
-  }
-
-  // Password visibility toggle (Eye icon)
-  document.getElementById('btnToggleSignInPass')?.addEventListener('click', () => {
-    const passInput = document.getElementById('inputSignInPass');
-    const eyeShow = document.getElementById('eyeIconShow');
-    const eyeHide = document.getElementById('eyeIconHide');
-    if (!passInput) return;
-    if (passInput.type === 'password') {
-      passInput.type = 'text';
-      if (eyeShow) eyeShow.style.display = 'none';
-      if (eyeHide) eyeHide.style.display = 'block';
-    } else {
-      passInput.type = 'password';
-      if (eyeShow) eyeShow.style.display = 'block';
-      if (eyeHide) eyeHide.style.display = 'none';
-    }
-  });
-
-  document.getElementById('btnToggleCashierModalPin')?.addEventListener('click', () => {
-    const pinInput = document.getElementById('inputCashierModalPin');
-    if (!pinInput) return;
-    pinInput.type = pinInput.type === 'password' ? 'text' : 'password';
-  });
-
-  document.getElementById('signInMainForm')?.addEventListener('submit', handleSignInSubmit);
-  document.getElementById('linkForgotPassword')?.addEventListener('click', (e) => {
-    e.preventDefault();
-    const errorAlert = document.getElementById('signInErrorAlert');
-    if (errorAlert) {
-      errorAlert.textContent = 'To reset your password, please contact the lottery administrator at support@jackpotlo.com.';
-      errorAlert.style.display = 'block';
-    }
-    showToast('To reset your password, contact administration at support@jackpotlo.com.', 'info');
-  });
-  document.getElementById('btnOpenFullSignInFromModal')?.addEventListener('click', () => {
-    document.getElementById('cashierModal')?.close();
-    showSignInScreen();
-  });
-
-  // Require login before entering POS system (unless active session exists or automated test)
-  const rawSession = sessionStorage.getItem('lotto_session_user') || localStorage.getItem('lotto_session_user');
-  const isSignedOut = sessionStorage.getItem('lotto_signed_out') === 'true' || localStorage.getItem('lotto_signed_out') === 'true';
-  const forceSignInScreen = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('signin') === '1';
-  const hasActiveSession = Boolean(rawSession) && !isSignedOut && !forceSignInScreen;
-  const isAutomatedTest = !forceSignInScreen && ((typeof navigator !== 'undefined' && (
-    navigator.webdriver ||
-    navigator.userAgent.includes('HeadlessChrome') ||
-    navigator.userAgent.includes('Headless')
-  )) || (typeof window !== 'undefined' && window.location.search.includes('bypass_login')));
-
-
-  if (hasActiveSession) {
-    try {
-      const sess = JSON.parse(rawSession);
-      sessionStorage.setItem('lotto_session_user', JSON.stringify(sess));
-      localStorage.setItem('lotto_session_user', JSON.stringify(sess));
-      sessionStorage.removeItem('lotto_signed_out');
-      localStorage.removeItem('lotto_signed_out');
-
-      // CRITICAL: Un-hide POS layout and hide sign-in overlay screen on refresh
-      hideSignInScreen();
-
-      const posLayout = document.querySelector('.pos-app-layout');
-      if (posLayout) {
-        posLayout.style.display = 'flex';
-        posLayout.removeAttribute('aria-hidden');
-        posLayout.classList.remove('hidden-layout');
-      }
-
-      if (sess.isAdmin || sess.role === 'SUPER_ADMIN') {
-        const adminPosTarget = sess.posStoreId || 'store_admin';
-        if (window.location.hash.startsWith('#admin') || sess.activeView !== 'pos') {
-          setCurrentStoreId('store_admin');
-          state = sanitizeAdminStoreState(loadState('store_admin'));
-          window.state = state;
-          window.__state = state;
-          showAdminDashboardView();
-        } else {
-          const adminDash = document.getElementById('viewAdminDashboard');
-          if (adminDash) adminDash.style.display = 'none';
-          setCurrentStoreId(adminPosTarget);
-          state = sanitizeAdminStoreState(loadState(adminPosTarget));
-          window.state = state;
-          window.__state = state;
-          showSellCounterView();
+          state.dataCleared = Boolean(serverState.dataCleared);
+          saveState(state, newStoreId);
           updateStoreBrandDisplay();
           renderHeaderAndMetrics();
           renderDispenserRack();
           renderSlotsRibbon();
-          loadPOSStateFromDB(adminPosTarget).then(serverState => {
-            if (getCurrentStoreId() !== adminPosTarget) return;
-            if (serverState && Array.isArray(serverState.slots)) {
-              state = sanitizeAdminStoreState({ ...serverState, storeId: adminPosTarget });
-              window.state = state;
-              window.__state = state;
-              saveState(state, adminPosTarget);
-              updateStoreBrandDisplay();
-              renderHeaderAndMetrics();
-              renderDispenserRack();
-              renderSlotsRibbon();
-            }
-          }).catch(() => { });
+          if (typeof renderReceivePacksView === 'function') renderReceivePacksView();
+          if (typeof renderDayReportView === 'function') renderDayReportView();
+          if (typeof renderInventoryView === 'function') renderInventoryView();
+          if (typeof renderHistoryView === 'function') renderHistoryView();
+          if (typeof populateSettingsInputs === 'function') populateSettingsInputs();
         }
-      } else {
-        const sessUser = (sess.signInName || '').toLowerCase();
-        const isAmigo = sessUser === 'amigo' || sessUser === 'master';
-        const cleanId = sessUser.replace(/[^a-z0-9_]/g, '_');
-        const sessStoreId = sess.storeId || (isAmigo ? 'store_amigo' : `store_${cleanId}`);
-        if (sessStoreId && sessStoreId !== getCurrentStoreId()) {
-          setCurrentStoreId(sessStoreId);
-          state = loadState(sessStoreId);
-          state.storeId = sessStoreId;
-          window.state = state;
-          window.__state = state;
-        }
-        updateStoreBrandDisplay();
-        renderHeaderAndMetrics();
-        renderDispenserRack();
-        renderSlotsRibbon();
-        if (typeof renderReceivePacksView === 'function') {
-          try { renderReceivePacksView(); } catch (err) { console.warn('renderReceivePacksView error:', err); }
-        }
-        if (typeof renderDayReportView === 'function') {
-          try { renderDayReportView(); } catch (err) { console.warn('renderDayReportView error:', err); }
-        }
-        if (typeof renderInventoryView === 'function') {
-          try { renderInventoryView(); } catch (err) { console.warn('renderInventoryView error:', err); }
-        }
-        if (typeof renderHistoryView === 'function') {
-          try { renderHistoryView(); } catch (err) { console.warn('renderHistoryView error:', err); }
-        }
-        if (typeof populateSettingsInputs === 'function') {
-          try { populateSettingsInputs(); } catch (err) { console.warn('populateSettingsInputs error:', err); }
+      }).catch(() => { });
+
+      sfx.success?.();
+    }
+    window.switchStore = switchStore;
+    window.getStoresList = getStoresList;
+    window.getCurrentStoreId = getCurrentStoreId;
+
+    // Fullscreen Sign In Screen Controls (Matching Reference UI Specification)
+    function showSignInScreen() {
+      // Sign-in lives on the LottoTrack Pro site (/signin); the legacy in-app screen is kept only for ?bypass_login test runs
+      if (!window.location.search.includes('bypass_login')) {
+        window.location.replace('/signin');
+        return;
+      }
+      const viewSignIn = document.getElementById('viewSignIn');
+      const posLayout = document.querySelector('.pos-app-layout');
+      if (!viewSignIn) return;
+
+      if (posLayout) posLayout.setAttribute('aria-hidden', 'true');
+      const adminDash = document.getElementById('viewAdminDashboard');
+      if (adminDash) adminDash.style.display = 'none';
+      viewSignIn.style.display = 'flex';
+
+      // Store subtitle
+      const currentSid = getCurrentStoreId();
+      const stores = getStoresList();
+      const currentStore = stores.find(s => s.id === currentSid);
+      const storeSub = document.getElementById('signInStoreSubtitle');
+      if (storeSub) {
+        storeSub.textContent = currentStore ? currentStore.name : 'Amigo Food Mart';
+      }
+
+      const userInput = document.getElementById('inputSignInUser');
+      const passInput = document.getElementById('inputSignInPass');
+      const errorAlert = document.getElementById('signInErrorAlert');
+      if (errorAlert) {
+        errorAlert.style.display = 'none';
+        errorAlert.textContent = '';
+      }
+      if (passInput) passInput.value = '';
+
+      const remembered = localStorage.getItem('lotto_remembered_user');
+      if (userInput && !userInput.value) {
+        if (remembered) {
+          userInput.value = remembered;
+        } else {
+          userInput.value = '';
         }
       }
-    } catch (e) {
-      console.warn('[AUTH REFRESH WARNING]:', e);
+
+      if (userInput?.value) {
+        const assigned = lookupUserAssignedStore(userInput.value, state);
+        if (assigned && storeSub) {
+          storeSub.textContent = assigned.storeName;
+        }
+      }
+
+      setTimeout(() => {
+        if (userInput && !userInput.value) {
+          userInput.focus();
+        } else if (passInput) {
+          passInput.focus();
+        }
+      }, 100);
+    }
+
+    function hideSignInScreen() {
+      const viewSignIn = document.getElementById('viewSignIn');
+      const posLayout = document.querySelector('.pos-app-layout');
+      sessionStorage.removeItem('lotto_signed_out');
+      localStorage.removeItem('lotto_signed_out');
+      if (viewSignIn) viewSignIn.style.display = 'none';
+      if (posLayout) {
+        posLayout.removeAttribute('aria-hidden');
+        posLayout.style.display = 'flex';
+        posLayout.classList.remove('hidden-layout');
+      }
+    }
+
+    let storeStatusPollTimer = null;
+    function stopStoreCompliancePolling() {
+      if (storeStatusPollTimer) {
+        clearInterval(storeStatusPollTimer);
+        storeStatusPollTimer = null;
+      }
+    }
+
+    function syncStoreAuthBadgeInManageView(statusPayload) {
+      const statuses = statusPayload?.statuses || statusPayload || {};
+      const retSt = statuses.retailerAuthStatus || 'VALID';
+      const badge = document.getElementById('storeAuthStatusBadge');
+      if (badge && retSt !== 'VALID') {
+        badge.textContent = `Retailer Auth: ${retSt}`;
+        badge.className = 'auth-status-badge pending';
+      }
+    }
+
+    async function refreshStoreComplianceStatus() {
+      const activeSess = getActiveLoginSession();
+      if (!activeSess || activeSess.isAdmin || activeSess.role === 'SUPER_ADMIN') {
+        stopStoreCompliancePolling();
+        return;
+      }
+      const token = sessionStorage.getItem('lotto_store_token') || localStorage.getItem('lotto_store_token');
+      if (!token) return;
+      try {
+        const res = await fetch('/api/store/account-status', {
+          headers: {
+            'x-store-token': token,
+            'Authorization': 'Bearer ' + token,
+            'x-store-id': activeSess.storeId || ''
+          }
+        });
+        const data = await res.json().catch(() => null);
+        if (res.status === 403 && data && (data.code === 'STORE_SUSPENDED' || data.code === 'SESSION_REVOKED' || data.code === 'SUBSCRIPTION_INACTIVE')) {
+          window.dispatchEvent(new CustomEvent('jackpotlo:store-suspended', { detail: data }));
+          return;
+        }
+        if (res.ok && data?.success) {
+          const updatedSess = { ...activeSess, ...(data.statuses || {}) };
+          const serialized = JSON.stringify(updatedSess);
+          sessionStorage.setItem('lotto_session_user', serialized);
+          if (localStorage.getItem('lotto_session_user')) localStorage.setItem('lotto_session_user', serialized);
+
+          // Mirror separated statuses into local admin state so checkStoreCanSell sees live truth
+          const adminSt = getLocalAdminState();
+          const stIdx = (adminSt.stores || []).findIndex(s => s.storeId === data.storeId);
+          if (stIdx >= 0) {
+            adminSt.stores[stIdx] = { ...adminSt.stores[stIdx], ...(data.statuses || {}) };
+            saveLocalAdminState(adminSt);
+          }
+          syncStoreAuthBadgeInManageView(data);
+        }
+      } catch (_) { }
+    }
+    window.refreshStoreComplianceStatus = refreshStoreComplianceStatus;
+
+    window.addEventListener('jackpotlo:store-suspended', (ev) => {
+      const activeSess = getActiveLoginSession();
+      if (activeSess && (activeSess.isAdmin || activeSess.role === 'SUPER_ADMIN')) return;
+      const detail = ev?.detail || {};
+      window.__lastSuspensionDetail = detail;
+      signOutUser();
+
+      const errorAlert = document.getElementById('signInErrorAlert');
+      const suspBox = document.getElementById('signInSuspendedActions');
+      const suspReasonEl = document.getElementById('signInSuspendedReasonDetail');
+      const msg = detail.message || 'Access Denied: Your store account has been suspended by administration.';
+      if (errorAlert) {
+        errorAlert.textContent = msg;
+        errorAlert.style.display = 'block';
+      }
+      if (suspBox) suspBox.style.display = 'block';
+      if (suspReasonEl) {
+        suspReasonEl.textContent = detail.suspensionReason
+          ? 'Reason: ' + detail.suspensionReason
+          : 'Your active session was terminated by Lottery Administration. Submit corrected documents for Admin reapproval.';
+      }
+      showToast(msg, 'error');
+    });
+
+    function signOutUser() {
+      stopStoreCompliancePolling();
+      try {
+        fetch('/api/auth/logout', { method: 'POST', headers: getAuthHeaders() }).catch(() => { });
+      } catch (_) { }
+      sessionStorage.setItem('lotto_signed_out', 'true');
+      localStorage.setItem('lotto_signed_out', 'true');
+      ['lotto_session_user', 'lotto_admin_token', 'lotto_store_token', 'lotto_current_store_id'].forEach(k => {
+        sessionStorage.removeItem(k);
+        localStorage.removeItem(k);
+      });
+      const passInp = document.getElementById('inputSignInPass');
+      if (passInp) passInp.value = '';
+      if (window.location.hash) {
+        try { history.replaceState(null, '', window.location.pathname); } catch (_) { window.location.hash = ''; }
+      }
+      showSignInScreen();
+    }
+    window.signOutUser = signOutUser;
+
+    function showAdminDashboardView() {
+      const activeSess = getActiveLoginSession();
+      if (activeSess && !activeSess.isAdmin && activeSess.role !== 'SUPER_ADMIN') {
+        showSellCounterView();
+        return;
+      }
+      if (activeSess) {
+        activeSess.activeView = 'admin';
+        const updated = JSON.stringify(activeSess);
+        sessionStorage.setItem('lotto_session_user', updated);
+        localStorage.setItem('lotto_session_user', updated);
+      }
       hideSignInScreen();
-    }
-  } else if (!isAutomatedTest) {
-    showSignInScreen();
-  }
-
-  // Quick Cashier Switcher Dialog
-  function openCashierModal() {
-    const cashierModal = document.getElementById('cashierModal');
-    if (!cashierModal) return;
-    const isDaily = state.settings?.operationMode !== 'SHIFTS';
-    const stripLabel = document.getElementById('cashierModalStripLabel');
-    if (stripLabel) stripLabel.textContent = isDaily ? 'Active Day' : 'Active Shift';
-
-    const shiftInfo = document.getElementById('cashierModalShiftInfo');
-    if (shiftInfo) {
-      const todayFormatted = new Date().toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' });
-      const statusTxt = state.shiftStatus === 'IN_PROGRESS' ? 'In Progress' : 'Closed';
-      shiftInfo.textContent = isDaily
-        ? `${todayFormatted} · ${statusTxt}`
-        : `Shift #${state.shiftNumber} · ${statusTxt}`;
+      const posLayout = document.querySelector('.pos-app-layout');
+      if (posLayout) {
+        posLayout.style.display = 'none';
+        posLayout.classList.add('hidden-layout');
+      }
+      const adminDash = document.getElementById('viewAdminDashboard');
+      if (adminDash) {
+        adminDash.style.display = 'flex';
+        adminDash.classList.remove('hidden-layout');
+      }
+      if (!window.location.hash.startsWith('#admin')) {
+        window.location.hash = '#admin';
+      }
+      if (typeof window.renderActiveAdminPane === 'function') {
+        window.renderActiveAdminPane();
+      }
     }
 
-    const storeNameInp = document.getElementById('inputCashierModalStoreName');
-    if (storeNameInp) {
-      storeNameInp.value = state.storeName || formatStoreNameFromId(getCurrentStoreId());
+    window.showSignInScreen = showSignInScreen;
+    window.hideSignInScreen = hideSignInScreen;
+    window.showAdminDashboardView = showAdminDashboardView;
+    window.lookupUserAssignedStore = (username) => lookupUserAssignedStore(username, state);
+    window.findUserByCredentials = (username, pass) => findUserByCredentials(username, pass, state);
+    window.getAllAuthUsers = () => getAllAuthUsers(state);
+    window.getState = () => state;
+    try {
+      Object.defineProperty(window, 'state', {
+        get: () => state,
+        set: (v) => { state = v; },
+        configurable: true
+      });
+    } catch (_) {
+      window.state = state;
     }
 
-    const nameInp = document.getElementById('inputCashierModalName');
-    const pinInp = document.getElementById('inputCashierModalPin');
-    if (nameInp) nameInp.value = state.cashierName || 'master';
-    if (pinInp) pinInp.value = '';
-    sfx.keypad();
-    cashierModal.scrollLeft = 0;
-    cashierModal.scrollTop = 0;
-    const rightPanel = cashierModal.querySelector('.cashier-right-panel');
-    if (rightPanel) rightPanel.scrollTop = 0;
-    cashierModal.showModal();
-    setTimeout(() => {
-      if (pinInp) {
-        pinInp.focus();
+    function requireAdminAuth(actionDescription = 'this action') {
+      // POS terminal is for store users; all functionality is fully accessible
+      return true;
+    }
+    window.requireAdminAuth = requireAdminAuth;
+    window.isCurrentAdmin = () => true;
+
+    async function handleSignInSubmit(e) {
+      e?.preventDefault?.();
+      const userInput = document.getElementById('inputSignInUser');
+      const passInput = document.getElementById('inputSignInPass');
+      const errorAlert = document.getElementById('signInErrorAlert');
+
+      const email = userInput?.value?.trim();
+      const password = passInput?.value?.trim();
+
+      if (!email) {
+        if (errorAlert) {
+          errorAlert.textContent = 'Please enter your email address.';
+          errorAlert.style.display = 'block';
+        }
+        userInput?.focus();
+        return;
+      }
+
+      if (!password) {
+        if (errorAlert) {
+          errorAlert.textContent = 'Please enter your password.';
+          errorAlert.style.display = 'block';
+        }
+        passInput?.focus();
+        return;
+      }
+
+      let authRes = null;
+      try {
+        const resp = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ identifier: email, email, username: email, password })
+        });
+        const data = await resp.json().catch(() => null);
+
+        if (resp.ok && data?.success) {
+          const isAdmin = Boolean(data.isAdmin || data.role === 'SUPER_ADMIN' || data.mode === 'ADMIN');
+          const resolvedStoreId = data.storeId || (isAdmin ? 'store_admin' : 'store_amigo');
+          const resolvedStoreName = data.storeName || (isAdmin ? 'ADMIN STORE' : formatStoreNameFromId(resolvedStoreId));
+          authRes = {
+            success: true,
+            mode: data.mode || (isAdmin ? 'ADMIN' : 'STORE'),
+            isAdmin,
+            token: data.token,
+            storeId: resolvedStoreId,
+            storeName: resolvedStoreName,
+            storeAddress: data.storeAddress || data.user?.storeAddress || '',
+            retailerNumber: data.retailerNumber || data.user?.retailerNumber || '',
+            statuses: data.statuses || null,
+            user: {
+              name: data.user?.name || (isAdmin ? 'Platform Administrator' : 'Store User'),
+              signInName: data.user?.username || email,
+              role: data.user?.role || (isAdmin ? 'SUPER_ADMIN' : 'Owner'),
+              isAdmin,
+              storeId: resolvedStoreId,
+              storeName: resolvedStoreName,
+              email: data.user?.email || email,
+              ...(data.statuses || {})
+            }
+          };
+          if (data.token) {
+            if (isAdmin) {
+              sessionStorage.removeItem('lotto_store_token');
+              localStorage.removeItem('lotto_store_token');
+              sessionStorage.setItem('lotto_admin_token', data.token);
+              localStorage.setItem('lotto_admin_token', data.token);
+            } else {
+              sessionStorage.removeItem('lotto_admin_token');
+              localStorage.removeItem('lotto_admin_token');
+              sessionStorage.setItem('lotto_store_token', data.token);
+              localStorage.setItem('lotto_store_token', data.token);
+            }
+          }
+        } else {
+          authRes = {
+            success: false,
+            code: data?.code || '',
+            storeId: data?.storeId || '',
+            storeName: data?.storeName || '',
+            suspensionReason: data?.suspensionReason || '',
+            canSubmitCorrection: Boolean(data?.canSubmitCorrection),
+            message: data?.message || (resp.status === 403 ? 'Access Denied: Account is suspended or pending approval.' : 'Incorrect ID / email or password.')
+          };
+        }
+      } catch (_) { }
+
+      const suspBoxEl = document.getElementById('signInSuspendedActions');
+      const suspReasonEl = document.getElementById('signInSuspendedReasonDetail');
+
+      if (!authRes || !authRes.success) {
+        if (errorAlert) {
+          errorAlert.textContent = authRes?.message || 'Incorrect ID / email or password. Please try again.';
+          errorAlert.style.display = 'block';
+        }
+        if (authRes?.code === 'STORE_SUSPENDED' || authRes?.canSubmitCorrection) {
+          window.__lastSuspensionDetail = authRes;
+          if (suspBoxEl) suspBoxEl.style.display = 'block';
+          if (suspReasonEl) {
+            suspReasonEl.textContent = authRes.suspensionReason
+              ? 'Reason: ' + authRes.suspensionReason
+              : 'Account suspended by administration. Submit corrected documents below for Admin review.';
+          }
+        } else {
+          if (suspBoxEl) suspBoxEl.style.display = 'none';
+        }
+        sfx.buzzer?.();
+        passInput?.focus();
+        passInput?.select();
+        return;
+      }
+
+      // Validated!
+      if (errorAlert) {
+        errorAlert.style.display = 'none';
+        errorAlert.textContent = '';
+      }
+      if (suspBoxEl) suspBoxEl.style.display = 'none';
+      return finalizeAuthLoginSuccess(authRes, { data: { statuses: authRes.statuses } });
+    }
+
+    async function finalizeAuthLoginSuccess(authRes, extraInfo = null) {
+      if (typeof hideSignInScreen === 'function') hideSignInScreen();
+      const user = authRes.user || {};
+      const targetStoreId = user.storeId || authRes.storeId || 'store_amigo';
+      const resolvedJurisdiction = normalizeLotteryJurisdiction(authRes.lotteryJurisdiction || user.lotteryJurisdiction || 'GA');
+      const statuses = authRes.statuses || extraInfo?.data?.statuses || {
+        subscriptionStatus: user.subscriptionStatus || 'ACTIVE',
+        documentStatus: user.documentStatus || 'APPROVED',
+        retailerAuthStatus: user.retailerAuthStatus || 'VALID',
+        softwareAccessStatus: user.softwareAccessStatus || 'ACTIVE',
+        canSellLottery: user.canSellLottery !== false
+      };
+
+      // Keep local store registry synced with backend store metadata
+      if (targetStoreId && authRes.storeName) {
+        const storesList = getStoresList();
+        const existingIdx = storesList.findIndex(s => s.id === targetStoreId);
+        if (existingIdx >= 0) {
+          storesList[existingIdx] = {
+            ...storesList[existingIdx],
+            name: authRes.storeName || storesList[existingIdx].name,
+            address: authRes.storeAddress || storesList[existingIdx].address,
+            retailerNumber: authRes.retailerNumber || storesList[existingIdx].retailerNumber,
+            lotteryJurisdiction: resolvedJurisdiction
+          };
+          saveStoresList(storesList);
+        } else {
+          storesList.push({
+            id: targetStoreId,
+            name: authRes.storeName,
+            address: authRes.storeAddress || formatStoreNameFromId(targetStoreId),
+            retailerNumber: authRes.retailerNumber || 'GA-00000',
+            totalBoxes: 65,
+            status: 'ACTIVE',
+            lotteryJurisdiction: resolvedJurisdiction
+          });
+          saveStoresList(storesList);
+        }
+      }
+
+      // Mirror store status into local admin state for instant client-side compliance enforcement
+      if (!authRes.isAdmin && targetStoreId) {
+        const localAdmin = getLocalAdminState();
+        const existingStoreIdx = (localAdmin.stores || []).findIndex(s => s.storeId === targetStoreId);
+        const storeSyncFields = {
+          storeId: targetStoreId,
+          storeName: authRes.storeName || formatStoreNameFromId(targetStoreId),
+          retailerNumber: authRes.retailerNumber || 'GA-00000',
+          address: authRes.storeAddress || '',
+          authorizationStatus: 'APPROVED',
+          operationalStatus: 'ACTIVE',
+          lotteryJurisdiction: resolvedJurisdiction,
+          ...statuses
+        };
+        if (existingStoreIdx >= 0) {
+          localAdmin.stores[existingStoreIdx] = { ...localAdmin.stores[existingStoreIdx], ...storeSyncFields };
+        } else {
+          localAdmin.stores.push(storeSyncFields);
+        }
+        saveLocalAdminState(localAdmin);
+      }
+
+      // Persist login session and remembered user
+      const sessionPayload = JSON.stringify({
+        name: user.name,
+        username: user.signInName || user.username,
+        signInName: user.signInName,
+        email: user.email,
+        storeId: targetStoreId,
+        retailerNumber: authRes.retailerNumber || '',
+        lotteryJurisdiction: resolvedJurisdiction,
+        activeView: authRes.isAdmin ? 'admin' : 'pos',
+        isAdmin: Boolean(authRes.isAdmin),
+        role: user.role || (authRes.isAdmin ? 'SUPER_ADMIN' : 'Owner'),
+        adminToken: authRes.isAdmin ? (authRes.token || '') : '',
+        storeToken: !authRes.isAdmin ? (authRes.token || '') : '',
+        ...statuses,
+        loginAt: new Date().toISOString()
+      });
+      sessionStorage.setItem('lotto_session_user', sessionPayload);
+      localStorage.setItem('lotto_session_user', sessionPayload);
+      sessionStorage.removeItem('lotto_signed_out');
+      localStorage.removeItem('lotto_signed_out');
+      localStorage.setItem('lotto_remembered_user', user.email || user.signInName || '');
+
+      // Hide sign-in screen
+      hideSignInScreen();
+      sfx.success?.();
+
+      // Platform Administrator -> reset active store context cleanly to store_admin without saving stale store data into it
+      if (authRes.isAdmin) {
+        stopStoreCompliancePolling();
+        setCurrentStoreId('store_admin');
+        state = sanitizeAdminStoreState(loadState('store_admin'));
+        state.lotteryJurisdiction = 'GA';
+        window.state = state;
+        window.__state = state;
+        window.getState = () => state;
+        loadPOSStateFromDB('store_admin').then(serverState => {
+          if (getCurrentStoreId() !== 'store_admin') return;
+          if (serverState && Array.isArray(serverState.slots)) {
+            state = sanitizeAdminStoreState({ ...serverState, storeId: 'store_admin' });
+            window.state = state;
+            window.__state = state;
+            saveState(state, 'store_admin');
+          }
+        }).catch(() => { });
+        showAdminDashboardView();
+        showToast(`✓ Welcome Platform Administrator, ${user.name}!`, 'success');
+        return;
+      }
+
+      // Non-admin store user -> hide Admin Dashboard, reveal POS layout, and load strictly assigned store state
+      const adminDash = document.getElementById('viewAdminDashboard');
+      if (adminDash) adminDash.style.display = 'none';
+      const posLayout = document.querySelector('.pos-app-layout');
+      if (posLayout) {
+        posLayout.style.display = 'flex';
+        posLayout.classList.remove('hidden-layout');
+      }
+      if (window.location.hash.startsWith('#admin')) {
+        try { history.replaceState(null, '', window.location.pathname); } catch (_) { window.location.hash = ''; }
+      }
+
+      setCurrentStoreId(targetStoreId);
+
+      let loadedServerState = null;
+      try {
+        loadedServerState = await loadPOSStateFromDB(targetStoreId);
+      } catch (_) { }
+
+      const localState = loadState(targetStoreId);
+
+      if (shouldUseServerState(loadedServerState, localState)) {
+        state = loadedServerState;
       } else {
-        nameInp?.focus?.({ preventScroll: true });
-        nameInp?.select?.();
+        state = localState;
       }
-    }, 100);
-  }
-
-  function saveCashierModal() {
-    const cashierModal = document.getElementById('cashierModal');
-    const nameInp = document.getElementById('inputCashierModalName');
-    const pinInp = document.getElementById('inputCashierModalPin');
-    const storeNameInp = document.getElementById('inputCashierModalStoreName');
-    const newName = nameInp?.value?.trim();
-    const pinVal = pinInp?.value?.trim();
-    const newStoreName = (storeNameInp?.value || '').trim();
-
-    if (!newName) {
-      showToast('Please enter a worker name.', 'warning');
-      nameInp?.focus();
-      return;
-    }
-
-    if (!pinVal) {
-      showToast('Please enter your password or PIN.', 'warning');
-      pinInp?.focus();
-      return;
-    }
-    const authRes = findUserByCredentials(newName, pinVal, state);
-    if (!authRes.success) {
-      showToast(authRes.message || 'Incorrect password or PIN.', 'error');
-      pinInp?.focus();
-      pinInp?.select();
-      return;
-    }
-
-    if (newStoreName && newStoreName !== state.storeName) {
-      state.storeName = newStoreName;
-      const stores = getStoresList();
-      const currentSid = getCurrentStoreId();
-      const activeStore = stores.find(s => s.id === currentSid);
-      if (activeStore) {
-        activeStore.name = newStoreName;
-      } else if (stores.length > 0) {
-        stores[0].name = newStoreName;
+      state.storeId = targetStoreId;
+      state.lotteryJurisdiction = resolvedJurisdiction;
+      state.cashierName = user.name || user.email || 'Owner';
+      const storeMeta = getStoresList().find(s => s.id === targetStoreId) || DEFAULT_STORES.find(s => s.id === targetStoreId);
+      state.storeName = authRes.storeName || storeMeta?.name || formatStoreNameFromId(targetStoreId);
+      if (authRes.storeAddress || storeMeta?.address) state.storeAddress = authRes.storeAddress || storeMeta.address;
+      if (authRes.retailerNumber || storeMeta?.retailerNumber) state.retailerNumber = authRes.retailerNumber || storeMeta.retailerNumber;
+      if (serverActive > 0 || localActive > 0) {
+        state.dataCleared = false;
       }
-      saveStoresList(stores);
+      window.state = state;
+      window.__state = state;
+      window.getState = () => state;
+      saveState(state, targetStoreId);
+
+      // Update UI headers, roles, avatar, and store brand
+      if (typeof showSellCounterView === 'function') showSellCounterView();
       updateStoreBrandDisplay();
-    }
+      renderHeaderAndMetrics();
+      renderDispenserRack();
+      renderSlotsRibbon();
+      if (typeof renderReceivePacksView === 'function') renderReceivePacksView();
+      if (typeof renderDayReportView === 'function') renderDayReportView();
+      if (typeof renderInventoryView === 'function') renderInventoryView();
+      if (typeof renderHistoryView === 'function') renderHistoryView();
+      if (typeof populateSettingsInputs === 'function') populateSettingsInputs();
 
-    state.cashierName = newName;
-    saveState(state);
-    renderHeaderAndMetrics();
+      stopStoreCompliancePolling();
+      syncStoreAuthBadgeInManageView({ statuses });
+      if (statuses.retailerAuthStatus && statuses.retailerAuthStatus !== 'VALID') {
+        showToast(`Software active — Retailer Authorization is ${statuses.retailerAuthStatus} (ticket selling unlocks after verification).`, 'warning');
+      }
+      storeStatusPollTimer = setInterval(refreshStoreComplianceStatus, 12000);
 
-    cashierModal?.close();
-    sfx.success();
-    showToast(`👤 Active Worker / Cashier set to "${newName}"!`, 'success');
-  }
-
-  document.getElementById('shiftBadgeText')?.addEventListener('click', openCashierModal);
-  document.getElementById('currentCashier')?.addEventListener('click', openCashierModal);
-  document.getElementById('systemRefreshBtn')?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    refreshSystem();
-  });
-  document.getElementById('closeCashierModalBtn')?.addEventListener('click', () => document.getElementById('cashierModal')?.close());
-  document.getElementById('cancelCashierModalBtn')?.addEventListener('click', () => document.getElementById('cashierModal')?.close());
-  document.getElementById('saveCashierModalBtn')?.addEventListener('click', saveCashierModal);
-  document.getElementById('inputCashierModalName')?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') saveCashierModal();
-  });
-  document.getElementById('inputCashierModalPin')?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') saveCashierModal();
-  });
-  document.getElementById('inputCashierModalStoreName')?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') saveCashierModal();
-  });
-  document.getElementById('inputCashierModalStoreName')?.addEventListener('change', (e) => {
-    const val = (e.target.value || '').trim();
-    if (val) {
-      state.storeName = val;
       const stores = getStoresList();
-      const currentSid = getCurrentStoreId();
-      const activeStore = stores.find(s => s.id === currentSid);
-      if (activeStore) activeStore.name = val;
-      else if (stores.length > 0) stores[0].name = val;
-      saveStoresList(stores);
-      saveState(state);
-      updateStoreBrandDisplay();
+      const activeStore = stores.find(s => s.id === getCurrentStoreId());
+      const storeLabel = activeStore ? activeStore.name : (authRes.storeName || formatStoreNameFromId(targetStoreId));
+      showToast(`✓ Welcome back, ${user.name}! Opened ${storeLabel}.`, 'success');
     }
-  });
 
-  // Quick Clerk avatar buttons & PIN keypad handlers
-  document.querySelectorAll('.quick-clerk-pill').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const clerk = btn.dataset.clerk;
-      const inp = document.getElementById('inputCashierModalName');
-      const pinInp = document.getElementById('inputCashierModalPin');
-      if (inp && clerk) {
-        inp.value = clerk;
-        pinInp?.focus();
-        sfx.beep();
+    window.completeStoreLoginSession = async function completeStoreLoginSession(checkoutData) {
+      if (!checkoutData || !checkoutData.token) return;
+      sessionStorage.removeItem('lotto_signed_out');
+      localStorage.removeItem('lotto_signed_out');
+      sessionStorage.removeItem('lotto_admin_token');
+      localStorage.removeItem('lotto_admin_token');
+      sessionStorage.setItem('lotto_store_token', checkoutData.token);
+      localStorage.setItem('lotto_store_token', checkoutData.token);
+
+      const authRes = {
+        success: true,
+        mode: 'STORE',
+        isAdmin: false,
+        token: checkoutData.token,
+        storeId: checkoutData.storeId,
+        storeName: checkoutData.storeName,
+        storeAddress: checkoutData.storeAddress || '',
+        retailerNumber: checkoutData.retailerNumber || '',
+        statuses: checkoutData.statuses || null,
+        user: {
+          name: checkoutData.user?.name || 'Store Owner',
+          signInName: checkoutData.user?.username || checkoutData.user?.email || '',
+          username: checkoutData.user?.username || '',
+          email: checkoutData.user?.email || '',
+          role: checkoutData.user?.role || 'Owner',
+          isAdmin: false,
+          storeId: checkoutData.storeId,
+          storeName: checkoutData.storeName,
+          ...(checkoutData.statuses || {})
+        }
+      };
+
+      await finalizeAuthLoginSuccess(authRes);
+      if (checkoutData.message) {
+        showToast(checkoutData.message, 'success');
+      }
+    };
+
+    // Real-time store subtitle update when typing sign-in name
+    function updateSignInStoreSubtitle(val) {
+      const storeSub = document.getElementById('signInStoreSubtitle');
+      if (!storeSub) return;
+      const cleanVal = (val || '').trim().toLowerCase();
+      if (!cleanVal) {
+        storeSub.textContent = 'Sign In to LottoTrack';
+        return;
+      }
+      const assigned = lookupUserAssignedStore(cleanVal, state);
+      if (assigned && assigned.storeName) {
+        storeSub.textContent = assigned.storeName;
+      } else {
+        const disp = cleanVal.charAt(0).toUpperCase() + cleanVal.slice(1);
+        storeSub.textContent = 'LottoTrack Pro';
+      }
+    }
+    window.updateSignInStoreSubtitle = updateSignInStoreSubtitle;
+
+    const inputSignInUser = document.getElementById('inputSignInUser');
+    if (inputSignInUser) {
+      const handleUserChange = (e) => updateSignInStoreSubtitle(e?.target?.value ?? inputSignInUser.value);
+      inputSignInUser.addEventListener('input', handleUserChange);
+      inputSignInUser.addEventListener('change', handleUserChange);
+      inputSignInUser.addEventListener('keyup', handleUserChange);
+    }
+
+    // Password visibility toggle (Eye icon)
+    document.getElementById('btnToggleSignInPass')?.addEventListener('click', () => {
+      const passInput = document.getElementById('inputSignInPass');
+      const eyeShow = document.getElementById('eyeIconShow');
+      const eyeHide = document.getElementById('eyeIconHide');
+      if (!passInput) return;
+      if (passInput.type === 'password') {
+        passInput.type = 'text';
+        if (eyeShow) eyeShow.style.display = 'none';
+        if (eyeHide) eyeHide.style.display = 'block';
+      } else {
+        passInput.type = 'password';
+        if (eyeShow) eyeShow.style.display = 'block';
+        if (eyeHide) eyeHide.style.display = 'none';
       }
     });
-  });
 
-  document.querySelectorAll('#cashierPinKeypad .cashier-key-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const key = btn.dataset.key;
+    document.getElementById('btnToggleCashierModalPin')?.addEventListener('click', () => {
+      const pinInput = document.getElementById('inputCashierModalPin');
+      if (!pinInput) return;
+      pinInput.type = pinInput.type === 'password' ? 'text' : 'password';
+    });
+
+    document.getElementById('signInMainForm')?.addEventListener('submit', handleSignInSubmit);
+    document.getElementById('linkForgotPassword')?.addEventListener('click', (e) => {
+      e.preventDefault();
+      const errorAlert = document.getElementById('signInErrorAlert');
+      if (errorAlert) {
+        errorAlert.textContent = 'To reset your password, please contact the lottery administrator at support@jackpotlo.com.';
+        errorAlert.style.display = 'block';
+      }
+      showToast('To reset your password, contact administration at support@jackpotlo.com.', 'info');
+    });
+    document.getElementById('btnOpenFullSignInFromModal')?.addEventListener('click', () => {
+      document.getElementById('cashierModal')?.close();
+      showSignInScreen();
+    });
+
+    // Require login before entering POS system (unless active session exists or automated test)
+    const rawSession = sessionStorage.getItem('lotto_session_user') || localStorage.getItem('lotto_session_user');
+    const isSignedOut = sessionStorage.getItem('lotto_signed_out') === 'true' || localStorage.getItem('lotto_signed_out') === 'true';
+    const hasActiveSession = Boolean(rawSession) && !isSignedOut;
+    const isAutomatedTest = (typeof navigator !== 'undefined' && (
+      navigator.webdriver ||
+      navigator.userAgent.includes('HeadlessChrome') ||
+      navigator.userAgent.includes('Headless')
+    )) || (typeof window !== 'undefined' && window.location.search.includes('bypass_login'));
+
+
+    if (hasActiveSession) {
+      try {
+        const sess = JSON.parse(rawSession);
+        sessionStorage.setItem('lotto_session_user', JSON.stringify(sess));
+        localStorage.setItem('lotto_session_user', JSON.stringify(sess));
+        sessionStorage.removeItem('lotto_signed_out');
+        localStorage.removeItem('lotto_signed_out');
+
+        // CRITICAL: Un-hide POS layout and hide sign-in overlay screen on refresh
+        hideSignInScreen();
+
+        const posLayout = document.querySelector('.pos-app-layout');
+        if (posLayout) {
+          posLayout.style.display = 'flex';
+          posLayout.removeAttribute('aria-hidden');
+          posLayout.classList.remove('hidden-layout');
+        }
+
+        if (sess.isAdmin || sess.role === 'SUPER_ADMIN') {
+          const adminPosTarget = sess.posStoreId || 'store_admin';
+          if (window.location.hash.startsWith('#admin') || sess.activeView !== 'pos') {
+            setCurrentStoreId('store_admin');
+            state = sanitizeAdminStoreState(loadState('store_admin'));
+        state.lotteryJurisdiction = 'GA';
+            window.state = state;
+            window.__state = state;
+            showAdminDashboardView();
+          } else {
+            const adminDash = document.getElementById('viewAdminDashboard');
+            if (adminDash) adminDash.style.display = 'none';
+            setCurrentStoreId(adminPosTarget);
+            state = sanitizeAdminStoreState(loadState(adminPosTarget));
+            window.state = state;
+            window.__state = state;
+            showSellCounterView();
+            updateStoreBrandDisplay();
+            renderHeaderAndMetrics();
+            renderDispenserRack();
+            renderSlotsRibbon();
+            loadPOSStateFromDB(adminPosTarget).then(serverState => {
+              if (getCurrentStoreId() !== adminPosTarget) return;
+              if (serverState && Array.isArray(serverState.slots)) {
+                state = sanitizeAdminStoreState({ ...serverState, storeId: adminPosTarget });
+                window.state = state;
+                window.__state = state;
+                saveState(state, adminPosTarget);
+                updateStoreBrandDisplay();
+                renderHeaderAndMetrics();
+                renderDispenserRack();
+                renderSlotsRibbon();
+              }
+            }).catch(() => { });
+          }
+        } else {
+          const sessUser = (sess.signInName || '').toLowerCase();
+          const isAmigo = sessUser === 'amigo' || sessUser === 'master';
+          const cleanId = sessUser.replace(/[^a-z0-9_]/g, '_');
+          const sessStoreId = sess.storeId || (isAmigo ? 'store_amigo' : `store_${cleanId}`);
+          if (sessStoreId && sessStoreId !== getCurrentStoreId()) {
+            setCurrentStoreId(sessStoreId);
+            state = loadState(sessStoreId);
+            state.storeId = sessStoreId;
+            window.state = state;
+            window.__state = state;
+          }
+          updateStoreBrandDisplay();
+          renderHeaderAndMetrics();
+          renderDispenserRack();
+          renderSlotsRibbon();
+          if (typeof renderReceivePacksView === 'function') {
+            try { renderReceivePacksView(); } catch (err) { console.warn('renderReceivePacksView error:', err); }
+          }
+          if (typeof renderDayReportView === 'function') {
+            try { renderDayReportView(); } catch (err) { console.warn('renderDayReportView error:', err); }
+          }
+          if (typeof renderInventoryView === 'function') {
+            try { renderInventoryView(); } catch (err) { console.warn('renderInventoryView error:', err); }
+          }
+          if (typeof renderHistoryView === 'function') {
+            try { renderHistoryView(); } catch (err) { console.warn('renderHistoryView error:', err); }
+          }
+          if (typeof populateSettingsInputs === 'function') {
+            try { populateSettingsInputs(); } catch (err) { console.warn('populateSettingsInputs error:', err); }
+          }
+        }
+      } catch (e) {
+        console.warn('[AUTH REFRESH WARNING]:', e);
+        hideSignInScreen();
+      }
+    } else if (isAutomatedTest) {
+      if (typeof window !== 'undefined' && window.location.search.includes('bypass_login')) {
+        hideSignInScreen();
+      }
+    } else {
+      showSignInScreen();
+    }
+
+    // Quick Cashier Switcher Dialog
+    function openCashierModal() {
+      const cashierModal = document.getElementById('cashierModal');
+      if (!cashierModal) return;
+      const isDaily = state.settings?.operationMode !== 'SHIFTS';
+      const stripLabel = document.getElementById('cashierModalStripLabel');
+      if (stripLabel) stripLabel.textContent = isDaily ? 'Active Day' : 'Active Shift';
+
+      const shiftInfo = document.getElementById('cashierModalShiftInfo');
+      if (shiftInfo) {
+        const todayFormatted = new Date().toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' });
+        const statusTxt = state.shiftStatus === 'IN_PROGRESS' ? 'In Progress' : 'Closed';
+        shiftInfo.textContent = isDaily
+          ? `${todayFormatted} · ${statusTxt}`
+          : `Shift #${state.shiftNumber} · ${statusTxt}`;
+      }
+
+      const storeNameInp = document.getElementById('inputCashierModalStoreName');
+      if (storeNameInp) {
+        storeNameInp.value = state.storeName || formatStoreNameFromId(getCurrentStoreId());
+      }
+
       const nameInp = document.getElementById('inputCashierModalName');
       const pinInp = document.getElementById('inputCashierModalPin');
-      const activeEl = document.activeElement;
-      const inp = (activeEl === nameInp) ? nameInp : (pinInp || nameInp);
-      if (!inp) return;
+      if (nameInp) nameInp.value = state.cashierName || 'master';
+      if (pinInp) pinInp.value = '';
       sfx.keypad();
-      if (key === 'clear') {
-        inp.value = '';
-      } else if (key === 'backspace') {
-        inp.value = inp.value.slice(0, -1);
-      } else if (key) {
-        inp.value += key;
+      cashierModal.scrollLeft = 0;
+      cashierModal.scrollTop = 0;
+      const rightPanel = cashierModal.querySelector('.cashier-right-panel');
+      if (rightPanel) rightPanel.scrollTop = 0;
+      cashierModal.showModal();
+      setTimeout(() => {
+        if (pinInp) {
+          pinInp.focus();
+        } else {
+          nameInp?.focus?.({ preventScroll: true });
+          nameInp?.select?.();
+        }
+      }, 100);
+    }
+
+    function saveCashierModal() {
+      const cashierModal = document.getElementById('cashierModal');
+      const nameInp = document.getElementById('inputCashierModalName');
+      const pinInp = document.getElementById('inputCashierModalPin');
+      const storeNameInp = document.getElementById('inputCashierModalStoreName');
+      const newName = nameInp?.value?.trim();
+      const pinVal = pinInp?.value?.trim();
+      const newStoreName = (storeNameInp?.value || '').trim();
+
+      if (!newName) {
+        showToast('Please enter a worker name.', 'warning');
+        nameInp?.focus();
+        return;
       }
+
+      if (!pinVal) {
+        showToast('Please enter your password or PIN.', 'warning');
+        pinInp?.focus();
+        return;
+      }
+      const authRes = findUserByCredentials(newName, pinVal, state);
+      if (!authRes.success) {
+        showToast(authRes.message || 'Incorrect password or PIN.', 'error');
+        pinInp?.focus();
+        pinInp?.select();
+        return;
+      }
+
+      if (newStoreName && newStoreName !== state.storeName) {
+        state.storeName = newStoreName;
+        const stores = getStoresList();
+        const currentSid = getCurrentStoreId();
+        const activeStore = stores.find(s => s.id === currentSid);
+        if (activeStore) {
+          activeStore.name = newStoreName;
+        } else if (stores.length > 0) {
+          stores[0].name = newStoreName;
+        }
+        saveStoresList(stores);
+        updateStoreBrandDisplay();
+      }
+
+      state.cashierName = newName;
+      saveState(state);
+      renderHeaderAndMetrics();
+
+      cashierModal?.close();
+      sfx.success();
+      showToast(`👤 Active Worker / Cashier set to "${newName}"!`, 'success');
+    }
+
+    document.getElementById('shiftBadgeText')?.addEventListener('click', openCashierModal);
+    document.getElementById('currentCashier')?.addEventListener('click', openCashierModal);
+    document.getElementById('systemRefreshBtn')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      refreshSystem();
     });
-  });
-
-  // Handover Start Shift Confirm Modal
-  document.getElementById('closeStartShiftConfirmBtn')?.addEventListener('click', () => document.getElementById('startShiftConfirmModal')?.close());
-  document.getElementById('cancelStartShiftConfirmBtn')?.addEventListener('click', () => document.getElementById('startShiftConfirmModal')?.close());
-  document.getElementById('confirmStartShiftBtn')?.addEventListener('click', () => {
-    const cashierInput = document.getElementById('inputNewShiftCashierName');
-    const name = cashierInput?.value?.trim() || state.cashierName || 'master';
-    const floatVal = Math.max(0, parseFloat(document.getElementById('inputNewShiftDrawerFloat')?.value) || 0);
-    executeStartNewShift(name, floatVal);
-  });
-  document.getElementById('inputNewShiftCashierName')?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') document.getElementById('confirmStartShiftBtn')?.click();
-  });
-
-  document.getElementById('menuSignOutBtn')?.addEventListener('click', () => {
-    sfx.keypad();
-    signOutUser();
-  });
-  document.getElementById('sidebarUserPill')?.addEventListener('click', () => {
-    sfx.keypad();
-    openCashierModal();
-  });
-  document.getElementById('btnSignOut')?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    sfx.keypad();
-    signOutUser();
-  });
-
-  // Worker Quick Guide Modal
-  const helpModal = document.getElementById('helpModal');
-  const openHelpModal = () => {
-    if (!helpModal) return;
-    sfx.keypad();
-    helpModal.showModal();
-  };
-  document.getElementById('menuHelpBtn')?.addEventListener('click', openHelpModal);
-  document.getElementById('closeHelpModalBtn')?.addEventListener('click', () => helpModal?.close());
-  document.getElementById('closeHelpModalBottomBtn')?.addEventListener('click', () => helpModal?.close());
-
-  // Theme Toggles
-  if (themeToggleBtn) themeToggleBtn.addEventListener('click', toggleTheme);
-  // Box Adjust Modal
-  setupBoxAdjustModal();
-
-  // Set Box & Saved Barcodes Modals
-  setupSetBoxModalLogic();
-
-  // LTSYSTEM Modals (Fix Position, Terminal Reconcile, Gatekeeper, Sold Out, Switch & Change Box)
-  setupFixTicketPositionKeypad();
-  setupTerminalReconcileLogic();
-  setupDiscrepancyAndInventoryGatekeeperModals();
-  setupSwitchAndChangeBoxModals();
-
-  const menuClearDataBtn = document.getElementById('menuClearDataBtn');
-  if (menuClearDataBtn) {
-    menuClearDataBtn.addEventListener('click', () => {
-      if (confirm('Erase all POS lottery data and reset to a fresh blank start?')) {
-        state = resetToCleanState(state);
+    document.getElementById('closeCashierModalBtn')?.addEventListener('click', () => document.getElementById('cashierModal')?.close());
+    document.getElementById('cancelCashierModalBtn')?.addEventListener('click', () => document.getElementById('cashierModal')?.close());
+    document.getElementById('saveCashierModalBtn')?.addEventListener('click', saveCashierModal);
+    document.getElementById('inputCashierModalName')?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') saveCashierModal();
+    });
+    document.getElementById('inputCashierModalPin')?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') saveCashierModal();
+    });
+    document.getElementById('inputCashierModalStoreName')?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') saveCashierModal();
+    });
+    document.getElementById('inputCashierModalStoreName')?.addEventListener('change', (e) => {
+      const val = (e.target.value || '').trim();
+      if (val) {
+        state.storeName = val;
+        const stores = getStoresList();
+        const currentSid = getCurrentStoreId();
+        const activeStore = stores.find(s => s.id === currentSid);
+        if (activeStore) activeStore.name = val;
+        else if (stores.length > 0) stores[0].name = val;
+        saveStoresList(stores);
         saveState(state);
-        // Clear Day Report print DOM and preview container immediately so no stale data remains
-        const printSection = document.getElementById('dayReportPrintSection');
-        if (printSection) printSection.innerHTML = '';
-        const previewContainer = document.getElementById('dayReportPreviewContainer');
-        if (previewContainer) previewContainer.innerHTML = '';
-        initPOS();
-        showSellCounterView();
-        sfx.alert();
-        showToast('All POS data wiped. Clean start ready.', 'info');
+        updateStoreBrandDisplay();
       }
     });
-  }
 
-  // =============================================================
-  // RECEIVE PACKS VIEW CONTROLLER (Matching Reference UI Design)
-  // =============================================================
-  currentReceivePackPrice = 10;
-  stagedDeliveryPacks = [];
-  currentInventoryTab = 'in_stock';
-  selectedHistoryDayId = 'day_14';
-
-  function showSellCounterView() {
-    const adminDash = document.getElementById('viewAdminDashboard');
-    if (adminDash) adminDash.style.display = 'none';
-    const posLayout = document.querySelector('.pos-app-layout');
-    if (posLayout) {
-      posLayout.style.display = 'flex';
-      posLayout.classList.remove('hidden-layout');
-    }
-    const viewSell = document.getElementById('viewSellCounter');
-    const viewReceive = document.getElementById('viewReceivePacks');
-    const viewReport = document.getElementById('viewDayReport');
-    const viewInv = document.getElementById('viewInventory');
-    const viewHist = document.getElementById('viewHistory');
-    const viewSet = document.getElementById('viewSettings');
-    const viewClose = document.getElementById('viewCloseShift');
-    const viewClosed = document.getElementById('viewShiftClosed');
-    const viewHandover = document.getElementById('viewStartShiftHandover');
-    if (viewSell) {
-      viewSell.style.setProperty('display', 'flex', 'important');
-      viewSell.classList.remove('hidden-view');
-    }
-    if (viewReceive) viewReceive.style.display = 'none';
-    if (viewReport) viewReport.style.display = 'none';
-    if (viewInv) viewInv.style.display = 'none';
-    if (viewHist) viewHist.style.display = 'none';
-    if (viewSet) viewSet.style.display = 'none';
-    if (viewClose) viewClose.style.display = 'none';
-    if (viewClosed) viewClosed.style.display = 'none';
-    if (viewHandover) viewHandover.style.display = 'none';
-    setActiveNav(document.getElementById('navSellCounter'));
-    const mainCont = document.querySelector('.pos-main-container');
-    if (mainCont) mainCont.scrollTop = 0;
-  }
-  window.showSellCounterView = showSellCounterView;
-
-  function showReceivePacksView() {
-    const viewSell = document.getElementById('viewSellCounter');
-    const viewReceive = document.getElementById('viewReceivePacks');
-    const viewReport = document.getElementById('viewDayReport');
-    const viewInv = document.getElementById('viewInventory');
-    const viewHist = document.getElementById('viewHistory');
-    const viewSet = document.getElementById('viewSettings');
-    const viewClose = document.getElementById('viewCloseShift');
-    const viewClosed = document.getElementById('viewShiftClosed');
-    const viewHandover = document.getElementById('viewStartShiftHandover');
-    if (viewSell) {
-      viewSell.style.setProperty('display', 'none', 'important');
-      viewSell.classList.add('hidden-view');
-    }
-    if (viewReceive) viewReceive.style.display = 'block';
-    if (viewReport) viewReport.style.display = 'none';
-    if (viewInv) viewInv.style.display = 'none';
-    if (viewHist) viewHist.style.display = 'none';
-    if (viewSet) viewSet.style.display = 'none';
-    if (viewClose) viewClose.style.display = 'none';
-    if (viewClosed) viewClosed.style.display = 'none';
-    if (viewHandover) viewHandover.style.display = 'none';
-    setActiveNav(document.getElementById('navInventory') || document.getElementById('navReceivePacks'));
-    renderReceivePacksView();
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-    const mainCont = document.querySelector('.pos-main-container');
-    if (mainCont) mainCont.scrollTop = 0;
-    setTimeout(() => {
-      document.getElementById('rpPackBarcodeInput')?.focus();
-    }, 100);
-  }
-
-  function showDayReportView() {
-    const viewSell = document.getElementById('viewSellCounter');
-    const viewReceive = document.getElementById('viewReceivePacks');
-    const viewReport = document.getElementById('viewDayReport');
-    const viewInv = document.getElementById('viewInventory');
-    const viewHist = document.getElementById('viewHistory');
-    const viewSet = document.getElementById('viewSettings');
-    const viewClose = document.getElementById('viewCloseShift');
-    const viewClosed = document.getElementById('viewShiftClosed');
-    const viewHandover = document.getElementById('viewStartShiftHandover');
-    if (viewSell) {
-      viewSell.style.setProperty('display', 'none', 'important');
-      viewSell.classList.add('hidden-view');
-    }
-    if (viewReceive) viewReceive.style.display = 'none';
-    if (viewReport) {
-      viewReport.style.setProperty('display', 'block', 'important');
-      viewReport.classList.remove('hidden-view');
-    }
-    if (viewInv) viewInv.style.display = 'none';
-    if (viewHist) viewHist.style.display = 'none';
-    if (viewSet) viewSet.style.display = 'none';
-    if (viewClose) viewClose.style.display = 'none';
-    if (viewClosed) viewClosed.style.display = 'none';
-    if (viewHandover) viewHandover.style.display = 'none';
-    setActiveNav(null);
-    document.getElementById('btnSwitchShiftReports')?.classList.remove('active');
-    document.getElementById('btnSwitchDailyReport')?.classList.add('active');
-    renderDayReportView();
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-    const mainCont = document.querySelector('.pos-main-container');
-    if (mainCont) mainCont.scrollTop = 0;
-  }
-
-  function showInventoryView() {
-    const viewSell = document.getElementById('viewSellCounter');
-    const viewReceive = document.getElementById('viewReceivePacks');
-    const viewReport = document.getElementById('viewDayReport');
-    const viewInv = document.getElementById('viewInventory');
-    const viewHist = document.getElementById('viewHistory');
-    const viewSet = document.getElementById('viewSettings');
-    const viewClose = document.getElementById('viewCloseShift');
-    const viewClosed = document.getElementById('viewShiftClosed');
-    const viewHandover = document.getElementById('viewStartShiftHandover');
-    if (viewSell) {
-      viewSell.style.setProperty('display', 'none', 'important');
-      viewSell.classList.add('hidden-view');
-    }
-    if (viewReceive) viewReceive.style.display = 'none';
-    if (viewReport) viewReport.style.display = 'none';
-    if (viewInv) viewInv.style.display = 'block';
-    if (viewHist) viewHist.style.display = 'none';
-    if (viewSet) viewSet.style.display = 'none';
-    if (viewClose) viewClose.style.display = 'none';
-    if (viewClosed) viewClosed.style.display = 'none';
-    if (viewHandover) viewHandover.style.display = 'none';
-    setActiveNav(document.getElementById('navInventory'));
-    renderInventoryView();
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-    const mainCont = document.querySelector('.pos-main-container');
-    if (mainCont) mainCont.scrollTop = 0;
-  }
-
-  function showHistoryView() {
-    const viewSell = document.getElementById('viewSellCounter');
-    const viewReceive = document.getElementById('viewReceivePacks');
-    const viewReport = document.getElementById('viewDayReport');
-    const viewInv = document.getElementById('viewInventory');
-    const viewHist = document.getElementById('viewHistory');
-    const viewSet = document.getElementById('viewSettings');
-    const viewClose = document.getElementById('viewCloseShift');
-    const viewClosed = document.getElementById('viewShiftClosed');
-    const viewHandover = document.getElementById('viewStartShiftHandover');
-    if (viewSell) {
-      viewSell.style.setProperty('display', 'none', 'important');
-      viewSell.classList.add('hidden-view');
-    }
-    if (viewReceive) viewReceive.style.display = 'none';
-    if (viewReport) viewReport.style.display = 'none';
-    if (viewInv) viewInv.style.display = 'none';
-    if (viewHist) viewHist.style.display = 'block';
-    if (viewSet) viewSet.style.display = 'none';
-    if (viewClose) viewClose.style.display = 'none';
-    if (viewClosed) viewClosed.style.display = 'none';
-    if (viewHandover) viewHandover.style.display = 'none';
-    setActiveNav(document.getElementById('navHistory'));
-    document.getElementById('btnSwitchShiftReports')?.classList.add('active');
-    document.getElementById('btnSwitchDailyReport')?.classList.remove('active');
-    const subShift = document.getElementById('subviewShiftReports');
-    const subDaily = document.getElementById('subviewDailyReport');
-    if (subShift) subShift.style.display = 'block';
-    if (subDaily) subDaily.style.display = 'none';
-    renderHistoryView();
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-    const mainCont = document.querySelector('.pos-main-container');
-    if (mainCont) mainCont.scrollTop = 0;
-  }
-
-  function showSettingsView() {
-    const viewSell = document.getElementById('viewSellCounter');
-    const viewReceive = document.getElementById('viewReceivePacks');
-    const viewReport = document.getElementById('viewDayReport');
-    const viewInv = document.getElementById('viewInventory');
-    const viewHist = document.getElementById('viewHistory');
-    const viewSet = document.getElementById('viewSettings');
-    const viewClose = document.getElementById('viewCloseShift');
-    const viewClosed = document.getElementById('viewShiftClosed');
-    const viewHandover = document.getElementById('viewStartShiftHandover');
-    if (viewSell) {
-      viewSell.style.setProperty('display', 'none', 'important');
-      viewSell.classList.add('hidden-view');
-    }
-    if (viewReceive) viewReceive.style.display = 'none';
-    if (viewReport) viewReport.style.display = 'none';
-    if (viewInv) viewInv.style.display = 'none';
-    if (viewHist) viewHist.style.display = 'none';
-    if (viewSet) viewSet.style.display = 'block';
-    if (viewClose) viewClose.style.display = 'none';
-    if (viewClosed) viewClosed.style.display = 'none';
-    if (viewHandover) viewHandover.style.display = 'none';
-    setActiveNav(document.getElementById('navSettings'));
-    populateSettingsInputs();
-
-    // Default to current active tab (games screen removed per user request)
-    const targetTab = (currentSettingsTab === 'games' || !currentSettingsTab) ? 'store_email' : currentSettingsTab;
-    currentSettingsTab = targetTab;
-    document.querySelectorAll('.btn-settings-top-tab').forEach(b => {
-      if (b.getAttribute('data-tab') === targetTab) b.classList.add('active');
-      else b.classList.remove('active');
+    // Quick Clerk avatar buttons & PIN keypad handlers
+    document.querySelectorAll('.quick-clerk-pill').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const clerk = btn.dataset.clerk;
+        const inp = document.getElementById('inputCashierModalName');
+        const pinInp = document.getElementById('inputCashierModalPin');
+        if (inp && clerk) {
+          inp.value = clerk;
+          pinInp?.focus();
+          sfx.beep();
+        }
+      });
     });
-    const modernPaneMap = {
-      store_email: 'paneSettingsStoreEmail',
-      boxes: 'paneSettingsBoxes',
-      games: 'paneSettingsGames',
-      people: 'paneSettingsPeople',
-      cleardata: 'paneSettingsClearData'
+
+    document.querySelectorAll('#cashierPinKeypad .cashier-key-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const key = btn.dataset.key;
+        const nameInp = document.getElementById('inputCashierModalName');
+        const pinInp = document.getElementById('inputCashierModalPin');
+        const activeEl = document.activeElement;
+        const inp = (activeEl === nameInp) ? nameInp : (pinInp || nameInp);
+        if (!inp) return;
+        sfx.keypad();
+        if (key === 'clear') {
+          inp.value = '';
+        } else if (key === 'backspace') {
+          inp.value = inp.value.slice(0, -1);
+        } else if (key) {
+          inp.value += key;
+        }
+      });
+    });
+
+    // Handover Start Shift Confirm Modal
+    document.getElementById('closeStartShiftConfirmBtn')?.addEventListener('click', () => document.getElementById('startShiftConfirmModal')?.close());
+    document.getElementById('cancelStartShiftConfirmBtn')?.addEventListener('click', () => document.getElementById('startShiftConfirmModal')?.close());
+    document.getElementById('confirmStartShiftBtn')?.addEventListener('click', () => {
+      const cashierInput = document.getElementById('inputNewShiftCashierName');
+      const name = cashierInput?.value?.trim() || state.cashierName || 'master';
+      const floatVal = Math.max(0, parseFloat(document.getElementById('inputNewShiftDrawerFloat')?.value) || 0);
+      executeStartNewShift(name, floatVal);
+    });
+    document.getElementById('inputNewShiftCashierName')?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') document.getElementById('confirmStartShiftBtn')?.click();
+    });
+
+    document.getElementById('menuSignOutBtn')?.addEventListener('click', () => {
+      sfx.keypad();
+      signOutUser();
+    });
+    document.getElementById('sidebarUserPill')?.addEventListener('click', () => {
+      sfx.keypad();
+      openCashierModal();
+    });
+    document.getElementById('btnSignOut')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      sfx.keypad();
+      signOutUser();
+    });
+
+    // Worker Quick Guide Modal
+    const helpModal = document.getElementById('helpModal');
+    const openHelpModal = () => {
+      if (!helpModal) return;
+      sfx.keypad();
+      helpModal.showModal();
     };
-    Object.values(modernPaneMap).forEach(paneId => {
-      const pane = document.getElementById(paneId);
-      if (pane) pane.style.display = 'none';
-    });
-    const activePane = document.getElementById(modernPaneMap[targetTab]);
-    if (activePane) activePane.style.display = 'block';
+    document.getElementById('menuHelpBtn')?.addEventListener('click', openHelpModal);
+    document.getElementById('closeHelpModalBtn')?.addEventListener('click', () => helpModal?.close());
+    document.getElementById('closeHelpModalBottomBtn')?.addEventListener('click', () => helpModal?.close());
 
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-    const mainCont = document.querySelector('.pos-main-container');
-    if (mainCont) mainCont.scrollTop = 0;
-  }
-  window.showReceivePacksView = showReceivePacksView;
-  window.showDayReportView = showDayReportView;
-  window.showInventoryView = showInventoryView;
-  window.showHistoryView = showHistoryView;
-  window.showSettingsView = showSettingsView;
+    // Theme Toggles
+    if (themeToggleBtn) themeToggleBtn.addEventListener('click', toggleTheme);
+    // Box Adjust Modal
+    setupBoxAdjustModal();
 
-  // =============================================================
-  // CLOSE SHIFT (SCAN & RECONCILE) - Screen 03 Specification
-  // =============================================================
-  const closeShiftState = {
-    filter: 'all',
-    protoScanned60: false,
-    draftSaved: false,
-    managerOverride: false,
-    packs: [
-      { box: 1, game: 'Cash Explosion', pack: '141809', price: 2, opening: '#042', closing: '#048', sold: 6, sales: 12.00, status: 'scanned', statusLabel: 'Scanned', statusSub: '', category: 'done' },
-      { box: 2, game: 'Jumbo Bucks', pack: '184022', price: 5, opening: '#010', closing: '#022', sold: 12, sales: 60.00, status: 'scanned', statusLabel: 'Scanned', statusSub: '', category: 'done' },
-      { box: 3, game: 'Georgia 7s', pack: '190288', price: 10, opening: '#004', closing: '#011', sold: 7, sales: 70.00, status: 'scanned', statusLabel: 'Scanned', statusSub: '', category: 'done' },
-      { box: 4, game: 'Hit $500', pack: '193012', price: 5, opening: '#028', closing: '#035', sold: 7, sales: 35.00, status: 'scanned', statusLabel: 'Scanned', statusSub: '', category: 'done' },
-      { box: 5, game: 'Giant Jumbo Bucks', pack: '198841', price: 10, opening: '#000', closing: '#008', sold: 8, sales: 80.00, status: 'scanned', statusLabel: 'Scanned', statusSub: '', category: 'done' },
-      { box: 6, game: 'Billion Dollar Blockbuster', pack: '110901', price: 20, opening: '#012', closing: '#016', sold: 4, sales: 80.00, status: 'scanned', statusLabel: 'Scanned', statusSub: '', category: 'done' },
-      { box: 7, game: 'Diamond Mine', pack: '142099', price: 3, opening: '#015', closing: '#021', sold: 6, sales: 18.00, status: 'scanned-twice', statusLabel: 'Scanned twice', statusSub: 'Counted once only', category: 'attention' },
-      { box: 8, game: 'Cash 3', pack: '170942', price: 1, opening: '#080', closing: '#095', sold: 15, sales: 15.00, status: 'scanned', statusLabel: 'Scanned', statusSub: '', category: 'done' },
-      { box: 9, game: 'Cash 4', pack: '170943', price: 1, opening: '#060', closing: '#072', sold: 12, sales: 12.00, status: 'scanned', statusLabel: 'Scanned', statusSub: '', category: 'done' },
-      { box: 10, game: 'Mega Millions', pack: '165432', price: 2, opening: '#030', closing: '#038', sold: 8, sales: 16.00, status: 'scanned', statusLabel: 'Scanned', statusSub: '', category: 'done' },
-      { box: 11, game: 'Powerball', pack: '165433', price: 2, opening: '#025', closing: '#031', sold: 6, sales: 12.00, status: 'scanned', statusLabel: 'Scanned', statusSub: '', category: 'done' },
-      { box: 12, game: 'Quick $50', pack: '180211', price: 2, opening: '#040', closing: '#052', sold: 12, sales: 24.00, status: 'scanned', statusLabel: 'Scanned', statusSub: '', category: 'done' },
-      { box: 13, game: 'Gold Rush 50X', pack: '184550', price: 10, opening: '#005', closing: '#012', sold: 7, sales: 70.00, status: 'scanned', statusLabel: 'Scanned', statusSub: '', category: 'done' },
-      { box: 14, game: 'Extreme Green', pack: '187600', price: 5, opening: '#015', closing: '#023', sold: 8, sales: 40.00, status: 'scanned', statusLabel: 'Scanned', statusSub: '', category: 'done' },
-      { box: 16, game: 'Treasure Hunt', pack: '130508', price: 3, opening: '#090', closing: '#100', closingSub: '(sold out)', sold: 10, sales: 30.00, status: 'sold-out', statusLabel: 'Sold out', statusSub: '', category: 'done' },
-      { box: 21, game: 'Money Bag Multiplier', pack: '192004', price: 20, opening: '#002', closing: '#005', sold: 3, sales: 60.00, status: 'scanned', statusLabel: 'Scanned', statusSub: '', category: 'done' },
-      { box: 22, game: 'Win It All', pack: '195500', price: 5, opening: '#003', closing: '#001', closingSub: 'went backwards', sold: '—', sales: '—', status: 'check-position', statusLabel: 'Check position', statusSub: 'went backwards', hasActions: true, category: 'attention' },
-      { box: 27, game: 'Platinum Payout', pack: '199902', price: 50, opening: '#001', closing: '#003', sold: 2, sales: 100.00, status: 'scanned', statusLabel: 'Scanned', statusSub: '', category: 'done' },
-      { box: 60, game: 'Jumbo Bucks', pack: '184023', price: 5, opening: '#010', closing: '—', closingSub: '', sold: '—', sales: '—', status: 'not-scanned', statusLabel: 'Not scanned', statusSub: '', hasActions: true, category: 'not_scanned' }
-    ]
-  };
+    // Set Box & Saved Barcodes Modals
+    setupSetBoxModalLogic();
 
-  function renderCloseShiftView() {
-    const tableBody = document.getElementById('csTableBody');
-    if (!tableBody) return;
+    // LTSYSTEM Modals (Fix Position, Terminal Reconcile, Gatekeeper, Sold Out, Switch & Change Box)
+    setupFixTicketPositionKeypad();
+    setupTerminalReconcileLogic();
+    setupDiscrepancyAndInventoryGatekeeperModals();
+    setupSwitchAndChangeBoxModals();
 
-    const filter = closeShiftState.filter || 'all';
-    const packsToDisplay = closeShiftState.packs.filter(p => {
-      if (filter === 'attention') return p.category === 'attention' || p.status === 'check-position' || p.status === 'scanned-twice';
-      if (filter === 'not_scanned') return p.status === 'not-scanned' || p.category === 'not_scanned';
-      if (filter === 'done') return p.status === 'scanned' || p.status === 'sold-out';
-      return true;
-    });
+    const menuClearDataBtn = document.getElementById('menuClearDataBtn');
+    if (menuClearDataBtn) {
+      menuClearDataBtn.addEventListener('click', () => {
+        if (confirm('Erase all POS lottery data and reset to a fresh blank start?')) {
+          state = resetToCleanState(state);
+          saveState(state);
+          // Clear Day Report print DOM and preview container immediately so no stale data remains
+          const printSection = document.getElementById('dayReportPrintSection');
+          if (printSection) printSection.innerHTML = '';
+          const previewContainer = document.getElementById('dayReportPreviewContainer');
+          if (previewContainer) previewContainer.innerHTML = '';
+          initPOS();
+          showSellCounterView();
+          sfx.alert();
+          showToast('All POS data wiped. Clean start ready.', 'info');
+        }
+      });
+    }
 
-    tableBody.innerHTML = packsToDisplay.map(pack => {
-      const isAttention = pack.status === 'check-position' || pack.category === 'attention';
-      const rowClass = isAttention ? 'cs-row-attention' : '';
+    // =============================================================
+    // RECEIVE PACKS VIEW CONTROLLER (Matching Reference UI Design)
+    // =============================================================
+    currentReceivePackPrice = 10;
+    stagedDeliveryPacks = [];
+    currentInventoryTab = 'in_stock';
+    selectedHistoryDayId = 'day_14';
 
+    function showSellCounterView() {
+      const adminDash = document.getElementById('viewAdminDashboard');
+      if (adminDash) adminDash.style.display = 'none';
+      const posLayout = document.querySelector('.pos-app-layout');
+      if (posLayout) {
+        posLayout.style.display = 'flex';
+        posLayout.classList.remove('hidden-layout');
+      }
+      const viewSell = document.getElementById('viewSellCounter');
+      const viewReceive = document.getElementById('viewReceivePacks');
+      const viewReport = document.getElementById('viewDayReport');
+      const viewInv = document.getElementById('viewInventory');
+      const viewHist = document.getElementById('viewHistory');
+      const viewSet = document.getElementById('viewSettings');
+      const viewClose = document.getElementById('viewCloseShift');
+      const viewClosed = document.getElementById('viewShiftClosed');
+      const viewHandover = document.getElementById('viewStartShiftHandover');
+      if (viewSell) {
+        viewSell.style.setProperty('display', 'flex', 'important');
+        viewSell.classList.remove('hidden-view');
+      }
+      if (viewReceive) viewReceive.style.display = 'none';
+      if (viewReport) viewReport.style.display = 'none';
+      if (viewInv) viewInv.style.display = 'none';
+      if (viewHist) viewHist.style.display = 'none';
+      if (viewSet) viewSet.style.display = 'none';
+      if (viewClose) viewClose.style.display = 'none';
+      if (viewClosed) viewClosed.style.display = 'none';
+      if (viewHandover) viewHandover.style.display = 'none';
+      setActiveNav(document.getElementById('navSellCounter'));
+      const mainCont = document.querySelector('.pos-main-container');
+      if (mainCont) mainCont.scrollTop = 0;
+    }
+    window.showSellCounterView = showSellCounterView;
+
+    function showReceivePacksView() {
+      const viewSell = document.getElementById('viewSellCounter');
+      const viewReceive = document.getElementById('viewReceivePacks');
+      const viewReport = document.getElementById('viewDayReport');
+      const viewInv = document.getElementById('viewInventory');
+      const viewHist = document.getElementById('viewHistory');
+      const viewSet = document.getElementById('viewSettings');
+      const viewClose = document.getElementById('viewCloseShift');
+      const viewClosed = document.getElementById('viewShiftClosed');
+      const viewHandover = document.getElementById('viewStartShiftHandover');
+      if (viewSell) {
+        viewSell.style.setProperty('display', 'none', 'important');
+        viewSell.classList.add('hidden-view');
+      }
+      if (viewReceive) viewReceive.style.display = 'block';
+      if (viewReport) viewReport.style.display = 'none';
+      if (viewInv) viewInv.style.display = 'none';
+      if (viewHist) viewHist.style.display = 'none';
+      if (viewSet) viewSet.style.display = 'none';
+      if (viewClose) viewClose.style.display = 'none';
+      if (viewClosed) viewClosed.style.display = 'none';
+      if (viewHandover) viewHandover.style.display = 'none';
+      setActiveNav(document.getElementById('navInventory') || document.getElementById('navReceivePacks'));
+      renderReceivePacksView();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      const mainCont = document.querySelector('.pos-main-container');
+      if (mainCont) mainCont.scrollTop = 0;
+      setTimeout(() => {
+        document.getElementById('rpPackBarcodeInput')?.focus();
+      }, 100);
+    }
+
+    function showDayReportView() {
+      const viewSell = document.getElementById('viewSellCounter');
+      const viewReceive = document.getElementById('viewReceivePacks');
+      const viewReport = document.getElementById('viewDayReport');
+      const viewInv = document.getElementById('viewInventory');
+      const viewHist = document.getElementById('viewHistory');
+      const viewSet = document.getElementById('viewSettings');
+      const viewClose = document.getElementById('viewCloseShift');
+      const viewClosed = document.getElementById('viewShiftClosed');
+      const viewHandover = document.getElementById('viewStartShiftHandover');
+      if (viewSell) {
+        viewSell.style.setProperty('display', 'none', 'important');
+        viewSell.classList.add('hidden-view');
+      }
+      if (viewReceive) viewReceive.style.display = 'none';
+      if (viewReport) {
+        viewReport.style.setProperty('display', 'block', 'important');
+        viewReport.classList.remove('hidden-view');
+      }
+      if (viewInv) viewInv.style.display = 'none';
+      if (viewHist) viewHist.style.display = 'none';
+      if (viewSet) viewSet.style.display = 'none';
+      if (viewClose) viewClose.style.display = 'none';
+      if (viewClosed) viewClosed.style.display = 'none';
+      if (viewHandover) viewHandover.style.display = 'none';
+      setActiveNav(null);
+      document.getElementById('btnSwitchShiftReports')?.classList.remove('active');
+      document.getElementById('btnSwitchDailyReport')?.classList.add('active');
+      renderDayReportView();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      const mainCont = document.querySelector('.pos-main-container');
+      if (mainCont) mainCont.scrollTop = 0;
+    }
+
+    function showInventoryView() {
+      const viewSell = document.getElementById('viewSellCounter');
+      const viewReceive = document.getElementById('viewReceivePacks');
+      const viewReport = document.getElementById('viewDayReport');
+      const viewInv = document.getElementById('viewInventory');
+      const viewHist = document.getElementById('viewHistory');
+      const viewSet = document.getElementById('viewSettings');
+      const viewClose = document.getElementById('viewCloseShift');
+      const viewClosed = document.getElementById('viewShiftClosed');
+      const viewHandover = document.getElementById('viewStartShiftHandover');
+      if (viewSell) {
+        viewSell.style.setProperty('display', 'none', 'important');
+        viewSell.classList.add('hidden-view');
+      }
+      if (viewReceive) viewReceive.style.display = 'none';
+      if (viewReport) viewReport.style.display = 'none';
+      if (viewInv) viewInv.style.display = 'block';
+      if (viewHist) viewHist.style.display = 'none';
+      if (viewSet) viewSet.style.display = 'none';
+      if (viewClose) viewClose.style.display = 'none';
+      if (viewClosed) viewClosed.style.display = 'none';
+      if (viewHandover) viewHandover.style.display = 'none';
+      setActiveNav(document.getElementById('navInventory'));
+      renderInventoryView();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      const mainCont = document.querySelector('.pos-main-container');
+      if (mainCont) mainCont.scrollTop = 0;
+    }
+
+    function showHistoryView() {
+      const viewSell = document.getElementById('viewSellCounter');
+      const viewReceive = document.getElementById('viewReceivePacks');
+      const viewReport = document.getElementById('viewDayReport');
+      const viewInv = document.getElementById('viewInventory');
+      const viewHist = document.getElementById('viewHistory');
+      const viewSet = document.getElementById('viewSettings');
+      const viewClose = document.getElementById('viewCloseShift');
+      const viewClosed = document.getElementById('viewShiftClosed');
+      const viewHandover = document.getElementById('viewStartShiftHandover');
+      if (viewSell) {
+        viewSell.style.setProperty('display', 'none', 'important');
+        viewSell.classList.add('hidden-view');
+      }
+      if (viewReceive) viewReceive.style.display = 'none';
+      if (viewReport) viewReport.style.display = 'none';
+      if (viewInv) viewInv.style.display = 'none';
+      if (viewHist) viewHist.style.display = 'block';
+      if (viewSet) viewSet.style.display = 'none';
+      if (viewClose) viewClose.style.display = 'none';
+      if (viewClosed) viewClosed.style.display = 'none';
+      if (viewHandover) viewHandover.style.display = 'none';
+      setActiveNav(document.getElementById('navHistory'));
+      document.getElementById('btnSwitchShiftReports')?.classList.add('active');
+      document.getElementById('btnSwitchDailyReport')?.classList.remove('active');
+      const subShift = document.getElementById('subviewShiftReports');
+      const subDaily = document.getElementById('subviewDailyReport');
+      if (subShift) subShift.style.display = 'block';
+      if (subDaily) subDaily.style.display = 'none';
+      renderHistoryView();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      const mainCont = document.querySelector('.pos-main-container');
+      if (mainCont) mainCont.scrollTop = 0;
+    }
+
+    function showSettingsView() {
+      const viewSell = document.getElementById('viewSellCounter');
+      const viewReceive = document.getElementById('viewReceivePacks');
+      const viewReport = document.getElementById('viewDayReport');
+      const viewInv = document.getElementById('viewInventory');
+      const viewHist = document.getElementById('viewHistory');
+      const viewSet = document.getElementById('viewSettings');
+      const viewClose = document.getElementById('viewCloseShift');
+      const viewClosed = document.getElementById('viewShiftClosed');
+      const viewHandover = document.getElementById('viewStartShiftHandover');
+      if (viewSell) {
+        viewSell.style.setProperty('display', 'none', 'important');
+        viewSell.classList.add('hidden-view');
+      }
+      if (viewReceive) viewReceive.style.display = 'none';
+      if (viewReport) viewReport.style.display = 'none';
+      if (viewInv) viewInv.style.display = 'none';
+      if (viewHist) viewHist.style.display = 'none';
+      if (viewSet) viewSet.style.display = 'block';
+      if (viewClose) viewClose.style.display = 'none';
+      if (viewClosed) viewClosed.style.display = 'none';
+      if (viewHandover) viewHandover.style.display = 'none';
+      setActiveNav(document.getElementById('navSettings'));
+      populateSettingsInputs();
+
+      // Default to current active tab (games screen removed per user request)
+      const targetTab = (currentSettingsTab === 'games' || !currentSettingsTab) ? 'store_email' : currentSettingsTab;
+      currentSettingsTab = targetTab;
+      document.querySelectorAll('.btn-settings-top-tab').forEach(b => {
+        if (b.getAttribute('data-tab') === targetTab) b.classList.add('active');
+        else b.classList.remove('active');
+      });
+      const modernPaneMap = {
+        store_email: 'paneSettingsStoreEmail',
+        boxes: 'paneSettingsBoxes',
+        games: 'paneSettingsGames',
+        people: 'paneSettingsPeople',
+        cleardata: 'paneSettingsClearData'
+      };
+      Object.values(modernPaneMap).forEach(paneId => {
+        const pane = document.getElementById(paneId);
+        if (pane) pane.style.display = 'none';
+      });
+      const activePane = document.getElementById(modernPaneMap[targetTab]);
+      if (activePane) activePane.style.display = 'block';
+
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      const mainCont = document.querySelector('.pos-main-container');
+      if (mainCont) mainCont.scrollTop = 0;
+    }
+    window.showReceivePacksView = showReceivePacksView;
+    window.showDayReportView = showDayReportView;
+    window.showInventoryView = showInventoryView;
+    window.showHistoryView = showHistoryView;
+    window.showSettingsView = showSettingsView;
+
+    // =============================================================
+    // CLOSE SHIFT (SCAN & RECONCILE) - Screen 03 Specification
+    // =============================================================
+    const closeShiftState = {
+      filter: 'all',
+      protoScanned60: false,
+      draftSaved: false,
+      managerOverride: false,
+      packs: [
+        { box: 1, game: 'Cash Explosion', pack: '141809', price: 2, opening: '#042', closing: '#048', sold: 6, sales: 12.00, status: 'scanned', statusLabel: 'Scanned', statusSub: '', category: 'done' },
+        { box: 2, game: 'Jumbo Bucks', pack: '184022', price: 5, opening: '#010', closing: '#022', sold: 12, sales: 60.00, status: 'scanned', statusLabel: 'Scanned', statusSub: '', category: 'done' },
+        { box: 3, game: 'Georgia 7s', pack: '190288', price: 10, opening: '#004', closing: '#011', sold: 7, sales: 70.00, status: 'scanned', statusLabel: 'Scanned', statusSub: '', category: 'done' },
+        { box: 4, game: 'Hit $500', pack: '193012', price: 5, opening: '#028', closing: '#035', sold: 7, sales: 35.00, status: 'scanned', statusLabel: 'Scanned', statusSub: '', category: 'done' },
+        { box: 5, game: 'Giant Jumbo Bucks', pack: '198841', price: 10, opening: '#000', closing: '#008', sold: 8, sales: 80.00, status: 'scanned', statusLabel: 'Scanned', statusSub: '', category: 'done' },
+        { box: 6, game: 'Billion Dollar Blockbuster', pack: '110901', price: 20, opening: '#012', closing: '#016', sold: 4, sales: 80.00, status: 'scanned', statusLabel: 'Scanned', statusSub: '', category: 'done' },
+        { box: 7, game: 'Diamond Mine', pack: '142099', price: 3, opening: '#015', closing: '#021', sold: 6, sales: 18.00, status: 'scanned-twice', statusLabel: 'Scanned twice', statusSub: 'Counted once only', category: 'attention' },
+        { box: 8, game: 'Cash 3', pack: '170942', price: 1, opening: '#080', closing: '#095', sold: 15, sales: 15.00, status: 'scanned', statusLabel: 'Scanned', statusSub: '', category: 'done' },
+        { box: 9, game: 'Cash 4', pack: '170943', price: 1, opening: '#060', closing: '#072', sold: 12, sales: 12.00, status: 'scanned', statusLabel: 'Scanned', statusSub: '', category: 'done' },
+        { box: 10, game: 'Mega Millions', pack: '165432', price: 2, opening: '#030', closing: '#038', sold: 8, sales: 16.00, status: 'scanned', statusLabel: 'Scanned', statusSub: '', category: 'done' },
+        { box: 11, game: 'Powerball', pack: '165433', price: 2, opening: '#025', closing: '#031', sold: 6, sales: 12.00, status: 'scanned', statusLabel: 'Scanned', statusSub: '', category: 'done' },
+        { box: 12, game: 'Quick $50', pack: '180211', price: 2, opening: '#040', closing: '#052', sold: 12, sales: 24.00, status: 'scanned', statusLabel: 'Scanned', statusSub: '', category: 'done' },
+        { box: 13, game: 'Gold Rush 50X', pack: '184550', price: 10, opening: '#005', closing: '#012', sold: 7, sales: 70.00, status: 'scanned', statusLabel: 'Scanned', statusSub: '', category: 'done' },
+        { box: 14, game: 'Extreme Green', pack: '187600', price: 5, opening: '#015', closing: '#023', sold: 8, sales: 40.00, status: 'scanned', statusLabel: 'Scanned', statusSub: '', category: 'done' },
+        { box: 16, game: 'Treasure Hunt', pack: '130508', price: 3, opening: '#090', closing: '#100', closingSub: '(sold out)', sold: 10, sales: 30.00, status: 'sold-out', statusLabel: 'Sold out', statusSub: '', category: 'done' },
+        { box: 21, game: 'Money Bag Multiplier', pack: '192004', price: 20, opening: '#002', closing: '#005', sold: 3, sales: 60.00, status: 'scanned', statusLabel: 'Scanned', statusSub: '', category: 'done' },
+        { box: 22, game: 'Win It All', pack: '195500', price: 5, opening: '#003', closing: '#001', closingSub: 'went backwards', sold: '—', sales: '—', status: 'check-position', statusLabel: 'Check position', statusSub: 'went backwards', hasActions: true, category: 'attention' },
+        { box: 27, game: 'Platinum Payout', pack: '199902', price: 50, opening: '#001', closing: '#003', sold: 2, sales: 100.00, status: 'scanned', statusLabel: 'Scanned', statusSub: '', category: 'done' },
+        { box: 60, game: 'Jumbo Bucks', pack: '184023', price: 5, opening: '#010', closing: '—', closingSub: '', sold: '—', sales: '—', status: 'not-scanned', statusLabel: 'Not scanned', statusSub: '', hasActions: true, category: 'not_scanned' }
+      ]
+    };
+
+    function renderCloseShiftView() {
+      const tableBody = document.getElementById('csTableBody');
+      if (!tableBody) return;
+
+      const filter = closeShiftState.filter || 'all';
+      const packsToDisplay = closeShiftState.packs.filter(p => {
+        if (filter === 'attention') return p.category === 'attention' || p.status === 'check-position' || p.status === 'scanned-twice';
+        if (filter === 'not_scanned') return p.status === 'not-scanned' || p.category === 'not_scanned';
+        if (filter === 'done') return p.status === 'scanned' || p.status === 'sold-out';
+        return true;
+      });
+
+      tableBody.innerHTML = packsToDisplay.map(pack => {
+        const isAttention = pack.status === 'check-position' || pack.category === 'attention';
+        const rowClass = isAttention ? 'cs-row-attention' : '';
+      
       let closingHtml = `<span class="cs-ticket-num">${pack.closing}</span>`;
       if (pack.closingSub) {
         closingHtml += ` <span class="cs-status-sub ${pack.status === 'check-position' ? 'error' : ''}">${pack.closingSub}</span>`;
@@ -15981,7 +17136,7 @@ function setupEventListeners() {
           <td class="td-box"><div class="cs-box-badge">${pack.box}</div></td>
           <td class="td-game">
             <strong class="cs-game-name">${pack.game}</strong>
-            <span class="cs-pack-num">pack ${pack.pack}</span>
+            <span class="cs-pack-num">pack ${formatDisplayPackNumber(pack.pack)}</span>
           </td>
           <td class="td-price">$${pack.price}</td>
           <td class="td-num"><span class="cs-ticket-num">${pack.opening}</span></td>
@@ -16177,7 +17332,7 @@ function setupEventListeners() {
     if (!barcode) return;
 
     const parsedBox = parseBoxBarcode(barcode);
-    const parsed = parseLotteryBarcode(barcode, state.customGames);
+    const parsed = parseLotteryBarcode(barcode, state.customGames, state.lotteryJurisdiction);
 
     let target = null;
     if (parsedBox) {
@@ -16270,7 +17425,7 @@ function setupEventListeners() {
 
     const shiftNum = state.shiftNumber || 1;
     const nextShiftNum = shiftNum + 1;
-    const cashier = state.cashierName || 'Priya';
+    const cashier = state.cashierName || '—';
     const register = state.registerName || 'Register 1';
 
     const hTitle = document.getElementById('scHeaderTitle');
@@ -16285,7 +17440,7 @@ function setupEventListeners() {
 
     const openTimeStr = state.shiftStartedAt
       ? new Date(state.shiftStartedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
-      : '7:02 AM';
+      : '-';
     const dayDateStr = new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
     if (hSub) hSub.innerHTML = `${cashier} &middot; opened ${openTimeStr} &middot; ${dayDateStr} &middot; ${register}`;
 
@@ -16296,8 +17451,8 @@ function setupEventListeners() {
 
     // Calculate shift sales metrics
     const { totalSold, totalRevenue } = getShiftSalesTotals();
-    const displayRev = totalRevenue > 0 ? `$${totalRevenue.toFixed(2)}` : '$937.00';
-    const displayTix = totalSold > 0 ? `${totalSold} tickets` : '148 tickets';
+    const displayRev = `$${(totalRevenue || 0).toFixed(2)}`;
+    const displayTix = `${totalSold || 0} tickets`;
     if (cardSales) cardSales.textContent = `${displayRev} · ${displayTix}`;
 
     const reportEmail = state.reportEmail || 'amigofoodmart2300@gmail.com';
@@ -16314,7 +17469,7 @@ function setupEventListeners() {
   // =============================================================
   // SCREEN 05: START SHIFT HANDOVER CONTROLLER
   // =============================================================
-  selectedHandoverCashier = 'Carlos';
+  selectedHandoverCashier = '';
 
   function updateHandoverSelectionUI() {
     const cards = document.querySelectorAll('#sshClerksGrid .ssh-clerk-card');
@@ -16368,7 +17523,7 @@ function setupEventListeners() {
 
     const shiftNum = state.shiftNumber || 1;
     const nextShiftNum = shiftNum + 1;
-    const storeName = state.storeName || 'Amigo Food Mart';
+    const storeName = state.storeName || '';
     const register = state.registerName || 'Register 1';
     const dayDateStr = new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
 
@@ -16390,24 +17545,24 @@ function setupEventListeners() {
     const viewPrevReportBtn = document.getElementById('sshViewPrevReportLabel');
 
     if (prevShiftBadge) prevShiftBadge.textContent = 'Final v1';
-    if (prevShiftNum) prevShiftNum.innerHTML = `#${shiftNum} &middot; ${state.cashierName || 'Priya'}`;
+    if (prevShiftNum) prevShiftNum.innerHTML = `#${shiftNum} &middot; ${state.cashierName || '—'}`;
 
     const openTimeStr = state.shiftStartedAt
       ? new Date(state.shiftStartedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
-      : '7:02 AM';
+      : '-';
     const closeTimeStr = new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
     if (prevShiftTime) prevShiftTime.innerHTML = `${openTimeStr} &ndash; ${closeTimeStr}`;
 
     const { totalSold, totalRevenue } = getShiftSalesTotals();
-    const displayRev = totalRevenue > 0 ? `$${totalRevenue.toFixed(2)}` : '$1,237.00';
-    const displayTix = totalSold > 0 ? `${totalSold} tickets` : '289 tickets';
+    const displayRev = `$${(totalRevenue || 0).toFixed(2)}`;
+    const displayTix = `${totalSold || 0} tickets`;
     if (prevShiftSales) prevShiftSales.innerHTML = `${displayRev} &middot; ${displayTix}`;
     if (viewPrevReportBtn) viewPrevReportBtn.textContent = `View Shift #${shiftNum} report`;
 
-    // Populate Opening Numbers Table from current state slots
+    // Populate Opening Numbers Table from current state slots (no fake sample boxes)
     const tbody = document.getElementById('sshOpeningTableBody');
     if (tbody) {
-      const activeSlots = (state.slots || []).filter(s => s && s.status === 'ACTIVE' && s.packNumber);
+      const activeSlots = (state.slots || []).filter(isBoxActive);
       if (activeSlots.length > 0) {
         tbody.innerHTML = activeSlots.map(s => {
           const curNum = s.currentTicket !== undefined ? s.currentTicket : (s.startTicket || 0);
@@ -16421,17 +17576,11 @@ function setupEventListeners() {
           `;
         }).join('');
       } else {
-        tbody.innerHTML = `
-          <tr><td class="font-bold">1</td><td>5X Money</td><td class="td-opens">#013</td></tr>
-          <tr><td class="font-bold">2</td><td>Jr Jumbo</td><td class="td-opens">#009</td></tr>
-          <tr><td class="font-bold">3</td><td>Loteria</td><td class="td-opens">#003</td></tr>
-          <tr><td class="font-bold">4</td><td>Hit 100</td><td class="td-opens">#011</td></tr>
-          <tr><td class="font-bold">6</td><td>Cross Word</td><td class="td-opens">#004</td></tr>
-        `;
+        tbody.innerHTML = `<tr><td colspan="3" style="text-align:center;color:#64748b;padding:12px;">No active packs on rack</td></tr>`;
       }
     }
 
-    const activeCount = (state.slots || []).filter(s => s && s.status === 'ACTIVE' && s.packNumber).length || 19;
+    const activeCount = (state.slots || []).filter(isBoxActive).length;
     const totalBoxes = state.totalSlots || 65;
     const emptyCount = totalBoxes - activeCount;
 
@@ -16445,7 +17594,7 @@ function setupEventListeners() {
     // Note section dynamic name
     const noteLabel = document.getElementById('sshHandoverNoteLabel');
     const checkNoteSub = document.getElementById('sshCheckNoteSub');
-    const cashierName = state.cashierName || 'Priya';
+    const cashierName = state.cashierName || '—';
     if (noteLabel) noteLabel.textContent = `Handover note from ${cashierName}`;
     if (checkNoteSub) checkNoteSub.textContent = `Anything ${cashierName} flagged is understood.`;
 
@@ -16453,7 +17602,7 @@ function setupEventListeners() {
     const confirmBtnLabel = document.getElementById('sshConfirmBtnLabel');
     if (confirmBtnLabel) confirmBtnLabel.textContent = `Start Shift #${nextShiftNum}`;
 
-    if (!selectedHandoverCashier) selectedHandoverCashier = 'Carlos';
+    if (!selectedHandoverCashier) selectedHandoverCashier = state.cashierName || state.currentUser?.name || '';
     updateHandoverSelectionUI();
 
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -16554,7 +17703,7 @@ function setupEventListeners() {
   document.getElementById('btnConfirmStartShiftHandover')?.addEventListener('click', () => {
     const cashInput = document.getElementById('sshStartingCashInput');
     const startingCash = cashInput ? parseFloat(cashInput.value) || 0 : 0;
-    const newCashier = selectedHandoverCashier || state.cashierName || 'Carlos';
+    const newCashier = selectedHandoverCashier || state.cashierName || state.currentUser?.name || 'Cashier';
 
     sfx.success();
     executeStartNewShift(newCashier, startingCash);
@@ -16882,8 +18031,8 @@ function setupEventListeners() {
       } else {
         tbody.innerHTML = dailyData.shifts.map(s => {
           const shiftLabel = s.shift || `#${s.shiftNumber || ''}`;
-          const person = s.salesperson || s.employee || 'Daniel';
-          const timeRange = s.openClose || `${s.started || '7:00 AM'} — ${s.closed || '3:00 PM'}`;
+          const person = s.salesperson || s.employee || '—';
+          const timeRange = s.openClose || ((s.started || s.closed) ? `${s.started || '—'} — ${s.closed || '—'}` : '—');
           const formattedTime = timeRange.replace('—', '–');
           const tickets = s.tickets !== undefined ? s.tickets : 0;
           const salesStr = `$${Number(s.sales || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -16921,15 +18070,15 @@ function setupEventListeners() {
     const shiftNum = target.shiftNumber || (target.shift ? target.shift.replace('#', '') : '1');
     const shiftLabel = target.shift || `#${shiftNum}`;
     const dateStr = target.date || target.day || 'Today';
-    const salesperson = target.salesperson || target.employee || state?.cashierName || 'Clerk';
+    const salesperson = target.salesperson || target.employee || state?.cashierName || '—';
     const totalSales = Number(target.sales || 0);
 
     // Dynamic Store Name & Address for Modal Report Sheet
     const stores = getStoresList();
     const currentSid = getCurrentStoreId();
     const currentStore = stores.find(s => s.id === currentSid);
-    const mStoreName = (target.storeName || state.storeName || currentStore?.name || 'AMIGO FOOD MART').trim();
-    const mStoreAddr = (target.storeAddress || state.storeAddress || currentStore?.address || '2300 MOODY RD WARNER ROBINS, GA, 31088').trim();
+    const mStoreName = (target.storeName || state.storeName || currentStore?.name || '').trim();
+    const mStoreAddr = (target.storeAddress || state.storeAddress || currentStore?.address || '').trim();
 
     const mStoreNameEl = modal.querySelector('.rep-doc-store-name');
     if (mStoreNameEl) mStoreNameEl.textContent = mStoreName.toUpperCase();
@@ -16948,10 +18097,10 @@ function setupEventListeners() {
 
     const timesEl = document.getElementById('modalRepDocShiftTimes');
     if (timesEl) {
-      const timeRange = target.openClose || `${target.started || '7:00 AM'} — ${target.closed || '3:00 PM'}`;
+      const timeRange = target.openClose || ((target.started || target.closed) ? `${target.started || '—'} — ${target.closed || '—'}` : '—');
       const parts = timeRange.includes('—') ? timeRange.split('—') : timeRange.split('–');
-      const op = parts[0]?.trim() || '7:00 AM';
-      const cl = parts[1]?.trim() || '3:00 PM';
+      const op = parts[0]?.trim() || '—';
+      const cl = parts[1]?.trim() || '—';
       timesEl.innerHTML = `Opened ${op} &middot; Closed ${cl}`;
     }
 
@@ -16959,24 +18108,27 @@ function setupEventListeners() {
     if (tbody) {
       const liveSnapshot = target.slotsSnapshot || (target.id && target.id.startsWith('live_') && state.slots && state.slots.length > 0 ? state.slots : null);
 
-      if (liveSnapshot && Array.isArray(liveSnapshot) && liveSnapshot.length > 0 && target.sales === 0) {
+      if (liveSnapshot && Array.isArray(liveSnapshot) && liveSnapshot.length > 0) {
         let rowsHtml = '';
         const totalSlots = state.totalSlots || 65;
         for (let box = 1; box <= totalSlots; box++) {
           const slot = liveSnapshot.find(s => s && Number(s.boxNumber) === box);
-          const isBoxActive = Boolean(slot && (slot.status === 'ACTIVE' || slot.packNumber));
-          if (isBoxActive) {
-            const startStr = String(slot.startTicket !== undefined ? slot.startTicket : (slot.openingTicket !== undefined ? slot.openingTicket : 0)).padStart(3, '0');
-            const closeStr = String(slot.currentTicket !== undefined ? slot.currentTicket : startStr).padStart(3, '0');
+          if (slot && isBoxActive(slot)) {
+            const startNum = slot.startTicket !== undefined ? slot.startTicket : (slot.openingTicket !== undefined ? slot.openingTicket : 0);
+            const closeNum = slot.currentTicket !== undefined ? slot.currentTicket : startNum;
+            const startStr = String(startNum).padStart(3, '0');
+            const closeStr = String(closeNum).padStart(3, '0');
+            const soldCount = calculateSlotSoldTickets(slot);
+            const rowAmt = soldCount * (Number(slot.price) || 1);
             rowsHtml += `
               <tr>
                 <td style="font-weight:700;">${box}</td>
-                <td style="font-family:monospace;">${slot.packNumber || ''}</td>
+                <td style="font-family:monospace;">${formatDisplayPackNumber(slot, '')}</td>
                 <td>${cleanGameTitle(slot.gameName)}</td>
                 <td class="td-rep-num">${startStr}</td>
                 <td class="td-rep-num">${closeStr}</td>
                 <td class="td-rep-num">$${slot.price || 1}</td>
-                <td class="td-rep-num" style="font-weight:700;">$0.00</td>
+                <td class="td-rep-num" style="font-weight:700;">$${rowAmt.toFixed(2)}</td>
               </tr>
             `;
           } else {
@@ -16995,122 +18147,13 @@ function setupEventListeners() {
         }
         tbody.innerHTML = rowsHtml;
       } else {
-        const gameTemplates = [
-          { name: '5X Money', price: 1, pack: '128842' },
-          { name: 'Jr Jumbo', price: 1, pack: '745508' },
-          { name: 'Cash Spectacular', price: 2, pack: '512933' },
-          { name: 'Hit $500', price: 5, pack: '901244' },
-          { name: 'Mega Millions', price: 5, pack: '331892' },
-          { name: 'Jumbo Bucks Classic', price: 10, pack: '672019' },
-          { name: 'Maximum Green', price: 20, pack: '883011' },
-          { name: 'Royal Millions', price: 30, pack: '449102' }
-        ];
-
-        const activeCount = 18;
-        const totalTargetSales = Number(target.sales || 1200);
-        const totalTargetTickets = Number(target.tickets || 200);
-
-        const assigned = [];
-        for (let b = 1; b <= activeCount; b++) {
-          const tmpl = gameTemplates[(b - 1) % gameTemplates.length];
-          assigned.push({
-            box: b,
-            tmpl,
-            packNum: String(Number(tmpl.pack) + b * 17),
-            tickets: 0,
-            amount: 0
-          });
-        }
-
-        let remainingTickets = totalTargetTickets;
-        assigned.forEach(a => {
-          const weight = 35 - a.tmpl.price;
-          const share = Math.max(1, Math.round((weight / 380) * totalTargetTickets));
-          a.tickets = share;
-          remainingTickets -= share;
-        });
-
-        const cheapBoxes = assigned.filter(a => a.tmpl.price <= 2);
-        while (remainingTickets !== 0) {
-          for (let i = 0; i < cheapBoxes.length && remainingTickets !== 0; i++) {
-            if (remainingTickets > 0) { cheapBoxes[i].tickets += 1; remainingTickets--; }
-            else if (cheapBoxes[i].tickets > 1) { cheapBoxes[i].tickets -= 1; remainingTickets++; }
-            else break;
-          }
-        }
-
-        assigned.forEach(a => { a.amount = a.tickets * a.tmpl.price; });
-
-        let salesDiff = totalTargetSales - assigned.reduce((s, a) => s + a.amount, 0);
-        while (salesDiff >= 10) {
-          const b = assigned.find(a => a.tmpl.price === 10);
-          if (b) { b.amount += 10; b.tickets += 1; salesDiff -= 10; } else break;
-        }
-        while (salesDiff >= 5) {
-          const b = assigned.find(a => a.tmpl.price === 5);
-          if (b) { b.amount += 5; b.tickets += 1; salesDiff -= 5; } else break;
-        }
-        while (salesDiff >= 1) {
-          const b = assigned.find(a => a.tmpl.price === 1);
-          if (b) { b.amount += 1; b.tickets += 1; salesDiff -= 1; } else break;
-        }
-        while (salesDiff <= -10) {
-          const b = assigned.find(a => a.tmpl.price === 10 && a.tickets > 1);
-          if (b) { b.amount -= 10; b.tickets -= 1; salesDiff += 10; } else break;
-        }
-        while (salesDiff <= -1) {
-          const b = assigned.find(a => a.tmpl.price === 1 && a.tickets > 1);
-          if (b) { b.amount -= 1; b.tickets -= 1; salesDiff += 1; } else break;
-        }
-        if (salesDiff !== 0) {
-          assigned[0].amount = Math.max(1, assigned[0].amount + salesDiff);
-        }
-
-        const boxRows = assigned.map(a => {
-          const startTicket = (a.box * 3) % 40;
-          const closeTicket = startTicket + a.tickets;
-          return {
-            box: a.box,
-            packNum: a.packNum,
-            name: a.tmpl.name,
-            startStr: String(startTicket).padStart(3, '0'),
-            closeStr: String(closeTicket).padStart(3, '0'),
-            price: a.tmpl.price,
-            amount: a.amount
-          };
-        });
-
-        let rowsHtml = '';
-        const totalSlots = 65;
-        for (let box = 1; box <= totalSlots; box++) {
-          const rowData = boxRows.find(r => r.box === box);
-          if (rowData) {
-            rowsHtml += `
-              <tr>
-                <td style="font-weight:700;">${rowData.box}</td>
-                <td style="font-family:monospace;">${rowData.packNum}</td>
-                <td>${rowData.name}</td>
-                <td class="td-rep-num">${rowData.startStr}</td>
-                <td class="td-rep-num">${rowData.closeStr}</td>
-                <td class="td-rep-num">$${rowData.price}</td>
-                <td class="td-rep-num" style="font-weight:700;">$${rowData.amount.toFixed(2)}</td>
-              </tr>
-            `;
-          } else {
-            rowsHtml += `
-              <tr>
-                <td style="font-weight:700;">${box}</td>
-                <td></td>
-                <td class="td-rep-empty">EMPTY</td>
-                <td class="td-rep-empty">SLOT</td>
-                <td></td>
-                <td></td>
-                <td></td>
-              </tr>
-            `;
-          }
-        }
-        tbody.innerHTML = rowsHtml;
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="7" style="text-align:center;padding:18px;color:#64748b;">
+              No box-level snapshot recorded for this shift.
+            </td>
+          </tr>
+        `;
       }
     }
 
@@ -17119,7 +18162,7 @@ function setupEventListeners() {
       titleEl.innerHTML = `Shift Report &middot; ${shiftLabel} &middot; A4 &middot; 2 pages &middot; Shift-Report-${shiftNum}.pdf`;
     }
 
-    populateShiftReportBreakdown('modal', totalSales, target.tickets || 200, target);
+    populateShiftReportBreakdown('modal', totalSales, target.tickets || 0, target);
 
     if (typeof modal.showModal === 'function') {
       try {
@@ -17218,11 +18261,11 @@ function setupEventListeners() {
     const countRemoved = document.getElementById('invSegCountRemoved') || document.getElementById('invCountRemoved');
     const countAll = document.getElementById('invSegCountAll') || document.getElementById('invCountAll');
 
-    if (badgeInStock) badgeInStock.textContent = String(data.counts.inStock ?? data.counts.safe ?? 4);
-    if (countActive) countActive.textContent = String(data.counts.active ?? data.counts.rack ?? 19);
-    if (countCompleted) countCompleted.textContent = String(data.counts.completed ?? data.counts.sold ?? 3);
-    if (countRemoved) countRemoved.textContent = String(data.counts.removed ?? data.counts.returned ?? 1);
-    if (countAll) countAll.textContent = String(data.counts.all ?? 27);
+    if (badgeInStock) badgeInStock.textContent = String(data.counts.inStock ?? data.counts.safe ?? 0);
+    if (countActive) countActive.textContent = String(data.counts.active ?? data.counts.rack ?? 0);
+    if (countCompleted) countCompleted.textContent = String(data.counts.completed ?? data.counts.sold ?? 0);
+    if (countRemoved) countRemoved.textContent = String(data.counts.removed ?? data.counts.returned ?? 0);
+    if (countAll) countAll.textContent = String(data.counts.all ?? 0);
 
     // Sync Active Segmented Tab Class
     document.querySelectorAll('#invSegmentedTabs .inv-seg-tab').forEach(btn => {
@@ -17230,7 +18273,7 @@ function setupEventListeners() {
       btn.classList.toggle('active', tabKey === currentInventoryTab);
     });
 
-    // Backward-Compatibility Bridge: Update Legacy Elements if present
+    // Backward-Compatibility Bridge: Update Legacy Elements if present (honest zeros, zero demo fallbacks)
     const kpiPacks = document.getElementById('invKpiPacksRack');
     const kpiPacksSub = document.getElementById('invKpiPacksRackSub');
     const kpiTickets = document.getElementById('invKpiTicketsRack');
@@ -17241,17 +18284,17 @@ function setupEventListeners() {
     const kpiSoldToday = document.getElementById('invKpiSoldToday');
     const kpiSoldTodaySub = document.getElementById('invKpiSoldTodaySub');
 
-    if (kpiPacks) kpiPacks.textContent = String(data.kpis?.packsOnRackCount || 19);
-    if (kpiPacksSub) kpiPacksSub.textContent = `${data.kpis?.emptyBoxesCount || 46} boxes empty`;
-    if (kpiTickets) kpiTickets.textContent = Number(data.kpis?.ticketsOnRackCount || 1882).toLocaleString();
+    if (kpiPacks) kpiPacks.textContent = String(data.kpis?.packsOnRackCount ?? 0);
+    if (kpiPacksSub) kpiPacksSub.textContent = `${data.kpis?.emptyBoxesCount ?? (state.totalSlots || 65)} boxes empty`;
+    if (kpiTickets) kpiTickets.textContent = Number(data.kpis?.ticketsOnRackCount ?? 0).toLocaleString();
     if (kpiTicketsSub) kpiTicketsSub.textContent = 'not sold yet';
-    if (kpiRackVal) kpiRackVal.textContent = `$${Number(data.kpis?.rackValue || 6383).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    if (kpiRackVal) kpiRackVal.textContent = `$${Number(data.kpis?.rackValue ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     const kpiRackValSub = document.getElementById('invKpiRackValueSub');
     if (kpiRackValSub) kpiRackValSub.textContent = 'at ticket price';
-    if (kpiSafeVal) kpiSafeVal.textContent = `$${Number(data.kpis?.safeValue || 1200).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-    if (kpiSafeSub) kpiSafeSub.textContent = `${data.kpis?.safePacksCount || 4} packs stored`;
-    if (kpiSoldToday) kpiSoldToday.textContent = `$${Number(data.kpis?.soldTodaySales || 1237).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-    if (kpiSoldTodaySub) kpiSoldTodaySub.textContent = `${data.kpis?.soldTodayTickets || 248} tickets`;
+    if (kpiSafeVal) kpiSafeVal.textContent = `$${Number(data.kpis?.safeValue ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    if (kpiSafeSub) kpiSafeSub.textContent = `${data.kpis?.safePacksCount ?? 0} packs stored`;
+    if (kpiSoldToday) kpiSoldToday.textContent = `$${Number(data.kpis?.soldTodaySales ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    if (kpiSoldTodaySub) kpiSoldTodaySub.textContent = `${data.kpis?.soldTodayTickets ?? 0} tickets`;
 
     const countRack = document.getElementById('invCountRack');
     const countSafe = document.getElementById('invCountSafe');
@@ -17319,7 +18362,7 @@ function setupEventListeners() {
       );
       const priceDisplay = `$${item.price}`;
       const posDisplay = item.position !== undefined ? String(item.position).padStart(3, '0') : '000';
-      const recDisplay = item.receivedDate || 'Oct 17';
+      const recDisplay = item.receivedDate || '—';
       const sizeDisplay = item.packSize || `${item.packSizeNum || 100} tickets`;
 
       return `
@@ -17328,7 +18371,7 @@ function setupEventListeners() {
             <div class="game-title"><b>${item.gameName}</b></div>
             <div class="game-num">Game ${item.gameNumber}</div>
           </td>
-          <td class="td-inv-pack mono" style="font-weight: 700;">${item.packNumber}</td>
+          <td class="td-inv-pack mono" style="font-weight: 700;">${formatDisplayPackNumber(item)}</td>
           <td class="td-inv-price r money" style="font-weight: 700;">${priceDisplay}</td>
           <td class="td-inv-size r">${sizeDisplay}</td>
           <td class="td-inv-status"><span class="${badgeClass}">${statusText}</span></td>
@@ -17349,6 +18392,8 @@ function setupEventListeners() {
       });
     });
   }
+  _renderInventoryViewFn = renderInventoryView;
+  window.renderInventoryView = renderInventoryView;
 
   function openEditInventoryPackModal(item) {
     if (!item) return;
@@ -17406,7 +18451,7 @@ function setupEventListeners() {
 
       // Initialize state.inStockInventory if not yet populated
       if (!state.inStockInventory || !Array.isArray(state.inStockInventory)) {
-        state.inStockInventory = (!state.dataCleared && (!state.storeId || state.storeId === 'store_amigo')) ? JSON.parse(JSON.stringify(REFERENCE_IN_STOCK_PACKS)) : [];
+        state.inStockInventory = [];
       }
 
       // Update inStockInventory if previously in stock
@@ -17454,8 +18499,8 @@ function setupEventListeners() {
           }
         });
 
-        if (newStatus === 'ACTIVE' && newBoxNumber && newBoxNumber >= 1 && newBoxNumber <= state.slots.length) {
-          const targetSlot = state.slots[newBoxNumber - 1];
+        if (newStatus === 'ACTIVE' && newBoxNumber && newBoxNumber >= 1 && newBoxNumber <= 100) {
+          const targetSlot = (state.slots || []).find(s => Number(s.boxNumber) === Number(newBoxNumber));
           if (targetSlot) {
             targetSlot.gameName = newGameName;
             targetSlot.gameCode = newGameNumber;
@@ -17463,12 +18508,8 @@ function setupEventListeners() {
             targetSlot.price = newPrice;
             targetSlot.packSize = newPackSize;
             targetSlot.status = 'ACTIVE';
-            const parsedStartPos = parseInt(newPos, 10) || 0;
-            targetSlot.currentTicket = parsedStartPos;
-            targetSlot.startTicket = parsedStartPos;
-            targetSlot.packStartTicket = parsedStartPos;
-            targetSlot.packCumulativeSold = 0;
-            targetSlot.packCumulativeSoldBase = 0;
+            targetSlot.currentTicket = parseInt(newPos, 10) || 0;
+            targetSlot.startTicket = parseInt(newPos, 10) || 0;
           }
         }
       }
@@ -17480,7 +18521,9 @@ function setupEventListeners() {
         else modal.style.display = 'none';
       }
       renderInventoryView();
-      if (typeof renderDispenser === 'function') renderDispenser();
+      renderDispenserRack();
+      renderHeaderAndMetrics();
+      renderSlotsRibbon();
       showToast(`✓ Book ${newPackNumber} updated successfully.`, 'success');
     });
 
@@ -17490,16 +18533,17 @@ function setupEventListeners() {
       if (!confirm(`Are you sure you want to remove pack ${origPack} from inventory?`)) return;
 
       if (!state.inStockInventory || !Array.isArray(state.inStockInventory)) {
-        state.inStockInventory = (!state.dataCleared && (!state.storeId || state.storeId === 'store_amigo')) ? JSON.parse(JSON.stringify(REFERENCE_IN_STOCK_PACKS)) : [];
+        state.inStockInventory = [];
       }
       state.inStockInventory = state.inStockInventory.filter(p => String(p.packNumber) !== String(origPack));
+      if (Array.isArray(state.inventory)) {
+        state.inventory = state.inventory.filter(p => String(p.packNumber) !== String(origPack));
+      }
 
       if (Array.isArray(state.slots)) {
         state.slots.forEach(slot => {
           if (slot && String(slot.packNumber) === String(origPack)) {
-            slot.packNumber = '';
-            slot.gameName = '';
-            slot.status = 'EMPTY';
+            resetSlotToEmpty(slot);
           }
         });
       }
@@ -17512,8 +18556,10 @@ function setupEventListeners() {
         else modal.style.display = 'none';
       }
       renderInventoryView();
-      if (typeof renderDispenser === 'function') renderDispenser();
-      showToast(`Pack ${origPack} removed.`, 'info');
+      renderDispenserRack();
+      renderHeaderAndMetrics();
+      renderSlotsRibbon();
+      showToast(`Pack ${formatDisplayPackNumber(origPack)} removed.`, 'info');
     });
   }
 
@@ -17565,9 +18611,10 @@ function setupEventListeners() {
     const hdrBadge = document.getElementById('drHeaderDateBadge');
     const hdrVersionBadge = document.getElementById('drHdrVersionBadge');
 
+    const todayDefault = new Date().toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' });
     if (pageTitle) pageTitle.textContent = data.reportTitle || (data.isDailyMode ? 'Day Report' : 'Shift Report');
-    if (pageSub) pageSub.textContent = data.subtitle || `${data.date} · ${data.shiftsCount || '1 shift'} · open since ${data.openedTime || '7:02 AM'} by ${data.userId || 'Carlos'}`;
-    if (hdrBadge) hdrBadge.textContent = data.dateBadge || data.date || '10/08/2026';
+    if (pageSub) pageSub.textContent = data.subtitle || `${data.date || todayDefault} · ${data.shiftsCount || '0 shifts'} · open since ${data.openedTime || '-'} by ${data.userId || '—'}`;
+    if (hdrBadge) hdrBadge.textContent = data.dateBadge || data.date || todayDefault;
     if (hdrVersionBadge) {
       if (state.dayReportCorrection) {
         hdrVersionBadge.textContent = 'Corrected v2';
@@ -17598,20 +18645,20 @@ function setupEventListeners() {
 
     const formattedTotal = `$${Number(data.totalInstantSales || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-    if (sheetStore) sheetStore.textContent = data.storeName || state?.storeName || 'AMIGO FOOD MART';
-    if (sheetStoreAddr) sheetStoreAddr.textContent = data.storeAddress || state?.storeAddress || '2300 Moody Rd, Warner Robins, GA 31088';
+    if (sheetStore) sheetStore.textContent = data.storeName || state?.storeName || '';
+    if (sheetStoreAddr) sheetStoreAddr.textContent = data.storeAddress || state?.storeAddress || '';
     if (sheetTitleText) sheetTitleText.textContent = data.reportTitle || (data.isDailyMode ? 'Day Report' : 'Shift Report');
     if (sheetVersion) sheetVersion.textContent = state.dayReportCorrection ? ' · Corrected v2' : (data.versionLabel || ' · Final v1');
     if (sheetTotalSales) sheetTotalSales.textContent = formattedTotal;
     if (sheetTickets) sheetTickets.textContent = String(data.totalTickets || 0);
-    if (sheetDate) sheetDate.textContent = data.date || data.dateRange || '10/08/2026';
-    if (sheetShifts) sheetShifts.textContent = data.shiftsSummary || data.shiftsCount || '1 shift';
+    if (sheetDate) sheetDate.textContent = data.date || data.dateRange || todayDefault;
+    if (sheetShifts) sheetShifts.textContent = data.shiftsSummary || data.shiftsCount || '0 shifts';
     if (sheetGenerated) sheetGenerated.textContent = data.generatedTime || `${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}, ${new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}`;
     if (sheetFooterText) {
       sheetFooterText.textContent = `Printed from LottoTrack Pro · Register 1 · ${data.date || ''} ${data.generatedTime || ''}`;
     }
-    if (metaDateRange) metaDateRange.textContent = data.dateRange || data.date || '10/08/2026';
-    if (metaShifts) metaShifts.textContent = data.shiftsCount || `${(data.shifts || []).length || 1} shifts`;
+    if (metaDateRange) metaDateRange.textContent = data.dateRange || data.date || todayDefault;
+    if (metaShifts) metaShifts.textContent = data.shiftsCount || `${(data.shifts || []).length} shifts`;
     if (metaBoxes) metaBoxes.textContent = `${(data.boxes || []).filter(b => !b.isEmpty).length} active boxes`;
 
     // Table rows
@@ -17636,7 +18683,7 @@ function setupEventListeners() {
           tr.className = 'dr-row-sold-out';
           tr.innerHTML = `
             <td class="col-box">${row.box}</td>
-            <td class="col-pack">${row.pack}</td>
+            <td class="col-pack">${formatDisplayPackNumber(row.pack)}</td>
             <td class="col-game">${row.game} <span class="dr-badge-sold-out">SOLD OUT</span></td>
             <td class="col-open">${row.open}</td>
             <td class="col-close">${row.close}</td>
@@ -17651,7 +18698,7 @@ function setupEventListeners() {
             : '';
           tr.innerHTML = `
             <td class="col-box">${row.box}</td>
-            <td class="col-pack">${row.pack}</td>
+            <td class="col-pack">${formatDisplayPackNumber(row.pack)}</td>
             <td class="col-game">${row.game} ${correctedBadge}</td>
             <td class="col-open">${row.open}</td>
             <td class="col-close">${row.close}</td>
@@ -17872,11 +18919,10 @@ function setupEventListeners() {
   window.handleReceivePackBarcode = function (rawBarcode) {
     const barcode = String(rawBarcode).trim();
     if (!barcode) return;
+    const parsed = parseLotteryBarcode(barcode, state.customGames, state.lotteryJurisdiction);
     const input = document.getElementById('rpPackBarcodeInput');
-    if (input) input.value = barcode;
-
-    const parsed = parseLotteryBarcode(barcode, state.customGames);
-    const matched = findGameByBarcode(barcode, state.customGames);
+    if (input) input.value = parsed?.displayBarcode || barcode;
+    const matched = findGameByBarcode(barcode, state.customGames, state.lotteryJurisdiction);
 
     const banner = document.getElementById('rpDetectionBanner');
     const bannerTitle = document.getElementById('rpDetectionTitleText');
@@ -17885,6 +18931,7 @@ function setupEventListeners() {
     const nameInput = document.getElementById('rpTicketNameInput');
     const gameNumInput = document.getElementById('rpGameNumberInput');
     const packNumInput = document.getElementById('rpPackNumberInput');
+    const tixPackInput = document.getElementById('rpTicketsInPackInput');
 
     if (matched) {
       if (banner) {
@@ -17896,8 +18943,13 @@ function setupEventListeners() {
 
       if (nameInput) nameInput.value = cleanGameTitle(matched.name);
       if (gameNumInput) gameNumInput.value = matched.barcodePrefix || (parsed ? parsed.gameNumber : '');
-      if (packNumInput) packNumInput.value = parsed?.packNumber || '';
-      updateReceivePacksFormPrice(matched.price || 10);
+      if (packNumInput) packNumInput.value = formatDisplayPackNumber(parsed?.basePackNumber || parsed?.packNumber || '');
+      const matchedPrice = matched.price || parsed?.price || 10;
+      updateReceivePacksFormPrice(matchedPrice);
+      if (tixPackInput && matched.packSize) {
+        tixPackInput.value = String(matched.packSize);
+        recalculateReceivePackBookValue();
+      }
       sfx.beep();
     } else if (parsed && parsed.isValid) {
       if (banner) {
@@ -17909,8 +18961,14 @@ function setupEventListeners() {
 
       if (nameInput) nameInput.value = parsed.gameNumber ? `Game #${parsed.gameNumber}` : 'Scratch-Off Game';
       if (gameNumInput) gameNumInput.value = parsed.gameNumber || '';
-      if (packNumInput) packNumInput.value = parsed.packNumber || '';
-      updateReceivePacksFormPrice(10);
+      if (packNumInput) packNumInput.value = formatDisplayPackNumber(parsed.basePackNumber || parsed.packNumber || '');
+      const inferredPrice = parsed.price || parsed.inferredDetails?.price || 10;
+      const inferredSize = parsed.packSize || parsed.inferredDetails?.packSize || null;
+      updateReceivePacksFormPrice(inferredPrice);
+      if (tixPackInput && inferredSize) {
+        tixPackInput.value = String(inferredSize);
+        recalculateReceivePackBookValue();
+      }
       sfx.beep();
     } else {
       const cleanDigits = barcode.replace(/[^0-9]/g, '');
@@ -17970,7 +19028,7 @@ function setupEventListeners() {
         <tr>
           <td>
             <div class="rp-game-title">${item.gameName}</div>
-            <div class="rp-game-meta">#${item.gameNumber || '1688'} - Pack ${item.packNumber}</div>
+            <div class="rp-game-meta">#${item.gameNumber || '1688'} - Pack ${formatDisplayPackNumber(item)}</div>
           </td>
           <td>
             <span class="rp-movement-pill">${item.movement || currentRecordingMovement || 'Received from Lottery'}</span>
@@ -18002,7 +19060,7 @@ function setupEventListeners() {
         if (!isNaN(idx) && idx >= 0 && idx < stagedDeliveryPacks.length) {
           const removed = stagedDeliveryPacks.splice(idx, 1)[0];
           sfx.keypad();
-          showToast(`Removed Pack #${removed.packNumber} from batch.`, 'info');
+          showToast(`Removed Pack #${formatDisplayPackNumber(removed.packNumber)} from batch.`, 'info');
           renderReceivePacksView();
         }
       });
@@ -18050,7 +19108,7 @@ function setupEventListeners() {
 
     if (stagedDeliveryPacks.some(p => p.packNumber === packNumber)) {
       sfx.alert();
-      showToast(`Pack #${packNumber} is already in this batch!`, 'warning');
+      showToast(`Pack #${formatDisplayPackNumber(packNumber)} is already in this batch!`, 'warning');
       return;
     }
 
@@ -18068,7 +19126,7 @@ function setupEventListeners() {
     });
 
     sfx.beep();
-    showToast(`✓ Added [${gameName}] Pack #${packNumber} to this batch.`, 'success');
+    showToast(`✓ Added [${gameName}] Pack #${formatDisplayPackNumber(packNumber)} to this batch.`, 'success');
     renderReceivePacksView();
     hideReceivePackForm();
 
@@ -18086,20 +19144,15 @@ function setupEventListeners() {
     const packNumInput = document.getElementById('rpPackNumberInput');
 
     if (scanInput) scanInput.value = '';
-    if (nameInput) nameInput.value = '50X Money';
-    if (gameNumInput) gameNumInput.value = '1711';
-    if (packNumInput) packNumInput.value = '403118';
-    updateReceivePacksFormPrice(10);
+    if (nameInput) nameInput.value = '';
+    if (gameNumInput) gameNumInput.value = '';
+    if (packNumInput) packNumInput.value = '';
+    updateReceivePacksFormPrice(1);
 
     const banner = document.getElementById('rpDetectionBanner');
     if (banner) {
-      banner.className = 'rp-detection-banner known';
-      banner.style.display = 'block';
+      banner.style.display = 'none';
     }
-    const bannerTitle = document.getElementById('rpDetectionTitleText');
-    const bannerSub = document.getElementById('rpDetectionSubText');
-    if (bannerTitle) bannerTitle.textContent = 'We know this game';
-    if (bannerSub) bannerSub.textContent = 'Details were filled in automatically. Just check and add.';
     hideReceivePackForm();
   }
 
@@ -18113,27 +19166,53 @@ function setupEventListeners() {
     const count = stagedDeliveryPacks.length;
     const total = stagedDeliveryPacks.reduce((acc, p) => acc + (p.bookValue || 0), 0);
 
-    if (!Array.isArray(state.inventory)) {
-      state.inventory = [];
+    if (!Array.isArray(state.inStockInventory)) {
+      state.inStockInventory = [];
     }
 
+    let addedCount = 0;
     stagedDeliveryPacks.forEach(p => {
-      state.inventory.push({
-        packNumber: p.packNumber,
-        gameId: 'g' + (p.gameNumber || Math.floor(100 + Math.random() * 900)),
+      const packNumStr = String(p.packNumber || '').trim();
+      if (!packNumStr) return;
+      const alreadyExists = state.inStockInventory.some(x => x && x.packNumber && isPackNumberMatch(x.packNumber, packNumStr))
+        || (state.slots || []).some(s => isBoxActive(s) && s.packNumber && isPackNumberMatch(s.packNumber, packNumStr));
+      if (alreadyExists) return;
+
+      const gameNumStr = String(p.gameNumber || '').trim();
+      const jur = normalizeLotteryJurisdiction(p.jurisdiction || state.lotteryJurisdiction);
+      const tixCount = Number(p.tickets) || getStandardPackDetails(p.price || 1).packSize;
+      state.inStockInventory.unshift({
+        packNumber: packNumStr,
+        basePackNumber: packNumStr,
+        packCombined: packNumStr,
+        gameId: gameNumStr ? (jur === 'SC' ? `sc${gameNumStr}` : `g${gameNumStr}`) : ('g' + Math.floor(100 + Math.random() * 900)),
+        gameNumber: gameNumStr ? `Game ${gameNumStr}` : '',
+        barcodePrefix: gameNumStr,
+        jurisdiction: jur,
         gameName: p.gameName,
-        price: p.price,
-        packSize: p.tickets,
-        status: 'STORED',
+        price: Number(p.price) || 1,
+        packSize: `${tixCount} tickets`,
+        packSizeNum: tixCount,
+        bookValue: Number(p.bookValue) || ((Number(p.price) || 1) * tixCount),
+        status: 'IN_STOCK',
+        statusLabel: 'In Stock',
+        statusBadgeClass: 'badge-instock',
+        boxNumber: null,
+        position: '000',
+        receivedDate: 'Today',
         receivedAt: new Date().toISOString()
       });
+      addedCount++;
     });
 
+    if (state.dataCleared && addedCount > 0) delete state.dataCleared;
     saveState(state);
     renderHeaderAndMetrics();
+    renderInventoryTable();
+    if (typeof renderInventoryView === 'function') renderInventoryView();
 
     sfx.win();
-    showToast(`🎉 Movements saved! ${count} packs ($${total}.00) updated in inventory.`, 'success');
+    showToast(`🎉 Movements saved! ${addedCount} pack${addedCount === 1 ? '' : 's'} ($${total.toFixed(2)}) added to Inventory.`, 'success');
 
     stagedDeliveryPacks = [];
     renderReceivePacksView();
@@ -18451,10 +19530,7 @@ function setupEventListeners() {
       if (shiftSelect) {
         const shifts = Array.isArray(data.shifts) && data.shifts.length > 0
           ? data.shifts
-          : [
-            { id: 1, name: '#1 · Priya' },
-            { id: 2, name: '#2 · Carlos' }
-          ];
+          : (state.cashierName || state.shiftNumber ? [{ id: state.shiftNumber || 1, name: `#${state.shiftNumber || 1}${state.cashierName ? ' · ' + state.cashierName : ''}` }] : []);
         shiftSelect.innerHTML = '';
         shifts.forEach((s, idx) => {
           const opt = document.createElement('option');
@@ -18804,9 +19880,23 @@ function setupEventListeners() {
     const barcode = String(rawBarcode || '').trim();
     if (!barcode) return;
 
-    const parsed = parseLotteryBarcode(barcode, state.customGames);
-    const matched = findGameByBarcode(barcode, state.customGames);
+    const parsed = parseLotteryBarcode(barcode, state.customGames, state.lotteryJurisdiction);
+    if (parsed && parsed.isAmbiguous) {
+      sfx.alert();
+      showToast(`⚠️ ${parsed.error}`, 'warning');
+      return;
+    }
+    if (!parsed || !parsed.isValid || parsed.isRetailProduct || parsed.isNonLotteryBarcode) {
+      sfx.alert();
+      const errMsg = parsed?.isUncatalogued && parsed.error
+        ? `⚠️ ${parsed.error} (uncatalogued SCEL game — cannot invent price/pack size)`
+        : `❌ [${barcode}] is not a valid lottery ticket.`;
+      showToast(errMsg, 'error');
+      return;
+    }
+    const matched = findGameByBarcode(barcode, state.customGames, state.lotteryJurisdiction);
 
+    const isSC = state.lotteryJurisdiction === 'SC' || parsed?.jurisdiction === 'SC';
     let gameCode = parsed?.gameNumber || (matched ? matched.barcodePrefix : '1415');
     let packNumber = parsed?.packNumber || barcode.replace(/[^0-9]/g, '').slice(-6) || '560411';
     let ticketPos = parsed?.ticketString || '000';
@@ -18820,28 +19910,46 @@ function setupEventListeners() {
                 gameCode === '1770' ? '500X The Money' :
                   `Game #${gameCode}`
     );
-    const price = matched?.price || (gameCode === '1888' ? 50 : gameCode === '1417' ? 10 : gameCode === '1409' ? 2 : 1);
+    const price = Number((matched && matched.price) || parsed?.price || parsed?.inferredDetails?.price || (gameCode === '1888' ? 50 : gameCode === '1417' ? 10 : gameCode === '1409' ? 2 : 1));
     const std = getStandardPackDetails(price);
-    const packSize = (matched && matched.packSize) || std.packSize || (price >= 50 ? 18 : 100);
+    const packSizeNum = (matched && matched.packSize !== undefined)
+      ? matched.packSize
+      : (parsed?.packSize ?? parsed?.inferredDetails?.packSize ?? (isSC ? null : (std.packSize || (price >= 50 ? 18 : 100))));
+    const packSize = (packSizeNum !== null && packSizeNum !== undefined) ? `${packSizeNum} tickets` : 'Unverified';
 
     if (!Array.isArray(state.inStockInventory)) {
-      state.inStockInventory = (!state.dataCleared && (!state.storeId || state.storeId === 'store_amigo')) ? JSON.parse(JSON.stringify(REFERENCE_IN_STOCK_PACKS)) : [];
+      state.inStockInventory = [];
     }
 
     if (state.inStockInventory.some(p => isPackNumberMatch(p.packNumber, packNumber))) {
       sfx.alert();
-      showToast(`⚠️ Pack #${packNumber} is already in stock!`, 'warning');
+      showToast(`⚠️ Pack #${formatDisplayPackNumber(packNumber)} is already in stock!`, 'warning');
       return;
     }
 
+    const resolvedJur = parsed?.jurisdiction || (isSC ? 'SC' : 'GA');
+    const chkDig = parsed?.checkDigit || parsed?.checkCode || null;
+    const basePack = parsed?.basePackNumber || packNumber;
+    const combined = parsed?.packCombined || (chkDig ? `${basePack}-${chkDig}` : packNumber);
+
     const newPack = {
       id: 'stock_' + Date.now(),
+      barcode: parsed?.standardBarcode || barcode,
+      originalBarcode: barcode,
+      standardBarcode: parsed?.standardBarcode || barcode,
+      barcodePrefix: gameCode,
       gameName: gameName,
       gameNumber: `Game ${gameCode}`,
       packNumber: packNumber,
+      basePackNumber: basePack,
+      packCombined: combined,
+      checkDigit: chkDig,
+      jurisdiction: resolvedJur,
+      rawSuffix: parsed?.rawSuffix || null,
+      displayBarcode: parsed?.displayBarcode || barcode,
       price: price,
-      packSize: `${packSize} tickets`,
-      packSizeNum: packSize,
+      packSize: packSize,
+      packSizeNum: packSizeNum,
       status: 'IN_STOCK',
       statusLabel: 'In stock',
       statusBadgeClass: 'badge-in-stock',
@@ -18865,7 +19973,7 @@ function setupEventListeners() {
     }
 
     sfx.beep();
-    showToast(`✓ Pack #${packNumber} (${gameName}) added to In Stock!`, 'success');
+    showToast(`✓ Pack #${formatDisplayPackNumber(basePack || packNumber)} (${gameName}) added to In Stock!`, 'success');
     currentInventoryTab = 'in_stock';
     renderInventoryView();
   }
@@ -18949,7 +20057,7 @@ function setupEventListeners() {
 
         if (titleEl) titleEl.textContent = `Fix · Box ${box}`;
         if (gameEl) gameEl.textContent = cleanGameTitle(activeGame);
-        if (packEl) packEl.textContent = `Pack ${activePack}`;
+        if (packEl) packEl.textContent = `Pack ${formatDisplayPackNumber(activePack)}`;
         if (priceEl) priceEl.textContent = `$${activePrice}`;
         if (sizeEl) sizeEl.textContent = activeSize;
         if (curEl) curEl.textContent = `#${String(activeCur).padStart(3, '0')}`;
@@ -19139,10 +20247,6 @@ function setupEventListeners() {
     if (slot.currentTicket === slot.startTicket || slot.activatedThisShift) {
       slot.startTicket = newPos;
       slot.currentTicket = newPos;
-      if (!(slot.packCumulativeSoldBase > 0) && !(slot.previousShiftSold > 0)) {
-        slot.packStartTicket = newPos;
-        slot.packCumulativeSold = 0;
-      }
       slot.activatedThisShift = (newPos === 0);
     } else {
       slot.currentTicket = newPos;
@@ -19880,7 +20984,8 @@ function setupEventListeners() {
       retailerNumber: retailerNumber.trim(),
       phone: '(478) 555-0100',
       totalBoxes: 60,
-      status: 'ACTIVE'
+      status: 'ACTIVE',
+      lotteryJurisdiction: 'GA'
     };
     const stores = getStoresList();
     stores.push(newStore);
@@ -20686,6 +21791,9 @@ window.openFixTicketPositionModal = openFixTicketPositionModal;
 window.handleConfirmFixTicketPosition = handleConfirmFixTicketPosition;
 window.getPendingSoldOutRecovery = () => pendingSoldOutRecovery;
 window.setPendingSoldOutRecovery = (val) => { pendingSoldOutRecovery = val; };
+window.buildShiftReportRows = buildShiftReportRows;
+window.executeGetReportWithLoading = executeGetReportWithLoading;
+window.openEndShiftBoxReviewModal = openEndShiftBoxReviewModal;
 
 // Launch application
 initPOS();

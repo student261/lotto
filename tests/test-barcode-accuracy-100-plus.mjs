@@ -14,7 +14,7 @@ import {
 
 // Extract live parseBoxBarcode from src/main.js
 const mainJsContent = fs.readFileSync(path.resolve('src/main.js'), 'utf8');
-const boxParserMatch = mainJsContent.match(/function parseBoxBarcode\(barcode\)\s*\{[\s\S]*?\n\}/);
+const boxParserMatch = mainJsContent.match(/\n([ \t]*)function parseBoxBarcode\(barcode\)\s*\{[\s\S]*?\n\1\}/);
 assert(boxParserMatch, 'parseBoxBarcode must exist in src/main.js');
 const parseBoxBarcode = new Function('barcode', `${boxParserMatch[0]}; return parseBoxBarcode(barcode);`);
 
@@ -162,42 +162,42 @@ console.log('\n--- Category 4: Multi-State Games & Price Points (25 Tests) ---')
 
 const stateGames = [
   // $1 Games (300 tickets, PIN counts down from 299 to 000)
-  { raw: '14170670170000', g: '1417', p: '067017', t: 0, expSec: '299', price: 1 },
-  { raw: '14170670170150', g: '1417', p: '067017', t: 150, expSec: '149', price: 1 },
-  { raw: '14170670170299', g: '1417', p: '067017', t: 299, expSec: '000', price: 1 },
+  { raw: '14170670170000', g: '1417', p: '0670170', t: 0, expSec: '299', price: 1 },
+  { raw: '14170670170150', g: '1417', p: '0670170', t: 150, expSec: '149', price: 1 },
+  { raw: '14170670170299', g: '1417', p: '0670170', t: 299, expSec: '000', price: 1 },
 
   // $2 Games (150 tickets, PIN counts down from 149 to 000)
   { raw: '16700198693000', g: '1670', p: '019869', t: 0, expSec: '149', price: 2 },
   { raw: '16700198693075', g: '1670', p: '019869', t: 75, expSec: '074', price: 2 },
   { raw: '16700198693149', g: '1670', p: '019869', t: 149, expSec: '000', price: 2 },
-  { raw: '14180996564000', g: '1418', p: '099656', t: 0, expSec: '149', price: 2 },
-  { raw: '14180996564081', g: '1418', p: '099656', t: 81, expSec: '068', price: 2 },
-  { raw: '14180996564149', g: '1418', p: '099656', t: 149, expSec: '000', price: 2 },
+  { raw: '14180996564000', g: '1418', p: '0996564', t: 0, expSec: '149', price: 2 },
+  { raw: '14180996564081', g: '1418', p: '0996564', t: 81, expSec: '068', price: 2 },
+  { raw: '14180996564149', g: '1418', p: '0996564', t: 149, expSec: '000', price: 2 },
 
   // $3 Games (100 tickets, PIN counts down from 099 to 000)
-  { raw: '16720072523000', g: '1672', p: '007252', t: 0, expSec: '099', price: 3 },
-  { raw: '16720072523050', g: '1672', p: '007252', t: 50, expSec: '049', price: 3 },
-  { raw: '16720072523099', g: '1672', p: '007252', t: 99, expSec: '000', price: 3 },
+  { raw: '16720072523000', g: '1672', p: '0072523', t: 0, expSec: '099', price: 3 },
+  { raw: '16720072523050', g: '1672', p: '0072523', t: 50, expSec: '049', price: 3 },
+  { raw: '16720072523099', g: '1672', p: '0072523', t: 99, expSec: '000', price: 3 },
 
   // $5 Games (60 tickets, PIN counts down from 059 to 000)
-  { raw: '18990145228000', g: '1899', p: '014522', t: 0, expSec: '059', price: 5 },
-  { raw: '18990145228030', g: '1899', p: '014522', t: 30, expSec: '029', price: 5 },
-  { raw: '18990145228059', g: '1899', p: '014522', t: 59, expSec: '000', price: 5 },
+  { raw: '18990145228000', g: '1899', p: '0145228', t: 0, expSec: '059', price: 5 },
+  { raw: '18990145228030', g: '1899', p: '0145228', t: 30, expSec: '029', price: 5 },
+  { raw: '18990145228059', g: '1899', p: '0145228', t: 59, expSec: '000', price: 5 },
 
   // $10 Games (30 tickets, PIN counts down from 029 to 000)
-  { raw: '16480183788000', g: '1648', p: '018378', t: 0, expSec: '029', price: 10 },
-  { raw: '16480183788015', g: '1648', p: '018378', t: 15, expSec: '014', price: 10 },
-  { raw: '16480183788029', g: '1648', p: '018378', t: 29, expSec: '000', price: 10 },
+  { raw: '16480183788000', g: '1648', p: '0183788', t: 0, expSec: '029', price: 10 },
+  { raw: '16480183788015', g: '1648', p: '0183788', t: 15, expSec: '014', price: 10 },
+  { raw: '16480183788029', g: '1648', p: '0183788', t: 29, expSec: '000', price: 10 },
 
   // $20 Games (15 tickets, PIN counts down from 014 to 000)
-  { raw: '14230234115000', g: '1423', p: '023411', t: 0, expSec: '014', price: 20 },
-  { raw: '14230234115007', g: '1423', p: '023411', t: 7, expSec: '007', price: 20 },
-  { raw: '14230234115014', g: '1423', p: '023411', t: 14, expSec: '000', price: 20 },
+  { raw: '14230234115000', g: '1423', p: '0234115', t: 0, expSec: '014', price: 20 },
+  { raw: '14230234115007', g: '1423', p: '0234115', t: 7, expSec: '007', price: 20 },
+  { raw: '14230234115014', g: '1423', p: '0234115', t: 14, expSec: '000', price: 20 },
 
   // $50 Games (18 tickets, PIN counts down from 017 to 000)
-  { raw: '17700543219000', g: '1770', p: '054321', t: 0, expSec: '017', price: 50 },
-  { raw: '17700543219009', g: '1770', p: '054321', t: 9, expSec: '008', price: 50 },
-  { raw: '17700543219017', g: '1770', p: '054321', t: 17, expSec: '000', price: 50 }
+  { raw: '17700543219000', g: '1770', p: '0543219', t: 0, expSec: '017', price: 50 },
+  { raw: '17700543219009', g: '1770', p: '0543219', t: 9, expSec: '008', price: 50 },
+  { raw: '17700543219017', g: '1770', p: '0543219', t: 17, expSec: '000', price: 50 }
 ];
 
 stateGames.forEach((tc, idx) => {
@@ -220,19 +220,19 @@ const highDensityCases = [
   { raw: '16700198693000149', g: '1670', p: '019869', t: 0, pin: '149' },
   { raw: '16700198693001148', g: '1670', p: '019869', t: 1, pin: '148' },
   { raw: '16700198693017132', g: '1670', p: '019869', t: 17, pin: '132' },
-  { raw: '16480183788000029', g: '1648', p: '018378', t: 0, pin: '029' },
-  { raw: '16480183788029000', g: '1648', p: '018378', t: 29, pin: '000' },
-  { raw: '14180996564081068', g: '1418', p: '099656', t: 81, pin: '068' },
-  { raw: '16720072523000099', g: '1672', p: '007252', t: 0, pin: '099' },
-  { raw: '16720072523099000', g: '1672', p: '007252', t: 99, pin: '000' },
+  { raw: '16480183788000029', g: '1648', p: '0183788', t: 0, pin: '029' },
+  { raw: '16480183788029000', g: '1648', p: '0183788', t: 29, pin: '000' },
+  { raw: '14180996564081068', g: '1418', p: '0996564', t: 81, pin: '068' },
+  { raw: '16720072523000099', g: '1672', p: '0072523', t: 0, pin: '099' },
+  { raw: '16720072523099000', g: '1672', p: '0072523', t: 99, pin: '000' },
   // 2D Barcode Payloads (18-24 digits)
-  { raw: '182800385621002774086718', g: '1828', p: '003856', t: 100 },
+  { raw: '182800385621002774086718', g: '1828', p: '0038562', t: 100 },
   { raw: '167001986930001499824', g: '1670', p: '019869', t: 0 },
-  { raw: '164801837880290008819', g: '1648', p: '018378', t: 29 },
-  { raw: '1418099656408106822154', g: '1418', p: '099656', t: 81 },
+  { raw: '164801837880290008819', g: '1648', p: '0183788', t: 29 },
+  { raw: '1418099656408106822154', g: '1418', p: '0996564', t: 81 },
   // URL encoded 2D payload from QR on ticket back
   { raw: 'https://scel.net/check?t=16700198693000', g: '1670', p: '019869', t: 0 },
-  { raw: 'https://galottery.com/entry?ticket=16480183788029', g: '1648', p: '018378', t: 29 }
+  { raw: 'https://galottery.com/entry?ticket=16480183788029', g: '1648', p: '0183788', t: 29 }
 ];
 
 highDensityCases.forEach((tc, idx) => {
@@ -254,25 +254,28 @@ console.log('\n--- Category 6: Pack Manifests & Intake Scanning (15 Tests) ---')
 const packCases = [
   // 11-digit manifest (Game 4 + Pack 6 + Check 1)
   { raw: '16700198693', g: '1670', p: '019869', c: '3' },
-  { raw: '16480183788', g: '1648', p: '018378', c: '8' },
-  { raw: '14180996564', g: '1418', p: '099656', c: '4' },
-  { raw: '16720072523', g: '1672', p: '007252', c: '3' },
+  { raw: '16480183788', g: '1648', p: '0183788', c: '8' },
+  { raw: '14180996564', g: '1418', p: '0996564', c: '4' },
+  { raw: '16720072523', g: '1672', p: '0072523', c: '3' },
   // 10-digit manifest (Game 4 + Pack 6)
   { raw: '1670019869', g: '1670', p: '019869' },
   { raw: '1648018378', g: '1648', p: '018378' },
   { raw: '1418099656', g: '1418', p: '099656' },
-  // 7-digit pack number (Pack 6 + Check 1)
-  { raw: '0198693', p: '019869', c: '3' },
-  { raw: '0183788', p: '018378', c: '8' },
-  // 6-digit plain pack number
-  { raw: '019869', p: '019869' },
-  { raw: '018378', p: '018378' },
-  { raw: '184022', p: '184022' }
+  // Standalone <10-digit strings are rejected as incomplete scanner fragments
+  { raw: '0198693', expectIncomplete: true },
+  { raw: '0183788', expectIncomplete: true },
+  { raw: '019869', expectIncomplete: true },
+  { raw: '018378', expectIncomplete: true },
+  { raw: '184022', expectIncomplete: true }
 ];
 
 packCases.forEach((tc, idx) => {
   check(`Pack Intake #${idx + 1}: ${tc.raw}`, () => {
     const res = parseLotteryBarcode(tc.raw);
+    if (tc.expectIncomplete) {
+      assert(res && !res.isValid && res.isIncomplete, 'Short <10-digit fragment must be rejected as incomplete');
+      return;
+    }
     assert(res && res.isValid, `Should parse pack manifest`);
     assert(res.isPackBarcode, `Should be flagged as isPackBarcode`);
     assert.strictEqual(res.packNumber, tc.p);

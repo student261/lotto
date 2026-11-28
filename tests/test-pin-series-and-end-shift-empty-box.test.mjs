@@ -38,7 +38,7 @@ async function runTest() {
     '--no-first-run',
     '--no-default-browser-check',
     '--window-size=1280,800',
-    'http://localhost:5173'
+    'http://localhost:5173/app/?bypass_login=1'
   ]);
 
   let ws = null;
@@ -100,10 +100,12 @@ async function runTest() {
       if (ready) break;
       await sleep(250);
     }
+    await sleep(600);
 
     // Setup clean environment with Box 1 activated with opening PIN 067
     await evalCode(`
       (() => {
+        window.state.dataCleared = false;
         window.state.shiftStatus = 'IN_PROGRESS';
         window.state.slots = [];
         for (let i = 1; i <= 65; i++) {
@@ -212,19 +214,21 @@ async function runTest() {
         window.renderDispenserRack();
 
         const activeBoxCards = document.querySelectorAll('.box-card.active');
+        const scannedBadgeCount = document.querySelectorAll('.box-card .card-scan-badge.done').length;
         const addPackCard = document.getElementById('cardLoadNewPack');
         const shiftStatus = window.state.shiftStatus;
 
         return {
           shiftStatus,
           cardCount: activeBoxCards.length,
+          scannedBadgeCount,
           hasAddPackCard: !!addPackCard
         };
       })()
     `);
 
     assert(endShiftInit.shiftStatus === 'SCANNING_END_SHIFT', 'Shift status transitioned to SCANNING_END_SHIFT');
-    assert(endShiftInit.cardCount === 0, 'Dispenser rack cards are empty/hidden during End Shift before scanning');
+    assert(endShiftInit.scannedBadgeCount === 0, 'Zero boxes are marked scanned during End Shift before scanning');
     assert(!endShiftInit.hasAddPackCard, 'Load new pack card is hidden during End Shift scanning');
 
     console.log('\n--- Test Group 3: Scanning Closing Ticket (068 PIN) Activates Box With 1 Sale ---');
@@ -234,10 +238,12 @@ async function runTest() {
         window.processScannedBarcode('1418-0996564-081 (068)');
 
         const b1 = window.state.slots[0];
+        const b2 = window.state.slots[1];
         const activeBoxCards = document.querySelectorAll('.box-card.active');
         const card1 = document.querySelector('.box-card[data-box="1"]');
         const countTxt = card1 ? card1.querySelector('.ticket-sold-count')?.textContent?.trim() : '';
         const b2Card = document.querySelector('.box-card[data-box="2"]');
+        const b2BadgeText = b2Card ? b2Card.querySelector('.card-scan-badge')?.textContent?.trim() : '';
 
         return {
           scannedInEndShift: b1.scannedInEndShift,
@@ -246,7 +252,7 @@ async function runTest() {
           renderedBoxCount: activeBoxCards.length,
           box1Visible: !!card1,
           box1CountTxt: countTxt,
-          box2Hidden: !b2Card
+          box2Unscanned: !b2?.scannedInEndShift && b2BadgeText === 'SCAN'
         };
       })()
     `);
@@ -256,7 +262,7 @@ async function runTest() {
     assert(endShiftScan.calculatedSold === 1, `calculateSlotSoldTickets returns 1 (got ${endShiftScan.calculatedSold})`);
     assert(endShiftScan.box1Visible === true, 'Box 1 activated and appeared in dispenser rack');
     assert(endShiftScan.box1CountTxt === '1', `Box 1 dispenser card displays "1" sold (got "${endShiftScan.box1CountTxt}")`);
-    assert(endShiftScan.box2Hidden === true, 'Unscanned Box 2 remains hidden/empty until scanned');
+    assert(endShiftScan.box2Unscanned === true, 'Unscanned Box 2 remains marked SCAN until scanned');
 
     console.log('\n====================================================');
     console.log(`   TEST RESULTS: Passed: ${passed}, Failed: ${failed}`);

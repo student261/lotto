@@ -4,7 +4,7 @@
 // =============================================================
 
 import { getDayReportData, generateLiveDayReport } from './dayReportData.js';
-import { saveState } from './data.js';
+import { saveState, formatDisplayPackNumber } from './data.js';
 import { saveDayReportToDB } from './dbSync.js';
 
 /**
@@ -107,7 +107,7 @@ export function populateDayReportDOM(reportData, rootElement = document) {
 
           tr.innerHTML = `
             ${boxCol}
-            <td class="dr-pack-num">${sr.pack || ''}</td>
+            <td class="dr-pack-num">${formatDisplayPackNumber(sr.pack, '')}</td>
             <td class="dr-game-name">${sr.name || ''}</td>
             <td class="dr-num-cell">${sr.open ?? ''}</td>
             <td class="dr-num-cell">${sr.close ?? ''}</td>
@@ -127,7 +127,7 @@ export function populateDayReportDOM(reportData, rootElement = document) {
 
       tr.innerHTML = `
         <td class="dr-box-num">${item.box}</td>
-        <td class="dr-pack-num">${item.pack || ''}</td>
+        <td class="dr-pack-num">${formatDisplayPackNumber(item.pack, '')}</td>
         <td class="dr-game-name">${item.name || ''}</td>
         <td class="dr-num-cell">${item.open ?? ''}</td>
         <td class="dr-num-cell">${item.close ?? ''}</td>
@@ -217,7 +217,7 @@ export function populateDayReportDOM(reportData, rootElement = document) {
         tr.innerHTML = `
           <td class="dr-box-num">${act.box}</td>
           <td class="dr-time-cell">${act.time || ''}</td>
-          <td class="dr-pack-num">${act.packNumber || ''}</td>
+          <td class="dr-pack-num">${formatDisplayPackNumber(act, '')}</td>
           <td class="dr-num-cell">${act.price || ''}</td>
           <td class="dr-game-name">${act.name || ''}</td>
         `;
@@ -240,7 +240,7 @@ export function populateDayReportDOM(reportData, rootElement = document) {
         tr.className = 'dr-row-red';
         tr.innerHTML = `
           <td class="dr-box-num">${sold.box}</td>
-          <td class="dr-pack-num">${sold.packNumber || ''}</td>
+          <td class="dr-pack-num">${formatDisplayPackNumber(sold, '')}</td>
           <td class="dr-num-cell">${sold.price || ''}</td>
           <td class="dr-game-name">${sold.name || ''}</td>
         `;
