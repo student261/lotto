@@ -1985,7 +1985,7 @@
         <div class="inventory-updating-banner" id="inventoryUpdatingBanner" style="display: none;">
           <div class="inv-banner-left">
             <span class="inv-banner-bold">Updating inventory &middot; <span id="inventoryAddedCount">0</span>
-              added</span>
+              added<span id="inventoryAddedTicketsSummary"></span></span>
             <span class="inv-banner-sub">Scan one ticket from each new pack. Tap Finish (or Update Inventory again) when
               done.</span>
           </div>
@@ -2013,6 +2013,14 @@
               <div class="inv-term-log-line latest-scanned">
                 <span class="inv-term-prompt inv-term-cursor">_</span>
               </div>
+            </div>
+            <div class="inv-terminal-divider inv-term-bottom-divider" id="invTermBottomDivider">
+              ------------------------------------------------------------------------------------------------------------------------------------------------
+            </div>
+            <div class="inv-terminal-summary-row inv-terminal-bottom-total" id="invTermBottomTotal">
+              <span class="inv-term-code" id="invTermBottomLabel">Total at End</span>
+              <span class="inv-term-title" id="invTermBottomMetrics">0 packs &middot; 0 tickets &middot; $0</span>
+              <span class="inv-term-count" id="invTermBottomCount">Total Count = 0</span>
             </div>
           </div>
           <div class="inv-terminal-footer" id="invTermFooter">
@@ -6727,10 +6735,10 @@
               <span>Known game &mdash; filled in for you</span>
             </span>
           </div>
-          <div class="set-ticket-barcode-number" id="setTicketBarcodeDisplay">1417-0670170-000(290)</div>
+          <div class="set-ticket-barcode-number" id="setTicketBarcodeDisplay">1417-067017-0-000(299)</div>
           <div class="set-ticket-barcode-meta" id="setTicketBarcodeMetaLine">
             <span>Game # <strong id="setTicketMetaGameNum">1417</strong></span>
-            <span>Pack # <strong id="setTicketMetaPackNum">0670170</strong></span>
+            <span>Pack # <strong id="setTicketMetaPackNum">067017</strong></span>
             <span>First ticket # <strong id="setTicketMetaFirstTicket" title="Click to edit bracket PIN">000</strong>
               <button type="button" id="btnEditTicketPin" class="btn-edit-pin"
                 style="background:none;border:none;color:#2563eb;font-size:12px;font-weight:600;cursor:pointer;padding:0 4px;text-decoration:underline;">Edit
@@ -6850,7 +6858,7 @@
           <div class="setbox-ticket-price-badge" id="step2PriceBadge">$10</div>
           <div class="setbox-ticket-meta-block">
             <div class="setbox-ticket-gamename" id="step2GameNameDisplay">50X Money</div>
-            <div class="setbox-ticket-gamepack" id="step2PackDisplay">Game 1422 &middot; Pack 4358988</div>
+            <div class="setbox-ticket-gamepack" id="step2PackDisplay">Game 1422 &middot; Pack 435898</div>
             <div class="setbox-ticket-count-text" id="step2TicketsCountDisplay">30 tickets &middot; starts at ticket 000
             </div>
             <span id="step2BarcodeDisplay" style="display: none;"></span>
@@ -8170,7 +8178,7 @@
             <div class="box-big-badge">BOX 62</div>
             <div class="box-assign-info">
               <div class="box-game-name" id="guidedTargetBoxGame">Georgia Lottery $3 Crossword (Game 1898)</div>
-              <div class="box-game-meta">Pack #0019425 &bull; 30 Tickets (000 - 029) &bull; Value: $90.00</div>
+              <div class="box-game-meta">Pack #001942 &bull; 30 Tickets (000 - 029) &bull; Value: $90.00</div>
               <div class="box-status-tag active">Status: READY FOR ACTIVATION</div>
             </div>
           </div>
@@ -9711,7 +9719,7 @@
                 </div>
                 <div class="field">
                   <label for="rbPackInput">Pack #</label>
-                  <input id="rbPackInput" class="input mono" inputmode="numeric" placeholder="6–7 digits">
+                  <input id="rbPackInput" class="input mono" inputmode="numeric" placeholder="6 digits">
                 </div>
                 <div class="field">
                   <label for="rbPosInput">Start ticket</label>

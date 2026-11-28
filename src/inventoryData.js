@@ -1,6 +1,6 @@
 // Inventory & Audit Screen Data Model & Reconciler
 // Matches LottoTrack Reference UI Specification
-import { calculateSlotRemainingTickets, calculateSlotSoldTickets, isBoxActive, isPackNumberMatch, getStandardPackDetails } from './data.js';
+import { calculateSlotRemainingTickets, calculateSlotSoldTickets, isBoxActive, isPackNumberMatch, getStandardPackDetails, formatDisplayPackNumber } from './data.js';
 
 export const REFERENCE_INVENTORY_ITEMS = [
   {
@@ -598,6 +598,7 @@ export function getInventoryScreenData(state, activeTab = 'in_stock', searchQuer
       (item.gameName && item.gameName.toLowerCase().includes(query)) ||
       (item.gameNumber && item.gameNumber.toLowerCase().includes(query)) ||
       (item.packNumber && String(item.packNumber).toLowerCase().includes(query)) ||
+      (formatDisplayPackNumber(item).toLowerCase().includes(query)) ||
       (item.boxNumber && String(item.boxNumber).toLowerCase().includes(query)) ||
       (item.statusLabel && item.statusLabel.toLowerCase().includes(query)) ||
       (item.position && String(item.position).toLowerCase().includes(query)) ||

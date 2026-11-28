@@ -3,8 +3,8 @@ import { syncPOSStateToDB, clearPOSStateOnDB } from './dbSync.js';
 
 const STORAGE_KEY = 'lotto_track_pos_data_v3';
 
-import { normalizeLotteryJurisdiction, resolveJurisdictionUpdate, adaptScelToLotteryBarcode, findScelGame, isScelGameNumber, computeScCheckDigit, SCEL_GAMES } from './scel.js';
-export { normalizeLotteryJurisdiction, resolveJurisdictionUpdate, adaptScelToLotteryBarcode, isScelGameNumber, computeScCheckDigit };
+import { normalizeLotteryJurisdiction, resolveJurisdictionUpdate, adaptScelToLotteryBarcode, findScelGame, isScelGameNumber, computeScCheckDigit, SCEL_GAMES, stripScannerPrefix, stripLeadingZeroPadding, disambiguateContinuousLayout } from './scel.js';
+export { normalizeLotteryJurisdiction, resolveJurisdictionUpdate, adaptScelToLotteryBarcode, isScelGameNumber, computeScCheckDigit, stripScannerPrefix };
 
 export const DEFAULT_STORES = [
   {
@@ -628,32 +628,8 @@ function parseLotteryBarcodeCore(raw, customGames = [], jurisdiction = 'GA') {
     return adaptScelToLotteryBarcode(raw, customGames);
   }
 
-  let s = String(raw).replace(/[\x00-\x1F\x7F]/g, '').trim();
+  let s = stripScannerPrefix(raw);
   if (!s) return null;
-  s = s.replace(/[;,.]$/, '').trim();
-  if (!s) return null;
-
-  // Strip standard AIM / Keyence scanner symbology prefix (e.g. "]C1", "]I0", "]e0", "]C0", "]A0", "]d1", "]Q1", "]C01")
-  if (s.startsWith(']')) {
-    if (/^\][a-zA-Z][0-9]{2}(?=\d{10,17}$)/.test(s) && (s.length === 18 || s.length === 21 || s.length === 15 || s.length === 14)) {
-      s = s.slice(4).trim();
-    } else if (/^\][a-zA-Z][0-9]/.test(s)) {
-      s = s.slice(3).trim();
-    } else {
-      s = s.replace(/^\][a-zA-Z0-9]{1,3}/, '').trim();
-    }
-  }
-
-  // Strip Code 39 start/stop asterisks if present
-  s = s.replace(/^\*+|\*+$/g, '').trim();
-
-  // If the scanned string is a URL (e.g. from 2D QR code on back of ticket), extract the lottery barcode digits
-  if (s.includes('http://') || s.includes('https://') || s.includes('www.') || s.includes('scel.net') || s.includes('galottery.com')) {
-    const urlDigitsMatch = s.match(/(?:code|ticket|barcode|entry|t|b)=?(\d{10,24})/i) || s.match(/(\d{11,17})/);
-    if (urlDigitsMatch) {
-      s = urlDigitsMatch[1];
-    }
-  }
 
   // Reject barcodes containing letters (electronics serial numbers, asset tags, laptop model numbers, etc.)
   // Real scratch-off lottery ticket barcodes are 100% numeric!
@@ -744,11 +720,37 @@ function parseLotteryBarcodeCore(raw, customGames = [], jurisdiction = 'GA') {
   if (parenContinuousMatch) {
     const gameNumber = parenContinuousMatch[1];
     const packNumber = parenContinuousMatch[2];
-    const checkCode = parenContinuousMatch[3] !== undefined ? parenContinuousMatch[3] : null;
-    const ticketString = parenContinuousMatch[4];
-    const ticketNumber = parseInt(ticketString, 10);
+    let checkCode = parenContinuousMatch[3] !== undefined ? parenContinuousMatch[3] : null;
+    const jurRes = resolveBarcodeJurisdiction({
+      gameNumber,
+      basePackNumber: packNumber,
+      rawPackNumber: packNumber,
+      checkCode,
+      digits: gameNumber + packNumber + (checkCode || '') + parenContinuousMatch[4],
+      customGames,
+      targetJur,
+      isAutoJur,
+      raw
+    });
+    if (jurRes.isAmbiguous) return jurRes.ambiguityResult;
+    if (jurRes.effectiveJur === 'SC') {
+      return adaptScelToLotteryBarcode(s, customGames);
+    }
+    let ticketString = parenContinuousMatch[4];
+    let ticketNumber = parseInt(ticketString, 10);
     const securityCode = parenContinuousMatch[5];
-    const inferredDetails = securityCode ? inferPackDetailsFromCountdown(ticketNumber, securityCode) : null;
+    let inferredDetails = securityCode ? inferPackDetailsFromCountdown(ticketNumber, securityCode) : null;
+    if (checkCode !== null && !inferredDetails && !findGaCatalogGame(gameNumber, customGames)) {
+      const altTixStr = checkCode + ticketString.slice(0, 2);
+      const altTixNum = parseInt(altTixStr, 10);
+      const altInferred = securityCode ? inferPackDetailsFromCountdown(altTixNum, securityCode) : null;
+      if (altInferred) {
+        checkCode = ticketString.slice(2, 3);
+        ticketString = altTixStr;
+        ticketNumber = altTixNum;
+        inferredDetails = altInferred;
+      }
+    }
     const isLotteryGame = isKnownGamePrefix(gameNumber, customGames) || (inferredDetails !== null);
 
     if (!isLotteryGame || isNaN(ticketNumber) || ticketNumber > 999) {
@@ -813,6 +815,22 @@ function parseLotteryBarcodeCore(raw, customGames = [], jurisdiction = 'GA') {
     if (packNumber.length === 7 && checkCode === null) {
       checkCode = packNumber.slice(6, 7);
       packNumber = packNumber.slice(0, 6);
+    }
+
+    const jurRes = resolveBarcodeJurisdiction({
+      gameNumber,
+      basePackNumber: packNumber,
+      rawPackNumber,
+      checkCode,
+      digits: gameNumber + packNumber + (checkCode || '') + ticketString,
+      customGames,
+      targetJur,
+      isAutoJur,
+      raw
+    });
+    if (jurRes.isAmbiguous) return jurRes.ambiguityResult;
+    if (jurRes.effectiveJur === 'SC') {
+      return adaptScelToLotteryBarcode(s, customGames);
     }
 
     const inferredDetails = securityCode ? inferPackDetailsFromCountdown(ticketNumber, securityCode) : null;
@@ -945,16 +963,8 @@ function parseLotteryBarcodeCore(raw, customGames = [], jurisdiction = 'GA') {
   // Pattern 3: Pure continuous digits
   let digits = s.replace(/[^0-9]/g, '');
 
-  // Strip scanner leading zeroes (e.g. 15 or 16-digit output from scanners configured with leading 0 padding)
-  if (digits.length === 18 && digits.startsWith('0000')) {
-    digits = digits.slice(4);
-  } else if (digits.length === 17 && digits.startsWith('000')) {
-    digits = digits.slice(3);
-  } else if (digits.length === 16 && digits.startsWith('00')) {
-    digits = digits.slice(2);
-  } else if (digits.length === 15 && digits.startsWith('0')) {
-    digits = digits.slice(1);
-  }
+  // Strip scanner leading zeroes (e.g. 15/16+ digit output from scanners configured with leading 0 padding)
+  digits = stripLeadingZeroPadding(digits);
 
   // 17 digits: 4 game + 6 pack + 1 check + 3 ticket + 3 security (e.g. 16700198693000149, 16480183788029000, 17140451146002027)
   if (digits.length === 17) {
@@ -1107,22 +1117,11 @@ function parseLotteryBarcodeCore(raw, customGames = [], jurisdiction = 'GA') {
     const isSC = Boolean(jurRes.hasSC);
     const isGA = Boolean(jurRes.hasGA);
     const isSCELGame = jurRes.effectiveJur === 'SC';
+    const parenMatch = s.match(/[([{](\d{1,4})[)\]}]/);
+    const securityCode = parenMatch ? parenMatch[1] : null;
+    const secInt = securityCode ? parseInt(securityCode, 10) : NaN;
 
-    let isLayoutB = false;
-    if (tixNumB > 299) {
-      isLayoutB = false;
-    } else if (tixNumA > 299) {
-      isLayoutB = true;
-    } else if (knownPackSize && tixNumA >= knownPackSize && tixNumB < knownPackSize) {
-      isLayoutB = true;
-    } else if (knownPackSize && tixNumB >= knownPackSize && tixNumA < knownPackSize) {
-      isLayoutB = false;
-    } else if (isSCELGame && digits[10] === '0' && tixNumB >= 0 && tixNumB <= 299) {
-      // Continuous 14-digit SCEL barcodes with leading-zero ticket index (e.g. 16700198690017 -> ticket 1, trailer 7)
-      isLayoutB = true;
-    } else if (!knownPackSize && tixNumA >= 150 && tixNumB <= 30) {
-      isLayoutB = true;
-    }
+    const isLayoutB = disambiguateContinuousLayout({ digits, knownPackSize, secInt, preferLeadingZeroB: isSCELGame });
 
     const ticketNumber = isLayoutB ? tixNumB : tixNumA;
     const ticketString = isLayoutB ? tixStrB : tixStrA;
@@ -1137,8 +1136,6 @@ function parseLotteryBarcodeCore(raw, customGames = [], jurisdiction = 'GA') {
       };
     }
 
-    const parenMatch = s.match(/[([{](\d{1,4})[)\]}]/);
-    const securityCode = parenMatch ? parenMatch[1] : null;
     const inferredDetails = securityCode ? inferPackDetailsFromCountdown(ticketNumber, securityCode) : null;
     const sec = securityCode || computeLotterySeriesCode(gameNumber, ticketNumber, customGames, matched?.packSize || inferredDetails?.packSize, 'GA');
 
@@ -1226,8 +1223,8 @@ function parseLotteryBarcodeCore(raw, customGames = [], jurisdiction = 'GA') {
     };
   }
 
-  // 18 to 26 digits: Continuous barcode with trailing validation digits (2D/PDF417 scratch barcode)
-  if (digits.length >= 18 && digits.length <= 26) {
+  // 18 to 30 digits: Continuous barcode with trailing validation digits (2D/PDF417/GS1 scratch barcode)
+  if (digits.length >= 18 && digits.length <= 30) {
     const gameNumber = digits.slice(0, 4);
     const gNum = parseInt(gameNumber, 10);
     const isLotteryGame = isKnownGamePrefix(gameNumber, customGames) || (gNum >= 100 && gNum <= 9999);
@@ -1265,29 +1262,20 @@ function parseLotteryBarcodeCore(raw, customGames = [], jurisdiction = 'GA') {
     const knownPackSize = matched?.packSize || (matched?.price ? getStandardPackDetails(matched.price).packSize : null);
 
     const isSCELGame = jurRes.effectiveJur === 'SC';
-
-    let isLayoutB = false;
-    if (tixNumB > 299) {
-      isLayoutB = false;
-    } else if (tixNumA > 299) {
-      isLayoutB = true;
-    } else if (knownPackSize && tixNumA >= knownPackSize && tixNumB < knownPackSize) {
-      isLayoutB = true;
-    } else if (knownPackSize && tixNumB >= knownPackSize && tixNumA < knownPackSize) {
-      isLayoutB = false;
-    } else if (isSCELGame && digits[10] === '0' && tixNumB >= 0 && tixNumB <= 299) {
-      isLayoutB = true;
-    } else if (!knownPackSize && tixNumA >= 150 && tixNumB <= 30) {
-      isLayoutB = true;
+    if (isSCELGame) {
+      return adaptScelToLotteryBarcode(s, customGames);
     }
+
+    const parenMatch = s.match(/[([{](\d{1,4})[)\]}]/);
+    const securityCode = parenMatch ? parenMatch[1] : null;
+    const secInt = securityCode ? parseInt(securityCode, 10) : NaN;
+    const isLayoutB = disambiguateContinuousLayout({ digits, knownPackSize, secInt, preferLeadingZeroB: isSCELGame });
 
     const ticketNumber = isLayoutB ? tixNumB : tixNumA;
     const ticketString = isLayoutB ? tixStrB : tixStrA;
     const checkCode = isLayoutB ? (isSCELGame ? computeScCheckDigit(packNumber) : null) : checkA;
     const standardBarcode = digits.slice(0, 14); // Exactly core 14-digit lottery barcode
 
-    const parenMatch = s.match(/\((\d{1,4})\)/);
-    const securityCode = parenMatch ? parenMatch[1] : null;
     const inferredDetails = securityCode ? inferPackDetailsFromCountdown(ticketNumber, securityCode) : null;
 
     if (isNaN(ticketNumber) || ticketNumber < 0 || ticketNumber > 299) {
@@ -1549,6 +1537,9 @@ export function formatTicketDisplayBarcode(rawOrParsed, customGames = [], overri
   }
 
   if (parsed.jurisdiction === 'SC' && parsed.displayBarcode) {
+    if (overrideSecurityCode !== null && overrideSecurityCode !== undefined && String(overrideSecurityCode).trim() !== '' && parsed.canonicalId) {
+      return `${parsed.canonicalId} (${String(overrideSecurityCode).trim()})`;
+    }
     return parsed.displayBarcode;
   }
 
@@ -1569,7 +1560,7 @@ export function formatTicketDisplayBarcode(rawOrParsed, customGames = [], overri
   const ticket = parsed.ticketString || (parsed.ticketNumber !== null ? String(parsed.ticketNumber).padStart(3, '0') : '000');
   const sec = (overrideSecurityCode !== null && overrideSecurityCode !== undefined && String(overrideSecurityCode).trim() !== '')
     ? String(overrideSecurityCode).trim()
-    : (parsed.securityCode || computeLotterySeriesCode(game, parsed.ticketNumber, customGames, parsed.inferredDetails?.packSize));
+    : (parsed.securityCode || computeLotterySeriesCode(game, parsed.ticketNumber, customGames, parsed.packSize || parsed.inferredDetails?.packSize, parsed.jurisdiction || jurisdiction));
 
   if (parsed.rawPackNumber && parsed.rawPackNumber.length === 7) {
     return `${game}-${parsed.rawPackNumber}-${ticket} (${sec})`;
@@ -1695,6 +1686,32 @@ export function isPackNumberMatch(packA, packB) {
   const baseB = getBasePackNumber(packB);
   if (baseA && baseB && baseA === baseB) return true;
   return false;
+}
+
+/**
+ * Format pack numbers to 6 digits for user-facing display (dropping any trailing check digit).
+ */
+export function formatDisplayPackNumber(packOrItem, fallback = '') {
+  if (!packOrItem) return fallback;
+  const raw = (typeof packOrItem === 'object')
+    ? (packOrItem.basePackNumber || packOrItem.packNumber || packOrItem.pack || '')
+    : packOrItem;
+  const s = String(raw || '').trim();
+  if (!s || s === '---' || s === '—') return s || fallback;
+
+  const gamePackMatch = s.match(/^\d{3,5}[-_/\s.:]+(\d{6})(?:\d)?(?:[-_/\s.:]|$)/);
+  if (gamePackMatch) return gamePackMatch[1];
+
+  const packCheckMatch = s.match(/^#?(\d{6})[-_/\s.:]+\d{1,2}$/);
+  if (packCheckMatch) return packCheckMatch[1];
+
+  const noHash = (stripScannerPrefix(s) || s).replace(/^#/, '');
+  if (/^\d{7}$/.test(noHash)) return noHash.slice(0, 6);
+  const cleanDigits = stripLeadingZeroPadding(noHash);
+  if (/^\d{10,}$/.test(cleanDigits)) return cleanDigits.slice(4, 10);
+  if (/^\d{6}$/.test(noHash)) return noHash;
+
+  return s;
 }
 
 export function findGameByBarcode(rawCode, customGames = [], jurisdiction = 'GA') {
